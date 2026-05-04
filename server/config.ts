@@ -21,8 +21,8 @@ function readOptionalInt(name: string, fallback: number) {
 
 function readOptionalProvider(): LlmProvider {
   const raw = process.env.LLM_PROVIDER?.toLowerCase();
-  if (raw === "fireworks") return "fireworks";
-  return "gemini";
+  if (raw === "gemini") return "gemini";
+  return "fireworks";
 }
 
 function readProviderApiKey(provider: LlmProvider) {

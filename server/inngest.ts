@@ -1,38 +1,83 @@
-import { Inngest } from "inngest";
-import { serve } from "inngest/express";
+import type { RequestHandler } from "express";
 import { config } from "./config";
 import { runPipeline } from "./pipeline";
 
-export const inngest = new Inngest({
-  id: "times-of-sf-news-pipeline",
-  eventKey: config.inngestEventKey,
-});
+type InngestClient = {
+  send: (payload: { name: string; data: Record<string, unknown> }) => Promise<unknown>;
+};
 
-export const scheduledNewsPipeline = inngest.createFunction(
-  {
-    id: "scheduled-news-pipeline",
-    name: "Scheduled News Pipeline",
-  },
-  {
-    cron: config.pipelineCron,
-  },
-  async ({ step }) => {
-    return step.run("run-news-pipeline", async () => runPipeline());
-  },
-);
+type StepTools = {
+  run: (id: string, fn: () => Promise<unknown>) => Promise<unknown>;
+};
 
-export const manualNewsPipeline = inngest.createFunction(
-  {
-    id: "manual-news-pipeline",
-    name: "Manual News Pipeline",
-  },
-  { event: "news.pipeline.run" },
-  async ({ step }) => {
-    return step.run("run-news-pipeline", async () => runPipeline());
-  },
-);
+type InngestModuleState = {
+  enabled: boolean;
+  reason?: string;
+  inngest?: InngestClient;
+  handler?: RequestHandler;
+};
 
-export const inngestHandler = serve({
-  client: inngest,
-  functions: [scheduledNewsPipeline, manualNewsPipeline],
-});
+let cachedState: InngestModuleState | null = null;
+
+export async function loadInngestState(): Promise<InngestModuleState> {
+  if (cachedState) return cachedState;
+
+  if (!config.inngestEventKey || !config.inngestSigningKey) {
+    cachedState = {
+      enabled: false,
+      reason: "Inngest env vars are not configured. Manual pipeline mode is still available.",
+    };
+    return cachedState;
+  }
+
+  try {
+    const [{ Inngest }, { serve }] = await Promise.all([import("inngest"), import("inngest/express")]);
+
+    const inngest = new Inngest({
+      id: "times-of-sf-news-pipeline",
+      eventKey: config.inngestEventKey,
+    });
+
+    const scheduledNewsPipeline = inngest.createFunction(
+      {
+        id: "scheduled-news-pipeline",
+        name: "Scheduled News Pipeline",
+      },
+      {
+        cron: config.pipelineCron,
+      },
+      async ({ step }: { step: StepTools }) => {
+        return step.run("run-news-pipeline", async () => runPipeline());
+      },
+    );
+
+    const manualNewsPipeline = inngest.createFunction(
+      {
+        id: "manual-news-pipeline",
+        name: "Manual News Pipeline",
+      },
+      { event: "news.pipeline.run" },
+      async ({ step }: { step: StepTools }) => {
+        return step.run("run-news-pipeline", async () => runPipeline());
+      },
+    );
+
+    const handler = serve({
+      client: inngest,
+      functions: [scheduledNewsPipeline, manualNewsPipeline],
+    });
+
+    cachedState = {
+      enabled: true,
+      inngest,
+      handler,
+    };
+    return cachedState;
+  } catch (error) {
+    cachedState = {
+      enabled: false,
+      reason: error instanceof Error ? error.message : "Failed to load Inngest runtime.",
+    };
+    return cachedState;
+  }
+}

@@ -117,7 +117,13 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
     throw new Error(`Fireworks request failed with ${response.status}: ${errorText}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as {
+    choices?: Array<{
+      message?: {
+        content?: string;
+      };
+    }>;
+  };
   const content = data?.choices?.[0]?.message?.content;
   if (!content || typeof content !== "string") {
     throw new Error("Fireworks response did not include message content.");
