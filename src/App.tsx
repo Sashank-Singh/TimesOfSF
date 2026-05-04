@@ -9,8 +9,8 @@ import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 
 export default function App() {
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
+  const [articles, setArticles] = useState<Article[]>(FALLBACK_ARTICLES);
+  const [filteredArticles, setFilteredArticles] = useState<Article[]>(FALLBACK_ARTICLES);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -29,10 +29,10 @@ export default function App() {
     let active = true;
     
     async function init() {
-      // Safety timeout: force loading to false after 30s no matter what
+      // Safety timeout: force loading to false after 10s no matter what
       const safetyTimeout = setTimeout(() => {
         if (active) setLoading(false);
-      }, 30000);
+      }, 10000);
 
       try {
         const data = await fetchArticles();
@@ -140,7 +140,9 @@ export default function App() {
         title: article.title,
         text: article.excerpt,
         url: window.location.href,
-      }).catch(console.error);
+      }).catch((err) => {
+        // user clicked cancel, squash the error
+      });
     } else {
       navigator.clipboard.writeText(window.location.href);
       toast.success('Link copied to clipboard');

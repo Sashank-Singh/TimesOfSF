@@ -1,10 +1,12 @@
+import React, { useState, useRef, useMemo } from "react";
 import { Article } from "../types";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { formatDate, cn } from "../lib/utils";
-import { useState } from "react";
 import { DEFAULT_IMAGE } from "../services/newsService";
+import { EntityHighlight } from "./EntityHighlight";
+import { DataVisChart } from "./DataVisChart";
 
 interface ReaderViewProps {
   article: Article | null;
@@ -14,23 +16,93 @@ interface ReaderViewProps {
   onShare: () => void;
 }
 
-export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare }: ReaderViewProps) {
+function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
   const [showSummary, setShowSummary] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const { scrollYProgress } = useScroll({
+    container: scrollRef
+  });
+
+  const scaleX = useSpring(scrollYProgress, {
+    stiffness: 100,
+    damping: 30,
+    restDelta: 0.001
+  });
+
+  const components = useMemo(() => ({
+    p: ({ children }: any) => {
+      const processText = (text: string): (string | React.ReactNode)[] => {
+        let result: (string | React.ReactNode)[] = [text];
+        
+        // Charts
+        result = result.flatMap(part => {
+          if (typeof part !== 'string') return part;
+          const chartRegex = /\[CHART:(\d+)\]/g;
+          const parts: (string | React.ReactNode)[] = [];
+          let lastIndex = 0;
+          let match;
+          while ((match = chartRegex.exec(part)) !== null) {
+            parts.push(part.slice(lastIndex, match.index));
+            const chartIdx = parseInt(match[1], 10);
+            if (article.dataBlocks?.[chartIdx]) {
+              const block = article.dataBlocks[chartIdx];
+              parts.push(<DataVisChart key={`chart-${chartIdx}`} title={block.title} data={block.data} />);
+            }
+            lastIndex = chartRegex.lastIndex;
+          }
+          parts.push(part.slice(lastIndex));
+          return parts;
+        });
+
+        // Entities
+        result = result.flatMap(part => {
+          if (typeof part !== 'string') return part;
+          const entityRegex = /\[\[(.*?)\]\]/g;
+          const parts: (string | React.ReactNode)[] = [];
+          let lastIndex = 0;
+          let match;
+          while ((match = entityRegex.exec(part)) !== null) {
+            parts.push(part.slice(lastIndex, match.index));
+            const entityName = match[1];
+            const entityData = article.entities?.find(e => e.name.toLowerCase() === entityName.toLowerCase());
+            if (entityData) {
+              parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
+            } else {
+              parts.push(entityName);
+            }
+            lastIndex = entityRegex.lastIndex;
+          }
+          parts.push(part.slice(lastIndex));
+          return parts;
+        });
+
+        return result;
+      };
+
+      const finalChildren = React.Children.toArray(children).flatMap(node => {
+        if (typeof node === 'string') return processText(node);
+        return node;
+      });
+
+      return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
+    }
+  }), [article]);
 
   return (
-    <AnimatePresence>
-      {article && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.98 }}
-          animate={{ opacity: 1, scale: 1 }}
-          exit={{ opacity: 0, scale: 1.02 }}
-          transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-          className="fixed inset-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
-        >
-          {/* Subtle Progress Header */}
-          <nav className="sticky top-0 z-50 bg-paper/90 backdrop-blur-sm border-b border-ink/5 px-6 py-4 flex items-center justify-between">
-            <button 
-              onClick={onClose}
+    <motion.div
+      ref={scrollRef}
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 1.02 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      className="fixed inset-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
+    >
+      {/* Subtle Progress Header */}
+          <nav className="sticky top-0 z-50 bg-paper/90 backdrop-blur-sm border-b border-ink/5 flex flex-col">
+            <div className="px-6 py-4 flex items-center justify-between">
+              <button 
+                onClick={onClose}
               className="flex items-center gap-3 text-[10px] font-mono font-bold uppercase tracking-[0.2em] group"
             >
               <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
@@ -60,6 +132,11 @@ export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare
                 <button onClick={onClose} className="p-1 hover:rotate-90 transition-transform"><X size={20} /></button>
               </div>
             </div>
+          </div>
+            <motion.div 
+              className="h-[2px] bg-accent origin-left w-full absolute bottom-[-1px] left-0 right-0 z-50"
+              style={{ scaleX }}
+            />
           </nav>
 
           <article className="max-w-4xl mx-auto px-4 md:px-6 py-12 md:py-32">
@@ -100,13 +177,34 @@ export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare
                     transition={{ duration: 0.3 }}
                     className="overflow-hidden"
                   >
-                    <p className="mt-4 text-sm font-serif italic text-ink/70 leading-relaxed pt-4 border-t border-ink/5">
-                      {article.excerpt} This report explores {article.title.toLowerCase()} from a multi-disciplinary perspective, highlighting the socio-economic impact on San Francisco's evolving urban landscape.
-                    </p>
+                    <div className="mt-4 pt-6 border-t border-ink/5 flex flex-col gap-6">
+                      <p className="text-sm font-serif italic text-ink/70 leading-relaxed">
+                        {article.excerpt} This report explores {article.title.toLowerCase()} from a multi-disciplinary perspective, highlighting the socio-economic impact on San Francisco's evolving urban landscape.
+                      </p>
+                      
+                      {article.tldr && (
+                        <ul className="space-y-4">
+                          <li className="flex gap-4">
+                            <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest pt-1 shrink-0">Impact</span>
+                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whyItMatters}</p>
+                          </li>
+                          <li className="flex gap-4">
+                            <span className="text-[10px] font-mono font-bold text-ink/40 uppercase tracking-widest pt-1 shrink-0">Context</span>
+                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whoIsAffected}</p>
+                          </li>
+                          <li className="flex gap-4">
+                            <span className="text-[10px] font-mono font-bold text-ink/20 uppercase tracking-widest pt-1 shrink-0">Future</span>
+                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whatIsNext}</p>
+                          </li>
+                        </ul>
+                      )}
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
+
+            {/* Main content area */}
 
             <div className="relative aspect-video md:aspect-[21/9] mb-12 md:mb-24 overflow-hidden rounded-2xl shadow-2xl transition-all duration-1000 ease-out group/hero">
                <img 
@@ -167,7 +265,7 @@ export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare
 
               <div className="lg:col-span-8 lg:col-start-5">
                 <div className="markdown-body">
-                  <ReactMarkdown>{article.content}</ReactMarkdown>
+                  <ReactMarkdown components={components as any}>{article.content}</ReactMarkdown>
                 </div>
                 
                 {/* Mobile/Tablet Additional Images */}
@@ -209,7 +307,22 @@ export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare
                </div>
             </footer>
           </article>
-        </motion.div>
+    </motion.div>
+  );
+}
+
+export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare }: ReaderViewProps) {
+  return (
+    <AnimatePresence>
+      {article && (
+        <ReaderContent
+          key="reader"
+          article={article}
+          onClose={onClose}
+          isBookmarked={isBookmarked}
+          onBookmark={onBookmark}
+          onShare={onShare}
+        />
       )}
     </AnimatePresence>
   );
