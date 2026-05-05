@@ -24,7 +24,7 @@ async function start() {
     });
   });
 
-  app.post("/api/pipeline/run", async (_req, res) => {
+  app.all("/api/pipeline/run", async (_req, res) => {
     try {
       const result = await runPipeline();
       res.status(result.published ? 201 : 202).json(result);
