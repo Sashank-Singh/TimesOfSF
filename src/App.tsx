@@ -44,11 +44,11 @@ export default function App() {
         setFilteredArticles(data);
         setEvents(eventsData);
 
-        // Deep linking: check URL for articleId
+        // Deep linking: check URL for articleId (which is now the slug)
         const params = new URLSearchParams(window.location.search);
-        const articleId = params.get('articleId');
-        if (articleId) {
-          const article = data.find(a => a.id === articleId);
+        const articleParam = params.get('articleId');
+        if (articleParam) {
+          const article = data.find(a => a.slug === articleParam || a.id === articleParam);
           if (article) setSelectedArticle(article);
         }
       } catch (err) {
@@ -70,7 +70,7 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (selectedArticle) {
-      params.set('articleId', selectedArticle.id);
+      params.set('articleId', selectedArticle.slug);
     } else {
       params.delete('articleId');
     }
@@ -154,7 +154,7 @@ export default function App() {
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${article.id}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${article.slug}`;
     if (navigator.share) {
       navigator.share({
         title: article.title,

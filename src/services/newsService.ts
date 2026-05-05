@@ -62,7 +62,8 @@ function dbPostToArticle(post: any): Article {
   const category = Object.entries(categoryMap).find(([key]) => topicLower.includes(key))?.[1] || "Tech";
 
   return {
-    id: `db-${post.id}`,
+    id: post.id.toString(),
+    slug: post.slug,
     title: post.headline,
     author: "Times of SF Agent",
     date: post.created_at,

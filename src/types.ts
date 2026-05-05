@@ -11,6 +11,7 @@ export interface DataBlock {
 
 export interface Article {
   id: string;
+  slug: string;
   title: string;
   author: string;
   date: string;
