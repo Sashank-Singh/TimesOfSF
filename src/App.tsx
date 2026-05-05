@@ -43,6 +43,14 @@ export default function App() {
         setArticles(data);
         setFilteredArticles(data);
         setEvents(eventsData);
+
+        // Deep linking: check URL for articleId
+        const params = new URLSearchParams(window.location.search);
+        const articleId = params.get('articleId');
+        if (articleId) {
+          const article = data.find(a => a.id === articleId);
+          if (article) setSelectedArticle(article);
+        }
       } catch (err) {
         if (active) toast.error("Could not reach live news wire.");
       } finally {
@@ -58,6 +66,17 @@ export default function App() {
       clearInterval(timer);
     };
   }, []);
+  
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selectedArticle) {
+      params.set('articleId', selectedArticle.id);
+    } else {
+      params.delete('articleId');
+    }
+    const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
+    window.history.replaceState({}, '', newUrl);
+  }, [selectedArticle]);
 
   const [searchLoading, setSearchLoading] = useState(false);
 
@@ -135,16 +154,17 @@ export default function App() {
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${article.id}`;
     if (navigator.share) {
       navigator.share({
         title: article.title,
         text: article.excerpt,
-        url: window.location.href,
+        url: shareUrl,
       }).catch((err) => {
         // user clicked cancel, squash the error
       });
     } else {
-      navigator.clipboard.writeText(window.location.href);
+      navigator.clipboard.writeText(shareUrl);
       toast.success('Link copied to clipboard');
     }
   };
