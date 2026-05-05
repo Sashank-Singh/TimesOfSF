@@ -21,7 +21,7 @@ export function DataVisChart({ title, data }: DataVisChartProps) {
       initial={{ opacity: 0, scale: 0.98 }}
       whileInView={{ opacity: 1, scale: 1 }}
       viewport={{ once: true }}
-      className="my-12 p-6 md:p-8 border border-ink/10 bg-ink/[0.01] rounded-2xl"
+      className="my-20 clear-both p-6 md:p-8 border border-ink/10 bg-ink/[0.01] rounded-2xl"
     >
       <div className="flex flex-col gap-1 mb-8">
         <span className="text-[10px] font-mono uppercase tracking-[0.3em] text-accent font-bold">Data Insight</span>

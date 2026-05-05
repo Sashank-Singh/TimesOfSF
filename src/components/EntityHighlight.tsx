@@ -14,7 +14,7 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
   useLayoutEffect(() => {
     if (showTooltip && anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
-      const tooltipWidth = 280; // w-70 is roughly 280px
+      const tooltipWidth = Math.min(280, window.innerWidth - 40);
       const padding = 20;
       
       const centerX = rect.left + rect.width / 2;
@@ -32,10 +32,11 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
   }, [showTooltip]);
 
   return (
-    <span className="relative inline-block" ref={anchorRef}>
+    <span className="relative inline" ref={anchorRef}>
       <span
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
+        onClick={() => setShowTooltip(!showTooltip)}
         className="cursor-help border-b border-accent/30 bg-accent/[0.03] px-1 rounded-sm font-semibold transition-all hover:bg-accent/[0.08] hover:border-accent/60"
       >
         {name}
@@ -49,9 +50,10 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{ 
               left: `calc(50% + ${offset}px)`,
-              transform: 'translateX(-50%)'
+              transform: 'translateX(-50%)',
+              width: Math.min(280, window.innerWidth - 40)
             }}
-            className="absolute bottom-full mb-3 z-[60] w-[280px] p-4 bg-paper border border-ink/10 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.08)] pointer-events-none"
+            className="absolute bottom-full mb-3 z-[60] p-4 bg-paper border border-ink/10 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.08)] pointer-events-none"
           >
             <div className="flex flex-col gap-2">
               <h5 className="text-[10px] font-mono uppercase tracking-[0.2em] font-black text-accent/60">
