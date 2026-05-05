@@ -14,6 +14,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
     "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits.",
     "credits must be an array with sourceName, articleUrl, factBullets.",
     "bodyMarkdown should be publication-ready, concise, and cite uncertainty when sources differ.",
+    "Also include a 'tldr' object with three keys: 'whyItMatters' (concise impact statement, including funding amounts/valuations if applicable), 'whoIsAffected' (specific stakeholders or investors), and 'whatIsNext' (actionable next steps or timeline).",
     `Source packets: ${JSON.stringify(sources)}`,
   ].join("\n");
 }
@@ -27,6 +28,7 @@ function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
     shortPost: parsed.shortPost,
     topic: topic.topic,
     credits: parsed.credits,
+    tldr: parsed.tldr,
   };
 }
 
@@ -72,8 +74,17 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
               required: ["sourceName", "articleUrl", "factBullets"],
             },
           },
+          tldr: {
+            type: Type.OBJECT,
+            properties: {
+              whyItMatters: { type: Type.STRING },
+              whoIsAffected: { type: Type.STRING },
+              whatIsNext: { type: Type.STRING },
+            },
+            required: ["whyItMatters", "whoIsAffected", "whatIsNext"],
+          },
         },
-        required: ["headline", "slug", "dek", "bodyMarkdown", "shortPost", "credits"],
+        required: ["headline", "slug", "dek", "bodyMarkdown", "shortPost", "credits", "tldr"],
       },
     },
   });
@@ -139,4 +150,41 @@ export async function synthesizePost(topic: TrendCandidate, sources: SourceExtra
   }
 
   return synthesizeWithGemini(topic, sources);
+}
+
+export async function expandContent(headline: string, currentContent: string): Promise<string> {
+  const prompt = `
+    You are the Times of SF senior editor. 
+    A junior writer has provided a short dispatch. Please expand this into a full feature-length report.
+    Do not change the existing facts, but add analytical depth, historical context of San Francisco, and explore the long-term implications.
+    Maintain the existing professional, grounded editorial tone.
+    Return ONLY the new body content in Markdown. No headline, no titles.
+    
+    Current Dispatch:
+    ${currentContent}
+    
+    Expand this story:
+  `;
+
+  if (config.llmProvider === "fireworks") {
+    const response = await fetch(`${config.fireworksBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.fireworksApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.fireworksModel,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+      }),
+    });
+    const data = await response.json() as any;
+    return data.choices[0].message.content;
+  }
+
+  if (!geminiAi) throw new Error("GEMINI_API_KEY not configured.");
+  const model = geminiAi.getGenerativeModel({ model: config.geminiModel });
+  const result = await model.generateContent(prompt);
+  return result.response.text();
 }

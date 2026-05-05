@@ -3,13 +3,20 @@ export type PreferredSourceName =
   | "TechCrunch"
   | "Bloomberg"
   | "Reuters"
-  | "WSJ";
+  | "WSJ"
+  | "AP News"
+  | "BBC"
+  | "CNN"
+  | "NPR"
+  | "The Guardian"
+  | "New York Times";
 
 export interface TrendCandidate {
   topic: string;
   normalizedTopic: string;
   signalCount: number;
   sampleHeadlines: string[];
+  primarySource?: SourceSearchResult;
 }
 
 export interface SourceSearchResult {
@@ -60,4 +67,9 @@ export interface GeneratedPost {
     articleUrl: string;
     factBullets: string[];
   }>;
+  tldr?: {
+    whyItMatters: string;
+    whoIsAffected: string;
+    whatIsNext: string;
+  };
 }

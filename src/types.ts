@@ -34,4 +34,11 @@ export interface Article {
   dataBlocks?: DataBlock[];
 }
 
-export type ArticleCategory = Article["category"];
+export type ArticleCategory = Article["category"] | "World" | "Politics" | "Funding";
+
+export interface EventInfo {
+  title: string;
+  url: string;
+  date: string;
+  source: string;
+}

@@ -46,10 +46,38 @@ export async function ensureSchema() {
         body_markdown TEXT NOT NULL,
         short_post TEXT NOT NULL,
         credits JSONB NOT NULL,
+        tldr JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `,
+    sql`
+      CREATE TABLE IF NOT EXISTS events (
+        id BIGSERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `
   ]);
+}
+
+export async function saveEvents(events: Array<{title: string, url: string, date: string, source: string}>) {
+  if (!events.length) return;
+  await sql.transaction([
+    sql`TRUNCATE TABLE events`,
+    ...events.map(
+      (e) => sql`
+        INSERT INTO events (title, url, event_date, source)
+        VALUES (${e.title}, ${e.url}, ${e.date}, ${e.source})
+      `
+    ),
+  ]);
+}
+
+export async function fetchStoredEvents() {
+  return sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 10`;
 }
 
 export async function createRun(runId: string, topic: TrendCandidate | null) {
@@ -84,7 +112,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
 
 export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
   const inserted = (await sql`
-    INSERT INTO generated_posts (run_id, topic, headline, slug, dek, body_markdown, short_post, credits)
+    INSERT INTO generated_posts (run_id, topic, headline, slug, dek, body_markdown, short_post, credits, tldr)
     VALUES (
       ${runId},
       ${post.topic},
@@ -93,7 +121,8 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
       ${post.dek},
       ${post.bodyMarkdown},
       ${post.shortPost},
-      ${JSON.stringify(post.credits)}
+      ${JSON.stringify(post.credits)},
+      ${post.tldr ? JSON.stringify(post.tldr) : null}
     )
     RETURNING id
   `) as Array<{ id: number }>;
@@ -114,7 +143,17 @@ export async function completeRun(result: PipelineRunResult) {
 
 export async function fetchRecentPosts(limit = 10) {
   return sql`
-    SELECT id, run_id, topic, headline, slug, dek, body_markdown, short_post, credits, created_at
+    SELECT
+      id,
+      topic,
+      headline,
+      slug,
+      dek,
+      body_markdown,
+      short_post,
+      credits,
+      tldr,
+      created_at
     FROM generated_posts
     ORDER BY created_at DESC
     LIMIT ${limit}
@@ -140,4 +179,18 @@ export async function fetchRun(runId: string) {
     run: runs[0] ?? null,
     attempts,
   };
+}
+export async function fetchPostById(id: string) {
+  const numericId = id.replace("db-", "");
+  const result = await sql`SELECT * FROM generated_posts WHERE id = ${numericId}`;
+  return result[0];
+}
+
+export async function updatePostContent(id: string, content: string) {
+  const numericId = id.replace("db-", "");
+  await sql`
+    UPDATE generated_posts 
+    SET body_markdown = ${content}
+    WHERE id = ${numericId}
+  `;
 }

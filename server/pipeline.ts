@@ -1,17 +1,16 @@
 import crypto from "node:crypto";
 import { synthesizePost } from "./agents";
-import { completeRun, createRun, saveGeneratedPost, saveSourceAttempt } from "./db";
+import { completeRun, createRun, fetchRecentPosts, saveGeneratedPost, saveSourceAttempt } from "./db";
 import { extractSource } from "./extractor";
 import { config } from "./config";
 import { findSourceArticle, getTrendingTopics } from "./rss";
 import { PipelineRunResult, PreferredSourceName, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
 const PREFERRED_SOURCES: PreferredSourceName[] = [
-  "San Francisco Chronicle",
   "TechCrunch",
   "Bloomberg",
   "Reuters",
-  "WSJ",
+  "AP News"
 ];
 
 function makeRunId() {
@@ -69,7 +68,17 @@ async function attemptSource(topic: TrendCandidate, sourceName: PreferredSourceN
 export async function runPipeline() {
   const runId = makeRunId();
   const topics = await getTrendingTopics();
-  const topic = topics[0] ?? null;
+  
+  // Find the first topic that hasn't been successfully published recently
+  let topic = null;
+  for (const candidate of topics) {
+    const existing = await fetchRecentPosts();
+    if (!existing.some(p => p.topic === candidate.topic)) {
+      topic = candidate;
+      break;
+    }
+  }
+
   await createRun(runId, topic);
 
   if (!topic) {
@@ -85,7 +94,25 @@ export async function runPipeline() {
     return emptyResult;
   }
 
-  const attempts = await Promise.all(PREFERRED_SOURCES.map((sourceName) => attemptSource(topic, sourceName)));
+  const sourcePromises = PREFERRED_SOURCES.map((sourceName) => attemptSource(topic, sourceName));
+  const attempts = await Promise.all(sourcePromises);
+
+  if (topic.primarySource) {
+    try {
+      const primaryResult = await extractSource(topic.primarySource);
+      attempts.push({
+        sourceName: topic.primarySource.sourceName,
+        status: "success",
+        result: primaryResult,
+      });
+    } catch (error) {
+      attempts.push({
+        sourceName: topic.primarySource.sourceName,
+        status: "failed",
+        reason: error instanceof Error ? error.message : "Primary source extraction failed.",
+      });
+    }
+  }
 
   for (const attempt of attempts) {
     await saveSourceAttempt(runId, attempt);
@@ -122,5 +149,18 @@ export async function runPipeline() {
     postId: postId?.toString(),
   };
   await completeRun(published);
+
+  // Background task: also update the events table during pipeline run
+  try {
+    const { fetchEvents } = await import("./events");
+    const { saveEvents } = await import("./db");
+    const extractedEvents = await fetchEvents();
+    if (extractedEvents.length > 0) {
+      await saveEvents(extractedEvents);
+    }
+  } catch (err) {
+    console.error("Pipeline failed to update events:", err);
+  }
+
   return published;
 }

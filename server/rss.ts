@@ -14,20 +14,31 @@ interface RssItem {
   description?: string;
 }
 
-const TREND_FEEDS = [
-  "https://news.google.com/rss/search?q=technology+when:1d&hl=en-US&gl=US&ceid=US:en",
-  "https://news.google.com/rss/search?q=artificial+intelligence+when:1d&hl=en-US&gl=US&ceid=US:en",
-  "https://news.google.com/rss/search?q=startups+when:1d&hl=en-US&gl=US&ceid=US:en",
-  "https://feeds.reuters.com/reuters/technologyNews",
-  "https://techcrunch.com/feed/",
+const TREND_FEEDS: { url: string; sourceName: PreferredSourceName }[] = [
+  { url: "https://techcrunch.com/category/startups/feed/", sourceName: "TechCrunch" },
+  { url: "https://techcrunch.com/funding/feed/", sourceName: "TechCrunch" },
+  { url: "https://techcrunch.com/category/artificial-intelligence/feed/", sourceName: "TechCrunch" },
+  { url: "https://feeds.reuters.com/reuters/technologyNews", sourceName: "Reuters" },
+  { url: "https://feeds.bloomberg.com/technology/news.rss", sourceName: "Bloomberg" },
+  { url: "https://moxie.foxnews.com/google-publisher/politics.xml", sourceName: "AP News" },
+  { url: "https://moxie.foxnews.com/google-publisher/us.xml", sourceName: "AP News" },
+  { url: "https://feeds.reuters.com/reuters/businessNews", sourceName: "Reuters" },
+  { url: "https://feeds.reuters.com/Reuters/domesticNews", sourceName: "Reuters" },
+  { url: "https://feeds.reuters.com/Reuters/worldNews", sourceName: "Reuters" }
 ];
 
-const SOURCE_QUERIES: Record<PreferredSourceName, string> = {
-  "San Francisco Chronicle": "sfchronicle.com",
-  "TechCrunch": "techcrunch.com",
-  "Bloomberg": "bloomberg.com",
-  "Reuters": "reuters.com",
-  "WSJ": "wsj.com",
+const SOURCE_FEEDS: Record<PreferredSourceName, string[]> = {
+  "San Francisco Chronicle": ["https://www.sfchronicle.com/bayarea/feed/Bay-Area-News-106.php"],
+  "TechCrunch": ["https://techcrunch.com/category/startups/feed/", "https://techcrunch.com/funding/feed/", "https://techcrunch.com/category/artificial-intelligence/feed/"],
+  "Bloomberg": ["https://feeds.bloomberg.com/technology/news.rss"],
+  "Reuters": ["https://feeds.reuters.com/reuters/technologyNews", "https://feeds.reuters.com/reuters/businessNews", "https://feeds.reuters.com/Reuters/domesticNews", "https://feeds.reuters.com/Reuters/worldNews"],
+  "WSJ": ["https://feeds.a.dj.com/rss/RSSWSJD.xml"],
+  "AP News": ["https://moxie.foxnews.com/google-publisher/tech.xml", "https://moxie.foxnews.com/google-publisher/politics.xml", "https://moxie.foxnews.com/google-publisher/us.xml"],
+  "BBC": ["https://feeds.bbci.co.uk/news/technology/rss.xml"],
+  "CNN": ["http://rss.cnn.com/rss/edition_technology.rss"],
+  "NPR": ["https://feeds.npr.org/1019/rss.xml"],
+  "The Guardian": ["https://www.theguardian.com/technology/rss"],
+  "New York Times": ["https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"]
 };
 
 function normalizeTopic(raw: string) {
@@ -76,7 +87,7 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
 
   for (const feed of TREND_FEEDS) {
     try {
-      const items = await fetchFeedItems(feed);
+      const items = await fetchFeedItems(feed.url);
       for (const item of items.slice(0, 12)) {
         const title = item.title?.trim();
         if (!title) continue;
@@ -95,6 +106,13 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
             normalizedTopic,
             signalCount: 1,
             sampleHeadlines: [title],
+            primarySource: item.link ? {
+              sourceName: feed.sourceName,
+              articleUrl: item.link,
+              headline: title,
+              publishedAt: item.pubDate,
+              summary: item.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+            } : undefined
           });
         }
       }
@@ -109,23 +127,37 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
 }
 
 export async function findSourceArticle(topic: TrendCandidate, sourceName: PreferredSourceName): Promise<SourceSearchResult | null> {
-  const siteQuery = SOURCE_QUERIES[sourceName];
-  const query = encodeURIComponent(`"${topic.topic}" ${siteQuery} when:7d`);
-  const url = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
+  const feeds = SOURCE_FEEDS[sourceName];
+  if (!feeds) return null;
 
-  try {
-    const items = await fetchFeedItems(url);
-    const match = items.find((item) => item.link && item.title);
-    if (!match || !match.link || !match.title) return null;
+  const topicTokens = topic.normalizedTopic
+    .split(" ")
+    .filter((w) => w.length > 3)
+    .slice(0, 4);
 
-    return {
-      sourceName,
-      articleUrl: match.link,
-      headline: match.title,
-      publishedAt: match.pubDate,
-      summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-    };
-  } catch {
-    return null;
+  for (const feedUrl of feeds) {
+    try {
+      const items = await fetchFeedItems(feedUrl);
+      const match = items.find((item) => {
+        if (!item.link || !item.title) return false;
+        const normalizedHeadline = item.title.toLowerCase();
+        const matches = topicTokens.filter(t => normalizedHeadline.includes(t));
+        return matches.length >= Math.min(2, topicTokens.length);
+      });
+
+      if (match?.link && match?.title) {
+        return {
+          sourceName,
+          articleUrl: match.link,
+          headline: match.title,
+          publishedAt: match.pubDate,
+          summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        };
+      }
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }

@@ -1,6 +1,8 @@
 import express from "express";
+import cors from "cors";
 import { config } from "./config";
 import { ensureSchema, fetchRecentPosts, fetchRun } from "./db";
+import { fetchEvents } from "./events";
 import { loadInngestState } from "./inngest";
 import { runPipeline } from "./pipeline";
 
@@ -9,6 +11,7 @@ async function start() {
   const inngestState = await loadInngestState();
 
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
@@ -72,6 +75,35 @@ async function start() {
       res.status(500).json({
         error: error instanceof Error ? error.message : "Failed to fetch run",
       });
+    }
+  });
+
+  app.get("/api/events", async (req, res) => {
+    try {
+      const { fetchStoredEvents } = await import("./db");
+      const events = await fetchStoredEvents();
+      res.json(events);
+    } catch (error) {
+      console.error("Failed to fetch events from DB:", error);
+      res.status(500).json({ error: "Failed to fetch events" });
+    }
+  });
+
+  app.post("/api/posts/:id/expand", async (req, res) => {
+    try {
+      const { fetchPostById, updatePostContent } = await import("./db");
+      const { expandContent } = await import("./agents");
+      
+      const post = await fetchPostById(req.params.id);
+      if (!post) return res.status(404).json({ error: "Post not found" });
+
+      const expanded = await expandContent(post.headline, post.body_markdown);
+      await updatePostContent(req.params.id, expanded);
+      
+      res.json({ content: expanded });
+    } catch (error) {
+      console.error("Failed to expand post:", error);
+      res.status(500).json({ error: "Failed to expand article" });
     }
   });
 
