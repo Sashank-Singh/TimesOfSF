@@ -48,7 +48,7 @@ export const config = {
   databaseUrl: readEnv("DATABASE_URL"),
   inngestEventKey: process.env.INNGEST_EVENT_KEY,
   inngestSigningKey: process.env.INNGEST_SIGNING_KEY,
-  pipelineCron: process.env.PIPELINE_CRON ?? "0 * * * *",
+  pipelineCron: process.env.PIPELINE_CRON ?? "*/10 * * * *",
   minSuccessfulSources: readOptionalInt("MIN_SUCCESSFUL_SOURCES", 2),
   sourceTimeoutMs: readOptionalInt("SOURCE_TIMEOUT_MS", 15000),
   trendLimit: readOptionalInt("TREND_LIMIT", 20),
