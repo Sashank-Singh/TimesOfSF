@@ -2,7 +2,7 @@ import { Article, EventInfo } from "../types";
 
 export const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1501594907352-04cda38ebc29?q=80&w=2070&auto=format&fit=crop";
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8787";
+const API_BASE = import.meta.env.VITE_API_URL || "https://timesofsf.onrender.com";
 
 function getCategoryImage(category: string, id: number): string {
   const images: Record<string, string[]> = {
