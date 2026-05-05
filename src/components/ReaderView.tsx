@@ -30,12 +30,14 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     restDelta: 0.001
   });
 
-  const components = useMemo(() => ({
-    p: ({ children }: any) => {
-      const processText = (text: string): (string | React.ReactNode)[] => {
-        let result: (string | React.ReactNode)[] = [text];
-        
-        // Charts
+  const processText = (children: any, allowCharts = true) => {
+    return React.Children.toArray(children).flatMap(node => {
+      if (typeof node !== 'string') return node;
+      
+      let result: (string | React.ReactNode)[] = [node];
+      
+      // Charts
+      if (allowCharts) {
         result = result.flatMap(part => {
           if (typeof part !== 'string') return part;
           const chartRegex = /\[CHART:(\d+)\]/g;
@@ -54,39 +56,51 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
           parts.push(part.slice(lastIndex));
           return parts;
         });
+      }
 
-        // Entities
-        result = result.flatMap(part => {
-          if (typeof part !== 'string') return part;
-          const entityRegex = /\[\[(.*?)\]\]/g;
-          const parts: (string | React.ReactNode)[] = [];
-          let lastIndex = 0;
-          let match;
-          while ((match = entityRegex.exec(part)) !== null) {
-            parts.push(part.slice(lastIndex, match.index));
-            const entityName = match[1];
-            const entityData = article.entities?.find(e => e.name.toLowerCase() === entityName.toLowerCase());
-            if (entityData) {
-              parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
-            } else {
-              parts.push(entityName);
-            }
-            lastIndex = entityRegex.lastIndex;
+      // Entities
+      result = result.flatMap(part => {
+        if (typeof part !== 'string') return part;
+        const entityRegex = /\[\[(.*?)\]\]/g;
+        const parts: (string | React.ReactNode)[] = [];
+        let lastIndex = 0;
+        let match;
+        while ((match = entityRegex.exec(part)) !== null) {
+          parts.push(part.slice(lastIndex, match.index));
+          const entityName = match[1];
+          const entityData = article.entities?.find(e => e.name.toLowerCase() === entityName.toLowerCase());
+          if (entityData) {
+            parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
+          } else {
+            parts.push(entityName);
           }
-          parts.push(part.slice(lastIndex));
-          return parts;
-        });
-
-        return result;
-      };
-
-      const finalChildren = React.Children.toArray(children).flatMap(node => {
-        if (typeof node === 'string') return processText(node);
-        return node;
+          lastIndex = entityRegex.lastIndex;
+        }
+        parts.push(part.slice(lastIndex));
+        return parts;
       });
 
-      return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
-    }
+      return result;
+    });
+  };
+
+  const components = useMemo(() => ({
+    p: ({ children }: any) => {
+      const processed = processText(children);
+      const hasChart = processed.some(child => React.isValidElement(child) && (child.type as any).name === 'DataVisChart');
+      
+      // Use div if contains block-level elements like charts to avoid invalid HTML
+      const Component = hasChart ? 'div' : 'p';
+      return <Component className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{processed}</Component>;
+    },
+    li: ({ children }: any) => (
+      <li className="mb-4 leading-relaxed font-serif text-lg text-ink/80 ml-6 list-disc">
+        {processText(children, false)}
+      </li>
+    ),
+    h1: ({ children }: any) => <h1 className="text-3xl font-black mt-12 mb-6">{processText(children, false)}</h1>,
+    h2: ({ children }: any) => <h2 className="text-2xl font-black mt-10 mb-5">{processText(children, false)}</h2>,
+    h3: ({ children }: any) => <h3 className="text-xl font-black mt-8 mb-4">{processText(children, false)}</h3>,
   }), [article]);
 
   return (
@@ -99,42 +113,28 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
       className="fixed inset-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
     >
       {/* Subtle Progress Header */}
-          <nav className="sticky top-0 z-50 bg-paper/90 backdrop-blur-sm border-b border-ink/5 flex flex-col">
-            <div className="px-6 py-4 flex items-center justify-between">
-              <button 
-                onClick={onClose}
-              className="flex items-center gap-3 text-[10px] font-mono font-bold uppercase tracking-[0.2em] group"
-            >
-              <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
-              Close
-            </button>
-            <div className="flex items-center gap-8">
-              <div className="hidden lg:block text-[10px] font-mono uppercase tracking-widest opacity-30 whitespace-nowrap">
-                Times of SF / Special Report
+          <nav className="fixed top-0 left-0 right-0 z-[60] bg-paper/90 backdrop-blur-md border-b border-ink/5">
+            <div className="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <button onClick={onClose} className="p-1 hover:text-accent transition-colors"><X size={20} /></button>
+                <div className="hidden md:block w-[1px] h-4 bg-ink/10" />
+                <span className="hidden md:block font-serif text-sm italic text-ink/40 line-clamp-1">{article.title}</span>
               </div>
-              <div className="flex items-center gap-6">
-                <button 
-                  title={isBookmarked ? "Remove Bookmark" : "Bookmark Article"} 
-                  onClick={onBookmark}
-                  className={cn("group p-2 hover:bg-ink/5 rounded-full transition-colors relative", isBookmarked && "text-accent")}
-                >
-                  <Bookmark size={18} className={cn(isBookmarked && "fill-accent")} />
-                </button>
-                <div className="w-px h-4 bg-ink/10" />
-                <button 
-                  title="Share News" 
-                  onClick={onShare}
-                  className="group flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest hover:text-accent transition-colors"
-                >
-                  <Share2 size={16} />
-                  <span className="hidden sm:inline">Share</span>
-                </button>
-                <button onClick={onClose} className="p-1 hover:rotate-90 transition-transform"><X size={20} /></button>
+              
+              <div className="flex items-center gap-4">
+                  <button 
+                    onClick={onBookmark}
+                    className={cn("hover:text-accent transition-colors", isBookmarked && "text-accent")}
+                  >
+                    <Bookmark size={18} className={cn(isBookmarked && "fill-accent")} />
+                  </button>
+                  <button onClick={onShare} className="hover:text-accent transition-colors">
+                    <Share2 size={18} />
+                  </button>
               </div>
             </div>
-          </div>
             <motion.div 
-              className="h-[2px] bg-accent origin-left w-full absolute bottom-[-1px] left-0 right-0 z-50"
+              className="h-[3px] bg-accent origin-left w-full absolute bottom-0 left-0 right-0"
               style={{ scaleX }}
             />
           </nav>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Article } from './types';
-import { fetchArticles, FALLBACK_ARTICLES } from './services/newsService';
+import { Article, EventInfo } from './types';
+import { fetchArticles, fetchEvents } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
 import { motion, AnimatePresence } from 'motion/react';
@@ -369,12 +369,14 @@ export default function App() {
              </div>
 
              {/* Big Title on its own line */}
-             <h1 
-              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-              className="text-[clamp(1.5rem,7.8vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-none pt-1 md:pt-2 pb-0 block whitespace-nowrap"
-            >
-                Times of San Francisco
-             </h1>
+             <div className="flex justify-center items-center py-2 md:py-4 px-4 md:px-12">
+               <h1 
+                onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+                className="text-[clamp(1.5rem,7.2vw,120px)] font-black tracking-tighter uppercase text-center select-none cursor-pointer hover:text-accent transition-all duration-700 leading-[0.85] block whitespace-nowrap"
+              >
+                  Times of San Francisco
+               </h1>
+             </div>
 
              <div className="text-center mt-[-4px] md:mt-[-8px] mb-1">
                <span className="inline-block text-[10px] md:text-[11px] font-mono font-medium uppercase tracking-[0.4em] text-ink opacity-60">

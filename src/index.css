@@ -50,43 +50,62 @@
 
 /* Editorial Polish Classes */
 .hairline-b {
-  @apply border-b border-ink/5;
+  @apply border-b border-ink/10;
 }
 
 .hairline-t {
-  @apply border-t border-ink/5;
+  @apply border-t border-ink/10;
 }
 
 .editorial-divider {
-  @apply border-t border-ink/10 my-4 relative;
+  @apply border-t border-ink/10 my-8 relative;
 }
 
 .editorial-divider::after {
-  content: '';
-  @apply absolute -top-[1px] left-0 w-12 h-[1px] bg-ink;
+  content: '§';
+  @apply absolute -top-4 left-1/2 -translate-x-1/2 bg-paper px-4 text-ink/30 font-serif text-lg;
 }
 
 .markdown-body {
-  @apply font-serif text-[19px] leading-[1.65] text-ink/90;
+  @apply font-serif text-[20px] leading-[1.7] text-ink/90 antialiased;
 }
 
 /* Drop Cap Styling */
 .markdown-body p:first-of-type::first-letter {
-  @apply float-left text-7xl font-serif font-black mr-4 mt-2 leading-[0.8] text-ink;
+  @apply float-left text-[88px] font-serif font-black mr-4 mt-3 leading-[0.7] text-accent;
+  text-shadow: 2px 2px 0px rgba(0,0,0,0.05);
 }
 
 .markdown-body h2 {
-  @apply text-3xl font-bold mt-12 mb-6 font-serif border-b border-ink/5 pb-2;
+  @apply text-3xl font-bold mt-16 mb-8 font-serif tracking-tight border-b border-ink/5 pb-4 text-ink;
 }
 
 .markdown-body p {
-  @apply mb-6;
+  @apply mb-8;
 }
 
 .markdown-body blockquote {
-  @apply border-l-2 border-accent pl-8 py-2 italic my-12 text-2xl font-serif text-ink/80 leading-relaxed;
+  @apply relative pl-12 py-6 italic my-16 text-2xl font-serif text-ink/80 leading-relaxed border-l-4 border-accent bg-accent/5 rounded-r-lg;
+}
+
+.markdown-body blockquote::before {
+  content: '“';
+  @apply absolute left-4 top-2 text-6xl text-accent/20 font-serif;
+}
+
+.markdown-body ul, .markdown-body ol {
+  @apply my-8 space-y-4 pl-6;
+}
+
+.markdown-body li {
+  @apply relative list-none pl-6;
+}
+
+.markdown-body li::before {
+  content: '—';
+  @apply absolute left-0 text-accent font-bold;
 }
 
 .news-grid-item {
-  @apply border-ink/5 transition-all duration-500;
+  @apply border-ink/5 transition-all duration-500 hover:shadow-xl hover:-translate-y-1 bg-white/50 backdrop-blur-sm rounded-xl p-4;
 }
