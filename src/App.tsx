@@ -44,12 +44,21 @@ export default function App() {
         setFilteredArticles(data);
         setEvents(eventsData);
 
-        // Deep linking: check URL for articleId (which is now the slug)
+        // Deep linking: check URL for articleId (slug or id)
         const params = new URLSearchParams(window.location.search);
-        const articleParam = params.get('articleId');
+        const articleParam = params.get('articleId')?.toLowerCase();
+        
         if (articleParam) {
-          const article = data.find(a => a.slug === articleParam || a.id === articleParam);
-          if (article) setSelectedArticle(article);
+          const article = data.find(a => 
+            a.slug?.toLowerCase() === articleParam || 
+            a.id?.toLowerCase() === articleParam
+          );
+          if (article) {
+            console.log("Deep link success: Opening", article.title);
+            setSelectedArticle(article);
+          } else {
+            console.warn("Deep link failed: Could not find article with slug", articleParam);
+          }
         }
       } catch (err) {
         if (active) toast.error("Could not reach live news wire.");
