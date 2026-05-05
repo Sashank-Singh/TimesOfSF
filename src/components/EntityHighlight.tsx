@@ -17,17 +17,17 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
       const tooltipWidth = Math.min(280, window.innerWidth - 40);
       const padding = 20;
       
-      const centerX = rect.left + rect.width / 2;
-      const leftEdge = centerX - tooltipWidth / 2;
-      const rightEdge = centerX + tooltipWidth / 2;
-
-      let newOffset = 0;
-      if (leftEdge < padding) {
-        newOffset = padding - leftEdge;
-      } else if (rightEdge > window.innerWidth - padding) {
-        newOffset = window.innerWidth - padding - rightEdge;
+      const preferredX = rect.left + rect.width / 2;
+      const halfWidth = tooltipWidth / 2;
+      
+      let actualX = preferredX;
+      if (preferredX - halfWidth < padding) {
+        actualX = padding + halfWidth;
+      } else if (preferredX + halfWidth > window.innerWidth - padding) {
+        actualX = window.innerWidth - padding - halfWidth;
       }
-      setOffset(newOffset);
+
+      setOffset(actualX - preferredX);
     }
   }, [showTooltip]);
 
