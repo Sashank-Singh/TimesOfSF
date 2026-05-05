@@ -43,6 +43,7 @@ export interface SourceExtraction {
   summary: string;
   textExcerpt: string;
   facts: string[];
+  imageUrl?: string;
 }
 
 export interface PipelineRunResult {
@@ -59,6 +60,7 @@ export interface GeneratedPost {
   headline: string;
   slug: string;
   dek: string;
+  imageUrl?: string;
   bodyMarkdown: string;
   shortPost: string;
   topic: string;

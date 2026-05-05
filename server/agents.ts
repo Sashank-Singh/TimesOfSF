@@ -10,12 +10,13 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
     "Your goal is to transform dry source facts into a compelling, narrative-driven editorial that feels like a deep-dive from The New Yorker or The Atlantic.",
     "Write with analytical authority, citing specific locations, people, and historical context of San Francisco.",
     "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, entities, dataBlocks.",
+    "IMPORTANT: Use inline citations throughout the text like (Source Name) when referencing facts.",
     "bodyMarkdown should be structured with semantic headers, balanced paragraphs, and at least one high-impact blockquote (using > syntax).",
-    "IMPORTANT: Use double brackets like [[Mission District]] for people, places, and tech terms.",
-    "IMPORTANT: Insert [CHART:index] where data-driven insights from the sources would benefit from visualization.",
+    "MANDATORY: Use double brackets like [[Mission District]] for at least 3-5 key people, places, or tech terms mentioned in your story.",
+    "MANDATORY: Insert [CHART:index] at the end of a paragraph where the data in your 'dataBlocks' would provide the most visual impact.",
     "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
     "entities must be an array of {name, definition} for your bracketed terms.",
-    "dataBlocks must be an array of {type: 'chart', title, data: [{label, value}]}.",
+    "dataBlocks must be an array of {type: 'chart', title, data: [{label, value}]} representing the core statistics from the sources.",
     `Source packets: ${JSON.stringify(sources)}`,
   ].join("\n");
 }

@@ -2,7 +2,7 @@ import { Article, EventInfo } from "../types";
 
 export const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1501594907352-04cda38ebc29?q=80&w=2070&auto=format&fit=crop";
 
-const API_BASE = "http://localhost:8787";
+const API_BASE = import.meta.env.VITE_API_URL || "http://127.0.0.1:8787";
 
 function getCategoryImage(category: string, id: number): string {
   const images: Record<string, string[]> = {
@@ -69,8 +69,8 @@ function dbPostToArticle(post: any): Article {
     category,
     excerpt: post.dek || post.short_post || "",
     content: post.body_markdown,
-    imageUrl: getCategoryImage(category, post.id),
-    imageCredit: "Unsplash",
+    imageUrl: post.imageUrl || getCategoryImage(category, post.id),
+    imageCredit: post.imageUrl ? "Editorial Photo" : "Unsplash",
     readTime: `${Math.max(3, Math.ceil((post.body_markdown || "").split(" ").length / 200))} min`,
     tldr: post.tldr || undefined,
     entities: post.entities || [],
@@ -79,13 +79,8 @@ function dbPostToArticle(post: any): Article {
 }
 
 export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
-  const ai = getAI();
-  if (!ai) {
-    return FALLBACK_ARTICLES;
-  }
-
   try {
-    const res = await fetch(`${API_BASE}/api/posts?limit=100`);
+    const res = await fetch(`${API_BASE}/api/posts`);
     if (!res.ok) return [];
     const posts = await res.json();
     if (!Array.isArray(posts) || posts.length === 0) return [];

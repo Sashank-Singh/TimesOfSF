@@ -27,6 +27,7 @@ export async function ensureSchema() {
         article_url TEXT,
         canonical_url TEXT,
         headline TEXT,
+        image_url TEXT,
         published_at TIMESTAMPTZ,
         summary TEXT,
         text_excerpt TEXT,
@@ -43,6 +44,7 @@ export async function ensureSchema() {
         headline TEXT NOT NULL,
         slug TEXT NOT NULL UNIQUE,
         dek TEXT NOT NULL,
+        image_url TEXT,
         body_markdown TEXT NOT NULL,
         short_post TEXT NOT NULL,
         credits JSONB NOT NULL,
@@ -93,7 +95,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
   const result = attempt.result;
   await sql`
     INSERT INTO source_attempts (
-      run_id, source_name, status, article_url, canonical_url, headline, published_at,
+      run_id, source_name, status, article_url, canonical_url, headline, image_url, published_at,
       summary, text_excerpt, facts, failure_reason
     )
     VALUES (
@@ -103,6 +105,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
       ${result?.articleUrl ?? null},
       ${result?.canonicalUrl ?? null},
       ${result?.headline ?? null},
+      ${result?.imageUrl ?? null},
       ${result?.publishedAt ?? null},
       ${result?.summary ?? null},
       ${result?.textExcerpt ?? null},
@@ -114,13 +117,16 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
 
 export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
   const inserted = (await sql`
-    INSERT INTO generated_posts (run_id, topic, headline, slug, dek, body_markdown, short_post, credits, tldr, entities, data_blocks)
+    INSERT INTO generated_posts (
+      run_id, topic, headline, slug, dek, image_url, body_markdown, short_post, credits, tldr, entities, data_blocks
+    )
     VALUES (
       ${runId},
       ${post.topic},
       ${post.headline},
       ${post.slug},
       ${post.dek},
+      ${post.imageUrl ?? null},
       ${post.bodyMarkdown},
       ${post.shortPost},
       ${JSON.stringify(post.credits)},
@@ -153,6 +159,7 @@ export async function fetchRecentPosts(limit = 1000) {
       headline,
       slug,
       dek,
+      image_url as "imageUrl",
       body_markdown,
       short_post,
       credits,

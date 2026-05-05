@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Article, EventInfo } from './types';
+import { Article } from './types';
 import { fetchArticles, fetchEvents } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
+import { EventsPanel } from './components/EventsPanel';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 
 export default function App() {
-  const [articles, setArticles] = useState<Article[]>(FALLBACK_ARTICLES);
-  const [filteredArticles, setFilteredArticles] = useState<Article[]>(FALLBACK_ARTICLES);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
+  const [events, setEvents] = useState<EventInfo[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -35,16 +37,14 @@ export default function App() {
       }, 10000);
 
       try {
-        const data = await fetchArticles();
+        const [data, eventsData] = await Promise.all([fetchArticles(), fetchEvents()]);
         if (!active) return;
         
-        if (data.length === FALLBACK_ARTICLES.length && data[0].id === FALLBACK_ARTICLES[0].id) {
-           toast.info("Showing news archive.");
-        }
         setArticles(data);
         setFilteredArticles(data);
+        setEvents(eventsData);
       } catch (err) {
-        if (active) toast.error("Could not reach live news wire. Showing latest archive.");
+        if (active) toast.error("Could not reach live news wire.");
       } finally {
         clearTimeout(safetyTimeout);
         if (active) setLoading(false);
@@ -90,7 +90,7 @@ export default function App() {
   }, [searchQuery]);
 
   useEffect(() => {
-    const TODAY = new Date("2026-04-28T23:59:59Z"); 
+    const TODAY = new Date();
     const SEVEN_DAYS_AGO = new Date(TODAY);
     SEVEN_DAYS_AGO.setDate(TODAY.getDate() - 8); // 8 days for buffer
 
@@ -99,7 +99,7 @@ export default function App() {
     // Filter by timestamp (within ~8 days)
     result = result.filter(a => {
       const articleDate = new Date(a.date);
-      return articleDate >= SEVEN_DAYS_AGO && articleDate <= TODAY;
+      return articleDate >= SEVEN_DAYS_AGO;
     });
 
     // Sort by date (newest first)
@@ -297,7 +297,7 @@ export default function App() {
               >
                 Front Page
               </button>
-              {categories.map(cat => (
+              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food'].map(cat => (
                 <button 
                   key={cat}
                   onClick={() => { setSelectedCategory(cat); setIsMenuOpen(false); }}
@@ -369,14 +369,12 @@ export default function App() {
              </div>
 
              {/* Big Title on its own line */}
-             <div className="flex justify-center items-center py-2 md:py-4 px-4 md:px-12">
-               <h1 
-                onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-                className="text-[clamp(1.5rem,7.2vw,120px)] font-black tracking-tighter uppercase text-center select-none cursor-pointer hover:text-accent transition-all duration-700 leading-[0.85] block whitespace-nowrap"
-              >
-                  Times of San Francisco
-               </h1>
-             </div>
+             <h1 
+              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+              className="text-[clamp(1.5rem,7.8vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-none pt-1 md:pt-2 pb-0 block whitespace-nowrap"
+            >
+                Times of San Francisco
+             </h1>
 
              <div className="text-center mt-[-4px] md:mt-[-8px] mb-1">
                <span className="inline-block text-[10px] md:text-[11px] font-mono font-medium uppercase tracking-[0.4em] text-ink opacity-60">
@@ -387,7 +385,7 @@ export default function App() {
           
           <nav className="flex items-center justify-center py-1 md:py-2 text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
             <div className="flex items-center gap-4 md:gap-8 flex-wrap justify-center">
-              {categories.map(cat => (
+              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
                 <button 
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
@@ -417,46 +415,57 @@ export default function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-20 lg:py-24">
-        {filteredArticles.length === 0 ? (
-          <div className="py-32 text-center">
-            <p className="text-xl italic font-serif text-ink/40">No stories found matches your criteria.</p>
-            <button 
-              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-              className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
-            >
-              Reset Filters
-            </button>
+        {selectedCategory === 'Events' ? (
+          <div className="max-w-3xl mx-auto">
+            <h1 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h1>
+            <EventsPanel events={events} />
           </div>
         ) : (
-          <>
-            <AnimatePresence mode="popLayout">
-              {filteredArticles.length > 0 && !selectedCategory && !searchQuery && (
-                <div key="featured" className="mb-16">
-                  <ArticleCard 
-                    article={filteredArticles[0]} 
-                    onClick={setSelectedArticle} 
-                    featured 
-                    isBookmarked={bookmarkedIds.includes(filteredArticles[0].id)}
-                    onBookmark={(e) => handleBookmark(filteredArticles[0].id, e)}
-                    onShare={(e) => handleShare(filteredArticles[0], e)}
-                  />
+          <div className="flex flex-col lg:flex-row gap-12">
+            <div className="flex-grow">
+              {filteredArticles.length === 0 ? (
+                <div className="py-32 text-center">
+                  <p className="text-xl italic font-serif text-ink/40">No stories available. The agent pipeline is currently fetching real data.</p>
+                  <button 
+                    onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+                    className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
+                  >
+                    Reset Filters
+                  </button>
                 </div>
-              )}
-            </AnimatePresence>
+              ) : (
+                <>
+                  <AnimatePresence mode="popLayout">
+                    {filteredArticles.length > 0 && !selectedCategory && !searchQuery && (
+                      <div key="featured" className="mb-16">
+                        <ArticleCard 
+                          article={filteredArticles[0]} 
+                          onClick={setSelectedArticle} 
+                          featured 
+                          isBookmarked={bookmarkedIds.includes(filteredArticles[0].id)}
+                          onBookmark={(e) => handleBookmark(filteredArticles[0].id, e)}
+                          onShare={(e) => handleShare(filteredArticles[0], e)}
+                        />
+                      </div>
+                    )}
+                  </AnimatePresence>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
-              {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
-                <ArticleCard 
-                  key={article.id} 
-                  article={article} 
-                  onClick={setSelectedArticle}
-                  isBookmarked={bookmarkedIds.includes(article.id)}
-                  onBookmark={(e) => handleBookmark(article.id, e)}
-                  onShare={(e) => handleShare(article, e)}
-                />
-              ))}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
+                    {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
+                      <ArticleCard 
+                        key={article.id} 
+                        article={article} 
+                        onClick={setSelectedArticle}
+                        isBookmarked={bookmarkedIds.includes(article.id)}
+                        onBookmark={(e) => handleBookmark(article.id, e)}
+                        onShare={(e) => handleShare(article, e)}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-          </>
+          </div>
         )}
 
         {/* Footer */}
