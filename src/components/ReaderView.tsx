@@ -8,8 +8,6 @@ import { DEFAULT_IMAGE } from "../services/newsService";
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
 
-import { expandArticle } from "../services/newsService";
-
 interface ReaderViewProps {
   article: Article | null;
   onClose: () => void;
@@ -19,9 +17,7 @@ interface ReaderViewProps {
 }
 
 function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
-  const [showSummary, setShowSummary] = useState(true);
-  const [isExpanding, setIsExpanding] = useState(false);
-  const [content, setContent] = useState(article.content);
+  const [showSummary, setShowSummary] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   
   const { scrollYProgress } = useScroll({
@@ -269,29 +265,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
 
               <div className="lg:col-span-8 lg:col-start-5">
                 <div className="markdown-body">
-                  <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
-                </div>
-                
-                <div className="mt-16 p-8 border-2 border-ink bg-paper shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] group/expand">
-                  <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-mono font-bold uppercase tracking-widest">Deepen this report</h4>
-                      <p className="text-[10px] font-mono text-ink/40 uppercase tracking-tight">Synthesize a longer, feature-length version using AI analysis.</p>
-                    </div>
-                    <button 
-                      onClick={async () => {
-                        setIsExpanding(true);
-                        const expanded = await expandArticle(article.id);
-                        if (expanded) setContent(expanded);
-                        setIsExpanding(false);
-                      }}
-                      disabled={isExpanding}
-                      className="px-8 py-3 bg-accent text-paper text-[10px] font-bold uppercase tracking-widest hover:bg-ink transition-colors disabled:opacity-50 flex items-center gap-3"
-                    >
-                      {isExpanding ? "Synthesizing..." : "Expand Full Feature"}
-                      <ChevronDown size={14} className={cn("transition-transform", isExpanding && "animate-bounce")} />
-                    </button>
-                  </div>
+                  <ReactMarkdown components={components as any}>{article.content}</ReactMarkdown>
                 </div>
                 
                 {/* Mobile/Tablet Additional Images */}

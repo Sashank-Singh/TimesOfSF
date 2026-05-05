@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Article } from './types';
-import { fetchArticles, fetchEvents } from './services/newsService';
+import { fetchArticles, FALLBACK_ARTICLES } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
-import { EventsPanel } from './components/EventsPanel';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 
 export default function App() {
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
-  const [events, setEvents] = useState<EventInfo[]>([]);
+  const [articles, setArticles] = useState<Article[]>(FALLBACK_ARTICLES);
+  const [filteredArticles, setFilteredArticles] = useState<Article[]>(FALLBACK_ARTICLES);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -37,14 +35,16 @@ export default function App() {
       }, 10000);
 
       try {
-        const [data, eventsData] = await Promise.all([fetchArticles(), fetchEvents()]);
+        const data = await fetchArticles();
         if (!active) return;
         
+        if (data.length === FALLBACK_ARTICLES.length && data[0].id === FALLBACK_ARTICLES[0].id) {
+           toast.info("Showing news archive.");
+        }
         setArticles(data);
         setFilteredArticles(data);
-        setEvents(eventsData);
       } catch (err) {
-        if (active) toast.error("Could not reach live news wire.");
+        if (active) toast.error("Could not reach live news wire. Showing latest archive.");
       } finally {
         clearTimeout(safetyTimeout);
         if (active) setLoading(false);
@@ -90,7 +90,7 @@ export default function App() {
   }, [searchQuery]);
 
   useEffect(() => {
-    const TODAY = new Date();
+    const TODAY = new Date("2026-04-28T23:59:59Z"); 
     const SEVEN_DAYS_AGO = new Date(TODAY);
     SEVEN_DAYS_AGO.setDate(TODAY.getDate() - 8); // 8 days for buffer
 
@@ -99,7 +99,7 @@ export default function App() {
     // Filter by timestamp (within ~8 days)
     result = result.filter(a => {
       const articleDate = new Date(a.date);
-      return articleDate >= SEVEN_DAYS_AGO;
+      return articleDate >= SEVEN_DAYS_AGO && articleDate <= TODAY;
     });
 
     // Sort by date (newest first)
@@ -297,7 +297,7 @@ export default function App() {
               >
                 Front Page
               </button>
-              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food'].map(cat => (
+              {categories.map(cat => (
                 <button 
                   key={cat}
                   onClick={() => { setSelectedCategory(cat); setIsMenuOpen(false); }}
@@ -385,7 +385,7 @@ export default function App() {
           
           <nav className="flex items-center justify-center py-1 md:py-2 text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
             <div className="flex items-center gap-4 md:gap-8 flex-wrap justify-center">
-              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
+              {categories.map(cat => (
                 <button 
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
@@ -415,57 +415,46 @@ export default function App() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-20 lg:py-24">
-        {selectedCategory === 'Events' ? (
-          <div className="max-w-3xl mx-auto">
-            <h1 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h1>
-            <EventsPanel events={events} />
+        {filteredArticles.length === 0 ? (
+          <div className="py-32 text-center">
+            <p className="text-xl italic font-serif text-ink/40">No stories found matches your criteria.</p>
+            <button 
+              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+              className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
+            >
+              Reset Filters
+            </button>
           </div>
         ) : (
-          <div className="flex flex-col lg:flex-row gap-12">
-            <div className="flex-grow">
-              {filteredArticles.length === 0 ? (
-                <div className="py-32 text-center">
-                  <p className="text-xl italic font-serif text-ink/40">No stories available. The agent pipeline is currently fetching real data.</p>
-                  <button 
-                    onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-                    className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
-                  >
-                    Reset Filters
-                  </button>
+          <>
+            <AnimatePresence mode="popLayout">
+              {filteredArticles.length > 0 && !selectedCategory && !searchQuery && (
+                <div key="featured" className="mb-16">
+                  <ArticleCard 
+                    article={filteredArticles[0]} 
+                    onClick={setSelectedArticle} 
+                    featured 
+                    isBookmarked={bookmarkedIds.includes(filteredArticles[0].id)}
+                    onBookmark={(e) => handleBookmark(filteredArticles[0].id, e)}
+                    onShare={(e) => handleShare(filteredArticles[0], e)}
+                  />
                 </div>
-              ) : (
-                <>
-                  <AnimatePresence mode="popLayout">
-                    {filteredArticles.length > 0 && !selectedCategory && !searchQuery && (
-                      <div key="featured" className="mb-16">
-                        <ArticleCard 
-                          article={filteredArticles[0]} 
-                          onClick={setSelectedArticle} 
-                          featured 
-                          isBookmarked={bookmarkedIds.includes(filteredArticles[0].id)}
-                          onBookmark={(e) => handleBookmark(filteredArticles[0].id, e)}
-                          onShare={(e) => handleShare(filteredArticles[0], e)}
-                        />
-                      </div>
-                    )}
-                  </AnimatePresence>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
-                    {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
-                      <ArticleCard 
-                        key={article.id} 
-                        article={article} 
-                        onClick={setSelectedArticle}
-                        isBookmarked={bookmarkedIds.includes(article.id)}
-                        onBookmark={(e) => handleBookmark(article.id, e)}
-                        onShare={(e) => handleShare(article, e)}
-                      />
-                    ))}
-                  </div>
-                </>
               )}
+            </AnimatePresence>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
+              {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
+                <ArticleCard 
+                  key={article.id} 
+                  article={article} 
+                  onClick={setSelectedArticle}
+                  isBookmarked={bookmarkedIds.includes(article.id)}
+                  onBookmark={(e) => handleBookmark(article.id, e)}
+                  onShare={(e) => handleShare(article, e)}
+                />
+              ))}
             </div>
-          </div>
+          </>
         )}
 
         {/* Footer */}
