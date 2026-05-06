@@ -355,7 +355,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Editorial Header */}
-      <div className="border-b-[4px] border-ink bg-paper pt-2 md:pt-4 px-4 md:px-6">
+      <div className="border-b-[4px] border-ink bg-paper pt-2 md:pt-4 px-4 md:px-6 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col gap-2 md:gap-4 mb-2 md:mb-4 border-b border-ink pb-2 md:pb-4">
              {/* Top Meta Bar */}
@@ -399,45 +399,49 @@ export default function App() {
 
              {/* Big Title on its own line */}
              <h1 
-              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-              className="text-[clamp(1.5rem,7.8vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-none pt-1 md:pt-2 pb-0 block whitespace-nowrap"
+              onClick={() => { setSelectedCategory(null); setSearchQuery(""); window.scrollTo(0,0); }}
+              className="text-[clamp(1.5rem,8vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-none block whitespace-nowrap"
             >
                 Times of San Francisco
              </h1>
 
-             <div className="text-center mt-[-4px] md:mt-[-8px] mb-1">
-               <span className="inline-block text-[10px] md:text-[11px] font-mono font-medium uppercase tracking-[0.4em] text-ink opacity-60">
+             <div className="text-center mt-1 md:mt-2">
+               <span className="inline-block text-[9px] md:text-[11px] font-mono font-medium uppercase tracking-[0.3em] md:tracking-[0.4em] text-ink opacity-60">
                  {currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                </span>
              </div>
           </div>
           
-          <nav className="flex items-center justify-center py-1 md:py-2 text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
-            <div className="flex items-center gap-4 md:gap-8 flex-wrap justify-center">
-              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
+          <nav className="relative">
+            <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
+              <div className="flex items-center gap-6 md:gap-10 flex-nowrap min-w-max md:min-w-0">
+                {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
+                  <button 
+                    key={cat}
+                    onClick={() => { setSelectedCategory(cat); window.scrollTo(0,0); }}
+                    className={cn(
+                      "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
+                      selectedCategory === cat ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                    )}
+                  >
+                    {cat}
+                  </button>
+                ))}
+                <div className="w-px h-4 bg-ink/10 mx-2" />
                 <button 
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => { setSelectedCategory('Bookmarks'); window.scrollTo(0,0); }}
                   className={cn(
-                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
-                    selectedCategory === cat ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
+                    selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
                   )}
                 >
-                  {cat}
+                  <BookmarkIcon size={12} />
+                  <span>Reading List</span>
                 </button>
-              ))}
-              <div className="w-px h-4 bg-ink/10 hidden sm:block mx-2" />
-              <button 
-                onClick={() => setSelectedCategory('Bookmarks')}
-                className={cn(
-                  "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
-                  selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
-                )}
-              >
-                <BookmarkIcon size={12} />
-                <span className="hidden sm:inline">Reading List</span>
-              </button>
+              </div>
             </div>
+            {/* Fade effect for scroll indicators on mobile */}
+            <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-paper to-transparent pointer-events-none md:hidden" />
           </nav>
         </div>
       </div>
@@ -479,7 +483,7 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 md:gap-x-12 gap-y-12 md:gap-y-16">
                     {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
                       <ArticleCard 
                         key={article.id} 
