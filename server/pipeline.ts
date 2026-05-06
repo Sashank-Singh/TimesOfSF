@@ -73,8 +73,12 @@ async function processTopic(topic: TrendCandidate): Promise<PipelineRunResult> {
   await createRun(runId, topic);
 
   const sourcesToTry = PREFERRED_SOURCES.filter(s => s !== topic?.primarySource?.sourceName);
-  const sourcePromises = sourcesToTry.map((sourceName) => attemptSource(topic, sourceName));
-  const attempts = await Promise.all(sourcePromises);
+  const attempts: SourceAttempt[] = [];
+  
+  // Process sources sequentially to minimize memory spikes on Render
+  for (const sourceName of sourcesToTry) {
+    attempts.push(await attemptSource(topic, sourceName));
+  }
 
   if (topic.primarySource) {
     try {
@@ -182,7 +186,15 @@ export async function runPipeline() {
   
   console.log(`🚀 Starting batch processing for ${targets.length} topics...`);
   
-  const results = await Promise.allSettled(targets.map(t => processTopic(t)));
+  const results: PipelineRunResult[] = [];
+  for (const target of targets) {
+    try {
+      const res = await processTopic(target);
+      results.push(res);
+    } catch (err) {
+      console.error(`Failed to process topic ${target.topic}:`, err);
+    }
+  }
   
   // Background task: update the events table
   try {
@@ -196,5 +208,5 @@ export async function runPipeline() {
     console.error("Pipeline failed to update events:", err);
   }
 
-  return results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean);
+  return results;
 }
