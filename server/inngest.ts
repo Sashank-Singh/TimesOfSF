@@ -23,12 +23,15 @@ export async function loadInngestState(): Promise<InngestModuleState> {
   if (cachedState) return cachedState;
 
   if (!config.inngestEventKey || !config.inngestSigningKey) {
+    console.warn("⚠️ INNGEST NOT ENABLED: Missing INNGEST_EVENT_KEY or INNGEST_SIGNING_KEY in environment variables.");
     cachedState = {
       enabled: false,
       reason: "Inngest env vars are not configured. Manual pipeline mode is still available.",
     };
     return cachedState;
   }
+
+  console.log("🚀 INITIALIZING INNGEST: Automation mode active.");
 
   try {
     const [{ Inngest }, { serve }] = await Promise.all([import("inngest"), import("inngest/express")]);

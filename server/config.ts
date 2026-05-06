@@ -37,7 +37,7 @@ const llmProvider = readOptionalProvider();
 export const config = {
   appEnv: process.env.NODE_ENV ?? "development",
   port: readOptionalInt("PORT", 8787),
-  appUrl: process.env.APP_URL ?? "http://localhost:8787",
+  appUrl: process.env.RENDER_EXTERNAL_URL ?? process.env.APP_URL ?? "http://localhost:8787",
   llmProvider,
   llmApiKey: readProviderApiKey(llmProvider),
   geminiApiKey: process.env.GEMINI_API_KEY,
