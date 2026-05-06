@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
+import { CityVitals } from './components/CityVitals';
 
 export default function App() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -353,6 +354,8 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <CityVitals />
 
       {/* Editorial Header */}
       <div className="border-b-[4px] border-ink bg-paper pt-2 md:pt-4 px-4 md:px-6 sticky top-0 z-40">
