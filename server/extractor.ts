@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { SourceExtraction, SourceSearchResult } from "./types";
+import { spawn } from "child_process";
 
 function decodeEntities(input: string) {
   return input
@@ -54,52 +55,79 @@ function buildFacts(summary: string, paragraphs: string[]) {
   return [...new Set(sentences)].slice(0, 3);
 }
 
-export async function extractSource(searchResult: SourceSearchResult): Promise<SourceExtraction> {
-  const response = await fetch(searchResult.articleUrl, {
-    signal: AbortSignal.timeout(config.sourceTimeoutMs),
-    redirect: "follow",
-    headers: {
-      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-      "accept-language": "en-US,en;q=0.9",
-      "cache-control": "no-cache",
-      "pragma": "no-cache",
-    },
+async function runPythonExtractor(url: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const pythonProcess = spawn('./venv/bin/python3', ['server/extractor.py', url]);
+    let result = '';
+    let error = '';
+    
+    pythonProcess.stdout.on('data', (data) => {
+      result += data.toString();
+    });
+    
+    pythonProcess.stderr.on('data', (data) => {
+      error += data.toString();
+    });
+    
+    pythonProcess.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(error || `Python process failed with code ${code}`));
+      } else {
+        try {
+          // Find the last JSON block in stdout to ignore any preceding warnings
+          const jsonMatch = result.match(/(\{[\s\S]*\})/);
+          if (jsonMatch) {
+            resolve(JSON.parse(jsonMatch[1]));
+          } else {
+            reject(new Error(`No JSON found in Python output: ${result}`));
+          }
+        } catch (e) {
+          reject(new Error(`Failed to parse Python output: ${result}`));
+        }
+      }
+    });
   });
+}
 
-  if (!response.ok) {
-    throw new Error(`Article fetch failed with ${response.status}`);
+export async function extractSource(searchResult: SourceSearchResult): Promise<SourceExtraction> {
+  try {
+    const article = await runPythonExtractor(searchResult.articleUrl);
+    
+    // Split text into paragraphs for fact building
+    const paragraphs = article.text
+      .split(/\n\s*\n/)
+      .map((p: string) => p.trim())
+      .filter((p: string) => p.length > 80)
+      .slice(0, 8);
+
+    const facts = buildFacts(article.title, paragraphs);
+
+    return {
+      sourceName: searchResult.sourceName,
+      articleUrl: searchResult.articleUrl,
+      canonicalUrl: searchResult.articleUrl,
+      headline: article.title || searchResult.headline,
+      imageUrl: article.imageUrl || "",
+      publishedAt: article.publishedAt || searchResult.publishedAt,
+      summary: article.title || searchResult.headline,
+      textExcerpt: article.text.slice(0, 3000),
+      facts,
+    };
+  } catch (error) {
+    console.error("News-please extraction failed, falling back to basic metadata:", error);
+    // Minimal fallback if Python fails
+    return {
+      sourceName: searchResult.sourceName,
+      articleUrl: searchResult.articleUrl,
+      canonicalUrl: searchResult.articleUrl,
+      headline: searchResult.headline,
+      imageUrl: "",
+      publishedAt: searchResult.publishedAt,
+      summary: searchResult.headline,
+      textExcerpt: searchResult.summary || "",
+      facts: [searchResult.summary].filter(Boolean) as string[],
+    };
   }
-
-  const html = await response.text();
-  const canonicalUrl = pickMeta(html, "og:url") || response.url || searchResult.articleUrl;
-  const metaTitle = pickMeta(html, "og:title") || pickMeta(html, "twitter:title");
-  const metaDescription =
-    pickMeta(html, "description") ||
-    pickMeta(html, "og:description") ||
-    pickMeta(html, "twitter:description") ||
-    searchResult.summary ||
-    "";
-  const imageUrl = pickMeta(html, "og:image") || pickMeta(html, "twitter:image") || "";
-  const paragraphs = extractParagraphs(html);
-  const textExcerpt = paragraphs.join(" ").slice(0, 2400);
-  const facts = buildFacts(metaDescription, paragraphs);
-
-  if (!metaDescription && textExcerpt.length < 200) {
-    throw new Error("Insufficient accessible article text");
-  }
-
-  return {
-    sourceName: searchResult.sourceName,
-    articleUrl: searchResult.articleUrl,
-    canonicalUrl,
-    headline: metaTitle || searchResult.headline,
-    imageUrl,
-    publishedAt: searchResult.publishedAt,
-    summary: metaDescription || searchResult.headline,
-    textExcerpt,
-    facts,
-  };
 }
 
 export async function searchGoogleImage(query: string): Promise<string | undefined> {
