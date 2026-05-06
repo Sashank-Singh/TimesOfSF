@@ -14,17 +14,17 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
   useLayoutEffect(() => {
     if (showTooltip && anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
-      const tooltipWidth = Math.min(280, window.innerWidth - 40);
-      const padding = 20;
+      const gutter = 16;
+      const tooltipWidth = Math.min(260, window.innerWidth - (gutter * 2));
       
       const preferredX = rect.left + rect.width / 2;
       const halfWidth = tooltipWidth / 2;
       
       let actualX = preferredX;
-      if (preferredX - halfWidth < padding) {
-        actualX = padding + halfWidth;
-      } else if (preferredX + halfWidth > window.innerWidth - padding) {
-        actualX = window.innerWidth - padding - halfWidth;
+      if (preferredX - halfWidth < gutter) {
+        actualX = gutter + halfWidth;
+      } else if (preferredX + halfWidth > window.innerWidth - gutter) {
+        actualX = window.innerWidth - gutter - halfWidth;
       }
 
       setOffset(actualX - preferredX);
@@ -51,7 +51,7 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
             style={{ 
               left: `calc(50% + ${offset}px)`,
               transform: 'translateX(-50%)',
-              width: Math.min(280, window.innerWidth - 40)
+              width: Math.min(260, window.innerWidth - 32)
             }}
             className="absolute bottom-full mb-3 z-[60] p-4 bg-paper border border-ink/10 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.08)] pointer-events-none"
           >
