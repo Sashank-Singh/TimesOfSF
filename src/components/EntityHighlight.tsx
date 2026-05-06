@@ -96,10 +96,12 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
               }}
               className="bg-paper border border-ink/10 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] p-4 pointer-events-auto"
             >
-              <div className="flex flex-col gap-2">
-                <h5 className="text-[10px] font-mono uppercase tracking-[0.2em] font-black text-accent/60">
-                  Context
-                </h5>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest font-black text-accent">
+                  <span>{name}</span>
+                  <span className="opacity-40">→</span>
+                  <span className="opacity-40">Context</span>
+                </div>
                 <p className="text-[13px] leading-relaxed text-ink/80 font-serif italic">
                   {definition}
                 </p>
