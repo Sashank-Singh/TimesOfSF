@@ -153,6 +153,18 @@ export default function App() {
     localStorage.setItem('sf-bookmarks', JSON.stringify(bookmarkedIds));
   }, [bookmarkedIds]);
 
+  useEffect(() => {
+    // Sync with URL parameters for deep-linking
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    const articleId = params.get('articleId');
+    
+    if ((id || articleId) && articles.length > 0) {
+      const found = articles.find(a => a.id === id || a.slug === articleId);
+      if (found) setSelectedArticle(found);
+    }
+  }, [articles]);
+
   const handleBookmark = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setBookmarkedIds(prev => 
@@ -163,7 +175,7 @@ export default function App() {
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${article.slug}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?id=${article.id}`;
     if (navigator.share) {
       navigator.share({
         title: article.title,
@@ -483,7 +495,7 @@ export default function App() {
                     )}
                   </AnimatePresence>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 md:gap-x-12 gap-y-12 md:gap-y-16">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 md:gap-x-8 gap-y-10 md:gap-y-12">
                     {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
                       <ArticleCard 
                         key={article.id} 
@@ -545,7 +557,13 @@ export default function App() {
 
       <ReaderView 
         article={selectedArticle} 
-        onClose={() => setSelectedArticle(null)} 
+        onClose={() => {
+          setSelectedArticle(null);
+          // Clear URL parameter on close
+          const url = new URL(window.location.href);
+          url.searchParams.delete('id');
+          window.history.replaceState({}, '', url);
+        }} 
         isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
         onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}
         onShare={() => selectedArticle && handleShare(selectedArticle)}

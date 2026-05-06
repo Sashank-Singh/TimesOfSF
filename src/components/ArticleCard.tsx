@@ -24,8 +24,8 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
         className="group cursor-pointer border-b-2 border-ink pb-12 mb-12"
         onClick={() => onClick(article)}
       >
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-          <div className="lg:col-span-7 overflow-hidden relative rounded-xl shadow-lg aspect-[16/10] max-h-[500px]">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
+          <div className="lg:col-span-6 overflow-hidden relative rounded-xl shadow-lg aspect-[16/9] max-h-[400px]">
             <img 
               src={article.imageUrl}
               alt={article.title}
@@ -41,15 +41,15 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
               </div>
             )}
           </div>
-          <div className="lg:col-span-5 flex flex-col justify-center py-4 lg:py-12">
-            <div className="flex items-center gap-3 text-accent font-mono text-[11px] uppercase tracking-[0.3em] mb-8">
-              <span className="w-12 h-[1px] bg-accent/30" />
+          <div className="lg:col-span-6 flex flex-col justify-center py-4 lg:py-8">
+            <div className="flex items-center gap-3 text-accent font-mono text-[10px] uppercase tracking-[0.3em] mb-6">
+              <span className="w-10 h-[1px] bg-accent/30" />
               {article.category}
             </div>
-            <h2 className="text-4xl md:text-5xl lg:text-5xl font-black leading-[0.95] mb-6 group-hover:text-accent transition-colors duration-500 tracking-tighter">
+            <h2 className="text-3xl md:text-4xl lg:text-4xl font-black leading-[0.95] mb-5 group-hover:text-accent transition-colors duration-500 tracking-tighter">
               {article.title}
             </h2>
-            <p className="text-base md:text-lg text-ink/70 leading-relaxed italic mb-8 border-l-2 border-ink/5 pl-6 py-1">
+            <p className="text-sm md:text-base text-ink/70 leading-relaxed italic mb-6 border-l-2 border-ink/5 pl-6 py-1">
               {article.excerpt}
             </p>
             <div className="flex items-center gap-4 mb-6">
@@ -107,10 +107,10 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           {article.category}
         </div>
       </div>
-      <h3 className="text-2xl font-bold leading-tight mb-4 group-hover:text-accent transition-colors">
+      <h3 className="text-xl font-bold leading-tight mb-3 group-hover:text-accent transition-colors line-clamp-2">
         {article.title}
       </h3>
-      <p className="text-ink/60 text-[15px] leading-relaxed mb-6 flex-grow line-clamp-3">
+      <p className="text-ink/60 text-sm leading-relaxed mb-4 flex-grow line-clamp-3 opacity-80">
         {article.excerpt}
       </p>
       <div className="flex items-center justify-between text-[9px] font-mono uppercase tracking-widest text-ink/40 pt-4 border-t border-ink/5">
