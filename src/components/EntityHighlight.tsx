@@ -8,26 +8,31 @@ interface EntityHighlightProps {
 
 export function EntityHighlight({ name, definition }: EntityHighlightProps) {
   const [showTooltip, setShowTooltip] = useState(false);
-  const [offset, setOffset] = useState(0);
+  const [position, setPosition] = useState({ left: 0, width: 260, triggerWidth: 0 });
   const anchorRef = useRef<HTMLSpanElement>(null);
 
   useLayoutEffect(() => {
     if (showTooltip && anchorRef.current) {
       const rect = anchorRef.current.getBoundingClientRect();
       const gutter = 16;
-      const tooltipWidth = Math.min(260, window.innerWidth - (gutter * 2));
+      const viewportWidth = window.innerWidth;
+      const tooltipWidth = Math.min(280, viewportWidth - (gutter * 2));
       
-      const preferredX = rect.left + rect.width / 2;
-      const halfWidth = tooltipWidth / 2;
+      // Calculate where the tooltip's left edge SHOULD be to be centered under the word
+      // (Relative to the trigger's own left edge)
+      let leftOffset = (rect.width / 2) - (tooltipWidth / 2);
       
-      let actualX = preferredX;
-      if (preferredX - halfWidth < gutter) {
-        actualX = gutter + halfWidth;
-      } else if (preferredX + halfWidth > window.innerWidth - gutter) {
-        actualX = window.innerWidth - gutter - halfWidth;
+      // Absolute left position in the viewport
+      const absoluteLeft = rect.left + leftOffset;
+      
+      // Clamp to screen edges
+      if (absoluteLeft < gutter) {
+        leftOffset = gutter - rect.left;
+      } else if (absoluteLeft + tooltipWidth > viewportWidth - gutter) {
+        leftOffset = (viewportWidth - gutter) - tooltipWidth - rect.left;
       }
 
-      setOffset(actualX - preferredX);
+      setPosition({ left: leftOffset, width: tooltipWidth, triggerWidth: rect.width });
     }
   }, [showTooltip]);
 
@@ -49,11 +54,10 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
             exit={{ opacity: 0, y: 4, scale: 0.98 }}
             transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{ 
-              left: `calc(50% + ${offset}px)`,
-              transform: 'translateX(-50%)',
-              width: Math.min(260, window.innerWidth - 32)
+              left: `${position.left}px`,
+              width: `${position.width}px`
             }}
-            className="absolute bottom-full mb-3 z-[60] p-4 bg-paper border border-ink/10 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.08)] pointer-events-none"
+            className="absolute bottom-full mb-3 z-[60] p-4 bg-paper border border-ink/10 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] pointer-events-none"
           >
             <div className="flex flex-col gap-2">
               <h5 className="text-[10px] font-mono uppercase tracking-[0.2em] font-black text-accent/60">
@@ -64,13 +68,13 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
               </p>
             </div>
             
-            {/* The Arrow - Centered on Anchor */}
+            {/* The Arrow - Centered on Anchor Word */}
             <div 
-              style={{ left: `calc(50% - ${offset}px)` }}
+              style={{ left: `${(position.triggerWidth / 2) - position.left}px` }}
               className="absolute top-full -translate-x-1/2 w-0 h-0 border-l-[6px] border-r-[6px] border-t-[6px] border-l-transparent border-r-transparent border-t-ink/10" 
             />
             <div 
-              style={{ left: `calc(50% - ${offset}px)` }}
+              style={{ left: `${(position.triggerWidth / 2) - position.left}px` }}
               className="absolute top-full -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-paper mt-[-1px]" 
             />
           </motion.div>
