@@ -228,9 +228,15 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                    (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
                  }}
                />
-               <p className="absolute bottom-4 md:bottom-6 right-4 md:right-6 bg-paper/80 backdrop-blur-md px-3 md:px-4 py-1 md:py-2 text-[8px] md:text-[9px] font-mono tracking-tighter uppercase whitespace-nowrap rounded-sm">
-                 {article.imageCredit || "Field Photography / SF Archive"}
-               </p>
+               <div className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex flex-col items-end gap-1">
+                 <div className="flex items-center gap-2 bg-paper/90 backdrop-blur-md px-3 md:px-4 py-1.5 md:py-2 rounded-sm border border-ink/10 shadow-lg">
+                   <span className="text-[8px] md:text-[9px] font-mono font-bold tracking-widest uppercase text-ink/60">
+                     {article.imageCredit || "Field Photography / SF Archive"}
+                   </span>
+                   <sup className="text-[8px] font-mono text-accent font-bold">(2)</sup>
+                 </div>
+                 <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Press Dispatch / Verified</span>
+               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">

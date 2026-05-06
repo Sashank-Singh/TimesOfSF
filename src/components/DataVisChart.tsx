@@ -6,7 +6,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Cell
+  Cell,
+  Label
 } from "recharts";
 import { motion } from "motion/react";
 
@@ -21,52 +22,72 @@ export function DataVisChart({ title, data }: DataVisChartProps) {
       initial={{ opacity: 0, scale: 0.98 }}
       whileInView={{ opacity: 1, scale: 1 }}
       viewport={{ once: true }}
-      className="my-20 clear-both p-6 md:p-8 border border-ink/10 bg-ink/[0.01] rounded-2xl not-prose"
+      className="my-24 clear-both p-8 md:p-10 border-t-2 border-b-2 border-ink bg-ink/[0.02] not-prose relative"
     >
-      <div className="flex flex-col gap-1 mb-8">
-        <span className="text-[10px] font-mono uppercase tracking-[0.3em] text-accent font-bold">Data Insight</span>
-        <h4 className="text-lg font-black tracking-tight">{title}</h4>
+      <div className="flex flex-col gap-1 mb-10 relative">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono uppercase tracking-[0.4em] text-accent font-bold">Editorial Data</span>
+          <sup className="text-[10px] font-mono text-accent font-bold">(1)</sup>
+        </div>
+        <h4 className="text-2xl font-black tracking-tighter leading-tight max-w-xl italic serif">{title}</h4>
       </div>
       
-      <div className="h-64 w-full">
+      <div className="h-72 w-full relative">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.05)" />
+          <BarChart data={data} margin={{ top: 20, right: 10, left: -25, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.08)" />
             <XAxis 
               dataKey="label" 
               axisLine={false} 
               tickLine={false} 
-              tick={{ fontSize: 10, fontFamily: 'monospace', fill: 'rgba(0,0,0,0.4)' }}
-              dy={10}
+              tick={{ fontSize: 10, fontFamily: 'monospace', fill: 'rgba(0,0,0,0.5)', fontWeight: 'bold' }}
+              dy={15}
             />
             <YAxis 
               axisLine={false} 
               tickLine={false} 
-              tick={{ fontSize: 10, fontFamily: 'monospace', fill: 'rgba(0,0,0,0.4)' }}
+              tick={{ fontSize: 10, fontFamily: 'monospace', fill: 'rgba(0,0,0,0.5)', fontWeight: 'bold' }}
             />
             <Tooltip 
-              cursor={{ fill: 'rgba(0,0,0,0.02)' }}
+              cursor={{ fill: 'rgba(0,0,0,0.03)' }}
               contentStyle={{ 
                 backgroundColor: '#000', 
                 border: 'none', 
-                borderRadius: '8px',
+                borderRadius: '0',
                 color: '#fff',
-                fontSize: '12px',
-                fontFamily: 'monospace'
+                fontSize: '11px',
+                fontFamily: 'monospace',
+                padding: '12px'
               }}
-              itemStyle={{ color: '#fff' }}
+              itemStyle={{ color: '#fff', textTransform: 'uppercase' }}
             />
-            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+            <Bar dataKey="value" radius={[2, 2, 0, 0]} barSize={40}>
               {data.map((_, index) => (
-                <Cell key={`cell-${index}`} fill={index === data.length - 1 ? '#ff3e00' : '#1a1a1a'} />
+                <Cell key={`cell-${index}`} fill={index === data.length - 1 ? '#ff3e00' : '#1a1a1a'} fillOpacity={0.9} />
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
+        
+        {/* Integrated Citation Overlay in the "image" (chart area) */}
+        <div className="absolute top-0 right-0 pointer-events-none opacity-20">
+          <span className="text-[8px] font-mono uppercase tracking-widest vertical-text transform rotate-90 origin-top-right">
+            Times Analysis Unit Ref. SF/{(Math.random() * 1000).toFixed(0)}
+          </span>
+        </div>
       </div>
-      <p className="mt-4 text-[10px] font-mono text-ink/30 uppercase tracking-wider text-center italic">
-        Source: Times of SF Internal Data Engine
-      </p>
+      
+      <div className="mt-12 flex items-center justify-between border-t border-ink/5 pt-6">
+        <div className="flex items-center gap-4">
+          <span className="text-[9px] font-mono font-bold uppercase tracking-widest text-accent">Source:</span>
+          <span className="text-[10px] font-mono text-ink/40 uppercase tracking-tighter italic">
+            Consolidated Regional Reports & Primary Search Data
+          </span>
+        </div>
+        <div className="text-[8px] font-mono text-ink/20 uppercase tracking-widest hidden sm:block">
+          Figure 1.1A / Interactive Report
+        </div>
+      </div>
     </motion.div>
   );
 }
