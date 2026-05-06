@@ -65,42 +65,15 @@ async function attemptSource(topic: TrendCandidate, sourceName: PreferredSourceN
   }
 }
 
-export async function runPipeline() {
+/**
+ * Core logic to process a single trending topic into a published news post.
+ */
+async function processTopic(topic: TrendCandidate): Promise<PipelineRunResult> {
   const runId = makeRunId();
-  const topics = await getTrendingTopics();
-  
-  // Find the first topic that hasn't been successfully published recently
-  let topic = null;
-  const existing = await fetchRecentPosts();
-  for (const candidate of topics) {
-    if (!existing.some(p => p.topic === candidate.topic)) {
-      topic = candidate;
-      break;
-    }
-  }
-
-  // FALLBACK: If no new topics, pick the top trending one anyway for testing/re-generation
-  if (!topic && topics.length > 0) {
-    topic = topics[0];
-  }
-
   await createRun(runId, topic);
 
-  if (!topic) {
-    const emptyResult: PipelineRunResult = {
-      runId,
-      topic: null,
-      successfulSources: [],
-      failedSources: [],
-      published: false,
-      reason: "Rejected: no trending topic could be derived from the configured trend feeds.",
-    };
-    await completeRun(emptyResult);
-    return emptyResult;
-  }
-
   const sourcesToTry = PREFERRED_SOURCES.filter(s => s !== topic?.primarySource?.sourceName);
-  const sourcePromises = sourcesToTry.map((sourceName) => attemptSource(topic!, sourceName));
+  const sourcePromises = sourcesToTry.map((sourceName) => attemptSource(topic, sourceName));
   const attempts = await Promise.all(sourcePromises);
 
   if (topic.primarySource) {
@@ -143,30 +116,75 @@ export async function runPipeline() {
     return rejected;
   }
 
-  const post = await synthesizePost(topic, successfulSources);
+  try {
+    const post = await synthesizePost(topic, successfulSources);
+    
+    // High-fidelity Image Selection
+    const sourceWithImage = successfulSources.find(s => s.imageUrl && s.imageUrl.startsWith("http"));
+    if (sourceWithImage?.imageUrl) {
+      post.imageUrl = sourceWithImage.imageUrl;
+    } else {
+      const { searchGoogleImage } = await import("./extractor");
+      post.imageUrl = await searchGoogleImage(topic.topic);
+    }
+
+    const postId = await saveGeneratedPost(runId, post);
+
+    const published: PipelineRunResult = {
+      runId,
+      topic,
+      successfulSources,
+      failedSources,
+      published: true,
+      postId: postId?.toString(),
+    };
+    await completeRun(published);
+    return published;
+  } catch (error) {
+    const failed: PipelineRunResult = {
+      runId,
+      topic,
+      successfulSources,
+      failedSources,
+      published: false,
+      reason: `Synthesis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+    await completeRun(failed);
+    return failed;
+  }
+}
+
+export async function runPipeline() {
+  const topics = await getTrendingTopics();
+  const existing = await fetchRecentPosts();
   
-  // High-fidelity Image Selection
-  const sourceWithImage = successfulSources.find(s => s.imageUrl && s.imageUrl.startsWith("http"));
-  if (sourceWithImage?.imageUrl) {
-    post.imageUrl = sourceWithImage.imageUrl;
-  } else {
-    const { searchGoogleImage } = await import("./extractor");
-    post.imageUrl = await searchGoogleImage(topic.topic);
+  // Find topics that haven't been successfully published recently
+  const freshTopics = topics.filter(candidate => !existing.some(p => p.topic === candidate.topic));
+
+  if (freshTopics.length === 0) {
+    const runId = makeRunId();
+    await createRun(runId, null);
+    const emptyResult: PipelineRunResult = {
+      runId,
+      topic: null,
+      successfulSources: [],
+      failedSources: [],
+      published: false,
+      reason: "Rejected: no new trending topics could be derived.",
+    };
+    await completeRun(emptyResult);
+    return [emptyResult];
   }
 
-  const postId = await saveGeneratedPost(runId, post);
-
-  const published: PipelineRunResult = {
-    runId,
-    topic,
-    successfulSources,
-    failedSources,
-    published: true,
-    postId: postId?.toString(),
-  };
-  await completeRun(published);
-
-  // Background task: also update the events table during pipeline run
+  // Process a batch of up to 3 topics in parallel
+  const BATCH_SIZE = 3;
+  const targets = freshTopics.slice(0, BATCH_SIZE);
+  
+  console.log(`🚀 Starting batch processing for ${targets.length} topics...`);
+  
+  const results = await Promise.allSettled(targets.map(t => processTopic(t)));
+  
+  // Background task: update the events table
   try {
     const { fetchEvents } = await import("./events");
     const { saveEvents } = await import("./db");
@@ -178,5 +196,5 @@ export async function runPipeline() {
     console.error("Pipeline failed to update events:", err);
   }
 
-  return published;
+  return results.map(r => r.status === 'fulfilled' ? r.value : null).filter(Boolean);
 }
