@@ -19,7 +19,7 @@ interface ReaderViewProps {
 }
 
 function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
-  const [showSummary, setShowSummary] = useState(true);
+  const [showSummary, setShowSummary] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
   const [content, setContent] = useState(article.content);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -191,15 +191,21 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                       {article.tldr && (
                         <ul className="space-y-4">
                           <li className="flex gap-4">
-                            <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest pt-1 shrink-0">Impact</span>
-                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whyItMatters}</p>
+                            <div className="shrink-0 pt-1">
+                              <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest px-2 py-1 bg-accent/5 rounded-sm">The Stakes</span>
+                            </div>
+                            <p className="text-xs leading-relaxed text-ink/70 font-medium">{article.tldr.whyItMatters}</p>
                           </li>
                           <li className="flex gap-4">
-                            <span className="text-[10px] font-mono font-bold text-ink/40 uppercase tracking-widest pt-1 shrink-0">Context</span>
+                            <div className="shrink-0 pt-1">
+                              <span className="text-[10px] font-mono font-bold text-ink/40 uppercase tracking-widest px-2 py-1 bg-ink/5 rounded-sm">The Backdrop</span>
+                            </div>
                             <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whoIsAffected}</p>
                           </li>
                           <li className="flex gap-4">
-                            <span className="text-[10px] font-mono font-bold text-ink/20 uppercase tracking-widest pt-1 shrink-0">Future</span>
+                            <div className="shrink-0 pt-1">
+                              <span className="text-[10px] font-mono font-bold text-ink/20 uppercase tracking-widest px-2 py-1 bg-ink/5 rounded-sm">The Horizon</span>
+                            </div>
                             <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whatIsNext}</p>
                           </li>
                         </ul>
