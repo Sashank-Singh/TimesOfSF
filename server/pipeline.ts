@@ -187,10 +187,31 @@ export async function runPipeline() {
   console.log(`🚀 Starting batch processing for ${targets.length} topics...`);
   
   const results: PipelineRunResult[] = [];
+  const processedTopics: string[] = [...existing.map(p => p.topic.toLowerCase())];
+
   for (const target of targets) {
+    // Secondary check: ensure this topic isn't too similar to what we just published or fetched
+    const targetLower = target.topic.toLowerCase();
+    const targetTokens = targetLower.split(/\s+/).filter(t => t.length > 3);
+    
+    const isDuplicate = processedTopics.some(existingTopic => {
+      const existingTokens = existingTopic.split(/\s+/).filter(t => t.length > 3);
+      const overlap = targetTokens.filter(t => existingTokens.includes(t));
+      const ratio = overlap.length / Math.min(targetTokens.length, existingTokens.length);
+      return ratio > 0.6;
+    });
+
+    if (isDuplicate) {
+      console.log(`⏭️ Skipping "${target.topic}" - too similar to existing content.`);
+      continue;
+    }
+
     try {
       const res = await processTopic(target);
       results.push(res);
+      if (res.published) {
+        processedTopics.push(targetLower);
+      }
     } catch (err) {
       console.error(`Failed to process topic ${target.topic}:`, err);
     }

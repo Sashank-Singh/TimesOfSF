@@ -87,7 +87,7 @@ function deriveTopicFromHeadline(headline: string) {
 }
 
 export async function getTrendingTopics(): Promise<TrendCandidate[]> {
-  const buckets = new Map<string, TrendCandidate>();
+  const buckets: TrendCandidate[] = [];
 
   for (const feed of TREND_FEEDS) {
     try {
@@ -98,14 +98,24 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
         const normalizedTopic = deriveTopicFromHeadline(title);
         if (!normalizedTopic || normalizedTopic.length < 8) continue;
 
-        const existing = buckets.get(normalizedTopic);
+        // Fuzzy match: check if this topic is similar to any existing bucket
+        const currentTokens = normalizedTopic.split(" ").filter(t => t.length > 3);
+        
+        let existing = buckets.find(b => {
+          const bTokens = b.normalizedTopic.split(" ").filter(t => t.length > 3);
+          const overlap = currentTokens.filter(t => bTokens.includes(t));
+          // If more than 50% overlap of significant keywords, they are the same story
+          const overlapRatio = overlap.length / Math.min(currentTokens.length, bTokens.length);
+          return overlapRatio >= 0.5;
+        });
+
         if (existing) {
           existing.signalCount += 1;
           if (existing.sampleHeadlines.length < 4) {
             existing.sampleHeadlines.push(title);
           }
         } else {
-          buckets.set(normalizedTopic, {
+          buckets.push({
             topic: title.replace(/\s*-\s*[^-]+$/, "").trim(),
             normalizedTopic,
             signalCount: 1,
@@ -125,7 +135,7 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
     }
   }
 
-  return [...buckets.values()]
+  return buckets
     .sort((a, b) => b.signalCount - a.signalCount)
     .slice(0, config.trendLimit);
 }
