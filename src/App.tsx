@@ -447,7 +447,7 @@ export default function App() {
       </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-20 lg:py-24">
+      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12 lg:py-16">
         {selectedCategory === 'Events' ? (
           <div className="max-w-3xl mx-auto">
             <h1 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h1>

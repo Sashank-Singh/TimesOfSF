@@ -24,8 +24,8 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
         className="group cursor-pointer border-b-2 border-ink pb-12 mb-12"
         onClick={() => onClick(article)}
       >
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-16 items-stretch">
-          <div className="lg:col-span-7 overflow-hidden relative rounded-xl shadow-lg h-full min-h-[300px] md:min-h-[500px]">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+          <div className="lg:col-span-7 overflow-hidden relative rounded-xl shadow-lg aspect-[16/10] max-h-[500px]">
             <img 
               src={article.imageUrl}
               alt={article.title}
@@ -46,13 +46,13 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
               <span className="w-12 h-[1px] bg-accent/30" />
               {article.category}
             </div>
-            <h2 className="text-4xl md:text-5xl lg:text-6xl font-black leading-[0.9] mb-10 group-hover:text-accent transition-colors duration-500 tracking-tighter">
+            <h2 className="text-4xl md:text-5xl lg:text-5xl font-black leading-[0.95] mb-6 group-hover:text-accent transition-colors duration-500 tracking-tighter">
               {article.title}
             </h2>
-            <p className="text-lg md:text-xl text-ink/70 leading-relaxed italic mb-12 border-l-2 border-ink/5 pl-8 py-2">
+            <p className="text-base md:text-lg text-ink/70 leading-relaxed italic mb-8 border-l-2 border-ink/5 pl-6 py-1">
               {article.excerpt}
             </p>
-            <div className="flex items-center gap-6 mb-8">
+            <div className="flex items-center gap-4 mb-6">
                <button 
                 onClick={onBookmark}
                 className={cn("flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest", isBookmarked && "bg-ink text-paper")}
