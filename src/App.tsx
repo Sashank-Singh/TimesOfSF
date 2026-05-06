@@ -400,7 +400,7 @@ export default function App() {
              {/* Big Title on its own line */}
              <h1 
               onClick={() => { setSelectedCategory(null); setSearchQuery(""); window.scrollTo(0,0); }}
-              className="text-[clamp(1.5rem,8vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-none block whitespace-nowrap"
+              className="text-[clamp(1.2rem,7.2vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block"
             >
                 Times of San Francisco
              </h1>
