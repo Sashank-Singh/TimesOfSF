@@ -24,8 +24,8 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
         className="group cursor-pointer border-b-2 border-ink pb-12 mb-12"
         onClick={() => onClick(article)}
       >
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
-          <div className="lg:col-span-8 overflow-hidden aspect-[16/8] relative rounded-xl shadow-lg">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-16 items-stretch">
+          <div className="lg:col-span-7 overflow-hidden relative rounded-xl shadow-lg h-full min-h-[300px] md:min-h-[500px]">
             <img 
               src={article.imageUrl}
               alt={article.title}
@@ -36,40 +36,40 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
               }}
             />
             {isToday && (
-              <div className="absolute top-4 left-4 bg-accent text-white px-3 py-1 text-[10px] font-mono font-bold uppercase tracking-widest shadow-xl">
-                Today
+              <div className="absolute top-6 left-6 bg-accent text-white px-4 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest shadow-2xl">
+                Today's Feature
               </div>
             )}
           </div>
-          <div className="lg:col-span-4 flex flex-col h-full">
-            <div className="flex items-center gap-3 text-accent font-mono text-[10px] uppercase tracking-[0.25em] mb-6">
-              <span className="w-8 h-[1px] bg-accent" />
+          <div className="lg:col-span-5 flex flex-col justify-center py-4 lg:py-12">
+            <div className="flex items-center gap-3 text-accent font-mono text-[11px] uppercase tracking-[0.3em] mb-8">
+              <span className="w-12 h-[1px] bg-accent/30" />
               {article.category}
             </div>
-            <h2 className="text-4xl md:text-5xl font-black leading-[1.05] mb-8 group-hover:text-accent transition-colors duration-500">
+            <h2 className="text-4xl md:text-5xl lg:text-6xl font-black leading-[0.9] mb-10 group-hover:text-accent transition-colors duration-500 tracking-tighter">
               {article.title}
             </h2>
-            <p className="text-lg text-ink/70 leading-relaxed italic mb-10">
+            <p className="text-lg md:text-xl text-ink/70 leading-relaxed italic mb-12 border-l-2 border-ink/5 pl-8 py-2">
               {article.excerpt}
             </p>
-            <div className="flex items-center gap-4 mb-4">
+            <div className="flex items-center gap-6 mb-8">
                <button 
                 onClick={onBookmark}
-                className={cn("p-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all", isBookmarked && "bg-ink text-paper")}
-                title={isBookmarked ? "Remove Bookmark" : "Bookmark Story"}
+                className={cn("flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest", isBookmarked && "bg-ink text-paper")}
                >
-                 <Bookmark size={16} />
+                 <Bookmark size={14} className={cn(isBookmarked && "fill-paper")} />
+                 {isBookmarked ? "Saved" : "Save Story"}
                </button>
                <button 
                 onClick={onShare}
-                className="p-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all"
-                title="Share Story"
+                className="flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest"
                >
-                 <Share2 size={16} />
+                 <Share2 size={14} />
+                 Share
                </button>
             </div>
-            <div className="mt-auto pt-8 border-t border-ink/5 flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-ink/40">
-              <span>By {article.author}</span>
+            <div className="mt-8 pt-8 border-t-2 border-ink flex items-center justify-between text-[11px] font-mono uppercase tracking-widest text-ink/50">
+              <span className="font-bold">By {article.author}</span>
               <span>{article.readTime} Read</span>
             </div>
           </div>
