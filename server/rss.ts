@@ -163,5 +163,34 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
     }
   }
 
+  // Fallback: Google News RSS Search
+  // If the direct feeds don't have it, we search Google News for the specific publication
+  try {
+    const sourceIdentifier = sourceName.replace(/\s+/g, "");
+    // Google News supports boolean operators and source filters in its RSS search
+    const query = encodeURIComponent(`"${topicTokens.join('" "')}" source:${sourceIdentifier}`);
+    const gnUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
+    
+    const items = await fetchFeedItems(gnUrl);
+    
+    // Google News appends " - Source Name" to titles.
+    const match = items.find(item => {
+        if (!item.link || !item.title) return false;
+        return item.title.toLowerCase().includes(sourceName.toLowerCase());
+    });
+
+    if (match?.link && match?.title) {
+      return {
+        sourceName,
+        articleUrl: match.link,
+        headline: match.title,
+        publishedAt: match.pubDate,
+        summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+      };
+    }
+  } catch (error) {
+    console.error(`Google News fallback failed for ${sourceName}:`, error);
+  }
+
   return null;
 }

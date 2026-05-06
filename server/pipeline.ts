@@ -99,7 +99,8 @@ export async function runPipeline() {
     return emptyResult;
   }
 
-  const sourcePromises = PREFERRED_SOURCES.map((sourceName) => attemptSource(topic, sourceName));
+  const sourcesToTry = PREFERRED_SOURCES.filter(s => s !== topic?.primarySource?.sourceName);
+  const sourcePromises = sourcesToTry.map((sourceName) => attemptSource(topic!, sourceName));
   const attempts = await Promise.all(sourcePromises);
 
   if (topic.primarySource) {
