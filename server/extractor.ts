@@ -1,6 +1,6 @@
-import { config } from "./config";
 import { SourceExtraction, SourceSearchResult } from "./types";
 import { spawn } from "child_process";
+import path from "path";
 
 function decodeEntities(input: string) {
   return input
@@ -56,8 +56,11 @@ function buildFacts(summary: string, paragraphs: string[]) {
 }
 
 async function runPythonExtractor(url: string): Promise<any> {
+  const venvPath = path.resolve(process.cwd(), "venv", "bin", "python3");
+  const scriptPath = path.resolve(process.cwd(), "server", "extractor.py");
+
   return new Promise((resolve, reject) => {
-    const pythonProcess = spawn('./venv/bin/python3', ['server/extractor.py', url]);
+    const pythonProcess = spawn(venvPath, [scriptPath, url]);
     let result = '';
     let error = '';
     
