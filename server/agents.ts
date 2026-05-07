@@ -7,16 +7,22 @@ const geminiAi = config.geminiApiKey ? new GoogleGenAI({ apiKey: config.geminiAp
 function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
   return [
     "You are the Senior Executive Editor of the Times of SF.",
-    "Your goal is to transform dry source facts into a compelling, narrative-driven editorial that feels like a deep-dive from The New Yorker or The Atlantic.",
-    "Write with analytical authority, citing specific locations, people, and historical context of San Francisco.",
+    "Your goal is to transform dry source facts into a feature-length, narrative-driven report (approx 800-1000 words).",
+    "Write with analytical authority, staying strictly grounded in the provided source facts.",
+    "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods (like the Mission or Financial District) unless they are explicitly mentioned in the source packets.",
+    "Avoid flowery 'SF-themed' filler; focus on the actual news, business, and policy implications.",
+    "Structure the report into four distinct, titled sections (use ### headers):",
+    "1. The Dispatch: The immediate news and its primary impact.",
+    "2. The Context: Historical background or broader industry trends that explain the situation.",
+    "3. The Data Insight: A rigorous analysis of the underlying numbers (MANDATORY: Insert [CHART:0] at the end of this section).",
+    "4. The Horizon: Long-term implications and the future outlook.",
     "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, entities, dataBlocks.",
     "IMPORTANT: Use inline citations throughout the text like (Source Name) when referencing facts.",
-    "bodyMarkdown should be structured with semantic headers, balanced paragraphs, and at least one high-impact blockquote (using > syntax).",
-    "MANDATORY: Use double brackets like [[Mission District]] for at least 3-5 key people, places, or tech terms mentioned in your story.",
-    "MANDATORY: Insert [CHART:index] at the end of a paragraph where the data in your 'dataBlocks' would provide the most visual impact.",
+    "bodyMarkdown should be structured with semantic headers and balanced paragraphs.",
+    "MANDATORY: Use double brackets like [[NVIDIA]] or [[Jane Doe]] for at least 5-8 key people, companies, or tech terms explicitly mentioned in the sources.",
     "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
     "entities must be an array of {name, definition} for your bracketed terms.",
-    "dataBlocks must be an array of {type: 'chart', title, data: [{label, value}]} representing the core statistics from the sources.",
+    "dataBlocks must be an array of {type: 'chart', title, data: [{label, value}]} representing core statistics from the sources.",
     `Source packets: ${JSON.stringify(sources)}`,
   ].join("\n");
 }
@@ -205,12 +211,14 @@ export async function expandContent(
 
   const prompt = `
     You are the Times of SF senior editor. 
-    A junior writer has provided a short dispatch. Please expand this into a full feature-length report (approx 600-800 words).
-    Do not change the existing facts, but add analytical depth, historical context of San Francisco, and explore the long-term implications.
+    A junior writer has provided a short dispatch. Please expand this into a full feature-length report (approx 800-1000 words).
+    Do not change the existing facts, but add analytical depth and explore the long-term implications.
     Maintain the existing professional, grounded editorial tone.
     
+    CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods unless they are explicitly mentioned in the dispatch.
+    
     IMPORTANT: 
-    1. Use double brackets like [[Mission District]] for people, places, and tech terms. Only use them for the available entities listed below if provided.
+    1. Use double brackets like [[NVIDIA]] for companies, people, and tech terms. Only use them for the available entities listed below if provided.
     2. Insert [CHART:index] where the data visualizations listed below would naturally fit.
     3. Return ONLY the new body content in Markdown. No headline, no titles.
     
