@@ -27,7 +27,8 @@ async function start() {
   app.all("/api/pipeline/run", async (_req, res) => {
     try {
       const result = await runPipeline();
-      res.status(result.published ? 201 : 202).json(result);
+      const published = result.some((run) => run.published);
+      res.status(published ? 201 : 202).json(result);
     } catch (error) {
       res.status(500).json({
         error: error instanceof Error ? error.message : "Unknown pipeline failure",
