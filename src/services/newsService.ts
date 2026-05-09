@@ -4,6 +4,35 @@ export const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1501594907352-04
 
 const API_BASE = import.meta.env.VITE_API_URL || "https://timesofsf.onrender.com";
 
+function normalizeCredits(post: any): Article["credits"] {
+  if (!Array.isArray(post.credits)) return [];
+
+  return post.credits
+    .filter((credit: any) => credit?.sourceName && credit?.articleUrl)
+    .map((credit: any) => ({
+      sourceName: credit.sourceName,
+      articleUrl: credit.articleUrl,
+      sourceType: credit.sourceType || "reporting",
+      publishedAt: credit.publishedAt,
+      confidence: credit.confidence || "medium",
+      factBullets: Array.isArray(credit.factBullets) ? credit.factBullets.slice(0, 5) : [],
+    }));
+}
+
+function normalizeCitations(post: any): Article["citations"] {
+  if (!Array.isArray(post.citations)) return [];
+
+  return post.citations
+    .filter((citation: any) => citation?.claim && citation?.sourceName && citation?.sourceUrl)
+    .map((citation: any) => ({
+      claim: citation.claim,
+      sourceName: citation.sourceName,
+      sourceUrl: citation.sourceUrl,
+      quoteOrFact: citation.quoteOrFact || citation.claim,
+    }))
+    .slice(0, 12);
+}
+
 function getCategoryImage(category: string, id: number): string {
   const images: Record<string, string[]> = {
     Tech: [
@@ -71,9 +100,12 @@ function dbPostToArticle(post: any): Article {
     excerpt: post.dek || post.short_post || "",
     content: post.body_markdown,
     imageUrl: post.imageUrl || getCategoryImage(category, post.id),
-    imageCredit: post.imageUrl ? "Editorial Photo" : "Unsplash",
+    imageCredit: post.imageUrl ? "Licensed Source Image" : "Unsplash",
     readTime: `${Math.max(3, Math.ceil((post.body_markdown || "").split(" ").length / 200))} min`,
     tldr: post.tldr || undefined,
+    credits: normalizeCredits(post),
+    citations: normalizeCitations(post),
+    sourceUrls: Array.isArray(post.sourceUrls) ? post.sourceUrls : [],
     entities: post.entities || [],
     dataBlocks: post.dataBlocks || [],
   };
