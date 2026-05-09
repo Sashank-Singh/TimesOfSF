@@ -1,6 +1,7 @@
 import { SourceExtraction, SourceSearchResult } from "./types";
 import { spawn } from "child_process";
 import path from "path";
+import { config } from "./config";
 
 function decodeEntities(input: string) {
   return input
@@ -107,13 +108,17 @@ export async function extractSource(searchResult: SourceSearchResult): Promise<S
 
     return {
       sourceName: searchResult.sourceName,
+      sourceId: searchResult.sourceId,
+      sourceType: searchResult.sourceType,
+      reliabilityTier: searchResult.reliabilityTier,
+      allowedUse: searchResult.allowedUse,
       articleUrl: searchResult.articleUrl,
       canonicalUrl: searchResult.articleUrl,
       headline: article.title || searchResult.headline,
       imageUrl: article.imageUrl || "",
       publishedAt: article.publishedAt || searchResult.publishedAt,
       summary: article.title || searchResult.headline,
-      textExcerpt: article.text.slice(0, 3000),
+      textExcerpt: article.text.slice(0, 1200),
       facts,
     };
   } catch (error) {
@@ -121,6 +126,10 @@ export async function extractSource(searchResult: SourceSearchResult): Promise<S
     // Minimal fallback if Python fails
     return {
       sourceName: searchResult.sourceName,
+      sourceId: searchResult.sourceId,
+      sourceType: searchResult.sourceType,
+      reliabilityTier: searchResult.reliabilityTier,
+      allowedUse: searchResult.allowedUse,
       articleUrl: searchResult.articleUrl,
       canonicalUrl: searchResult.articleUrl,
       headline: searchResult.headline,

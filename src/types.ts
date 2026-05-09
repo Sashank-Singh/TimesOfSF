@@ -9,6 +9,22 @@ export interface DataBlock {
   data: { label: string; value: number }[];
 }
 
+export interface ArticleCredit {
+  sourceName: string;
+  articleUrl: string;
+  sourceType?: string;
+  publishedAt?: string;
+  confidence?: "high" | "medium" | "low";
+  factBullets: string[];
+}
+
+export interface ArticleCitation {
+  claim: string;
+  sourceName: string;
+  sourceUrl: string;
+  quoteOrFact: string;
+}
+
 export interface Article {
   id: string;
   slug: string;
@@ -31,8 +47,18 @@ export interface Article {
     whoIsAffected: string;
     whatIsNext: string;
   };
+  credits?: ArticleCredit[];
+  citations?: ArticleCitation[];
+  sourceUrls?: string[];
   entities?: ArticleEntity[];
   dataBlocks?: DataBlock[];
 }
 
 export type ArticleCategory = Article["category"];
+
+export interface EventInfo {
+  title: string;
+  url: string;
+  date: string;
+  source: string;
+}

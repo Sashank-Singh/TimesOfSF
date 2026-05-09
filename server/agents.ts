@@ -7,18 +7,35 @@ const geminiAi = config.geminiApiKey ? new GoogleGenAI({ apiKey: config.geminiAp
 function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
   return [
     "You are the Senior Executive Editor of the Times of SF.",
-    "Your goal is to transform dry source facts into a feature-length, narrative-driven report (approx 800-1000 words).",
-    "Write with analytical authority, staying strictly grounded in the provided source facts.",
+    "Your goal is to transform source facts into a readable, truth-seeking feature report (approx 1,200-1,700 words).",
+    "Write with analytical authority, but stay strictly grounded in the provided source facts.",
     "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods (like the Mission or Financial District) unless they are explicitly mentioned in the source packets.",
-    "Avoid flowery 'SF-themed' filler; focus on the actual news, business, and policy implications.",
-    "Structure the report into four distinct, titled sections (use ### headers):",
-    "1. The Dispatch: The immediate news and its primary impact.",
-    "2. The Context: Historical background or broader industry trends that explain the situation.",
-    "3. The Data Insight: A rigorous analysis of the underlying numbers (MANDATORY: Insert [CHART:0] at the end of this section).",
-    "4. The Horizon: Long-term implications and the future outlook.",
-    "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, entities, dataBlocks.",
-    "IMPORTANT: Use inline citations throughout the text like (Source Name) when referencing facts.",
-    "bodyMarkdown should be structured with semantic headers and balanced paragraphs.",
+    "Avoid flowery 'SF-themed' filler, clickbait, fake certainty, and hype phrases like 'shocking' or 'you won't believe'.",
+    "Do not say the story is based on '200+ sources'; cite only the 3-8 sources actually provided and used.",
+    "Copyright safety: extract facts, not prose. Do not mimic source wording, sentence structure, headline structure, or distinctive framing.",
+    "Every factual claim must map to a source credit. Use inline citations like (Reuters) immediately after specific factual claims.",
+    "Separate confirmed facts from analysis. Label uncertainty plainly and include what cannot be verified yet.",
+    "Prefer primary documents, official statements, filings, and public data when present in the source packets.",
+    "Use this bodyMarkdown structure with ### headers in this order:",
+    "1. The News in One Sentence",
+    "2. Why It Matters",
+    "3. What Happened",
+    "4. The Hidden Angle",
+    "5. Who Benefits",
+    "6. Who Loses",
+    "7. What Sources Agree On",
+    "8. What Sources Disagree On",
+    "9. What Is Still Unknown",
+    "10. Timeline",
+    "11. Data / Chart",
+    "12. Context",
+    "13. What Happens Next",
+    "14. Source Notes",
+    "Use short paragraphs, bullets for dense facts, and one evidence-driven pull-quote or key-number moment.",
+    "MANDATORY: Insert [CHART:0] naturally in the Data / Chart section if dataBlocks has usable data.",
+    "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks.",
+    "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, and factBullets.",
+    "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact} for the most important article claims.",
     "MANDATORY: Use double brackets like [[NVIDIA]] or [[Jane Doe]] for at least 5-8 key people, companies, or tech terms explicitly mentioned in the sources.",
     "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
     "entities must be an array of {name, definition} for your bracketed terms.",
@@ -35,7 +52,8 @@ function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
     bodyMarkdown: parsed.bodyMarkdown,
     shortPost: parsed.shortPost,
     topic: topic.topic,
-    credits: parsed.credits,
+    credits: Array.isArray(parsed.credits) ? parsed.credits : [],
+    citations: Array.isArray(parsed.citations) ? parsed.citations : [],
     tldr: parsed.tldr,
     entities: parsed.entities,
     dataBlocks: parsed.dataBlocks,
@@ -76,12 +94,28 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
               properties: {
                 sourceName: { type: Type.STRING },
                 articleUrl: { type: Type.STRING },
+                sourceType: { type: Type.STRING },
+                publishedAt: { type: Type.STRING },
+                confidence: { type: Type.STRING },
                 factBullets: {
                   type: Type.ARRAY,
                   items: { type: Type.STRING },
                 },
               },
-              required: ["sourceName", "articleUrl", "factBullets"],
+              required: ["sourceName", "articleUrl", "sourceType", "confidence", "factBullets"],
+            },
+          },
+          citations: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                claim: { type: Type.STRING },
+                sourceName: { type: Type.STRING },
+                sourceUrl: { type: Type.STRING },
+                quoteOrFact: { type: Type.STRING },
+              },
+              required: ["claim", "sourceName", "sourceUrl", "quoteOrFact"],
             },
           },
           tldr: {
@@ -127,7 +161,7 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
             },
           },
         },
-        required: ["headline", "slug", "dek", "bodyMarkdown", "shortPost", "credits", "tldr", "entities", "dataBlocks"],
+        required: ["headline", "slug", "dek", "bodyMarkdown", "shortPost", "credits", "citations", "tldr", "entities", "dataBlocks"],
       },
     },
   });
@@ -211,11 +245,12 @@ export async function expandContent(
 
   const prompt = `
     You are the Times of SF senior editor. 
-    A junior writer has provided a short dispatch. Please expand this into a full feature-length report (approx 800-1000 words).
+    A junior writer has provided a short dispatch. Please expand this into a full feature-length report (approx 1,200-1,700 words).
     Do not change the existing facts, but add analytical depth and explore the long-term implications.
     Maintain the existing professional, grounded editorial tone.
     
     CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods unless they are explicitly mentioned in the dispatch.
+    Copyright safety: do not mimic source wording, article structure, or distinctive phrasing. Keep facts attributed and analysis clearly separated.
     
     IMPORTANT: 
     1. Use double brackets like [[NVIDIA]] for companies, people, and tech terms. Only use them for the available entities listed below if provided.

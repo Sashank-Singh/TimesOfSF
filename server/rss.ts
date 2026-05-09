@@ -1,6 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { config } from "./config";
 import { PreferredSourceName, SourceSearchResult, TrendCandidate } from "./types";
+import { SOURCE_FEEDS, TREND_FEEDS, withSourceMetadata } from "./sourceRegistry";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -13,37 +14,6 @@ interface RssItem {
   pubDate?: string;
   description?: string;
 }
-
-const TREND_FEEDS: { url: string; sourceName: PreferredSourceName }[] = [
-  { url: "https://techcrunch.com/category/startups/feed/", sourceName: "TechCrunch" },
-  { url: "https://techcrunch.com/funding/feed/", sourceName: "TechCrunch" },
-  { url: "https://techcrunch.com/category/artificial-intelligence/feed/", sourceName: "TechCrunch" },
-  { url: "https://feeds.reuters.com/reuters/technologyNews", sourceName: "Reuters" },
-  { url: "https://feeds.bloomberg.com/technology/news.rss", sourceName: "Bloomberg" },
-  { url: "https://moxie.foxnews.com/google-publisher/politics.xml", sourceName: "AP News" },
-  { url: "https://moxie.foxnews.com/google-publisher/us.xml", sourceName: "AP News" },
-  { url: "https://www.sfchronicle.com/bayarea/feed/Bay-Area-News-106.php", sourceName: "San Francisco Chronicle" },
-  { url: "https://sfstandard.com/feed/", sourceName: "AP News" }, // Mapping to AP News as a fallback source type
-  { url: "https://missionlocal.org/feed/", sourceName: "AP News" },
-  { url: "https://www.theverge.com/rss/index.xml", sourceName: "TechCrunch" },
-  { url: "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml", sourceName: "New York Times" as any },
-  { url: "https://feeds.bbci.co.uk/news/technology/rss.xml", sourceName: "BBC" },
-  { url: "https://www.engadget.com/rss.xml", sourceName: "TechCrunch" }
-];
-
-const SOURCE_FEEDS: Record<PreferredSourceName, string[]> = {
-  "San Francisco Chronicle": ["https://www.sfchronicle.com/bayarea/feed/Bay-Area-News-106.php"],
-  "TechCrunch": ["https://techcrunch.com/category/startups/feed/", "https://techcrunch.com/funding/feed/", "https://techcrunch.com/category/artificial-intelligence/feed/"],
-  "Bloomberg": ["https://feeds.bloomberg.com/technology/news.rss"],
-  "Reuters": ["https://feeds.reuters.com/reuters/technologyNews", "https://feeds.reuters.com/reuters/businessNews", "https://feeds.reuters.com/Reuters/domesticNews", "https://feeds.reuters.com/Reuters/worldNews"],
-  "WSJ": ["https://feeds.a.dj.com/rss/RSSWSJD.xml"],
-  "AP News": ["https://moxie.foxnews.com/google-publisher/tech.xml", "https://moxie.foxnews.com/google-publisher/politics.xml", "https://moxie.foxnews.com/google-publisher/us.xml"],
-  "BBC": ["https://feeds.bbci.co.uk/news/technology/rss.xml"],
-  "CNN": ["http://rss.cnn.com/rss/edition_technology.rss"],
-  "NPR": ["https://feeds.npr.org/1019/rss.xml"],
-  "The Guardian": ["https://www.theguardian.com/technology/rss"],
-  "New York Times": ["https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"]
-};
 
 function normalizeTopic(raw: string) {
   return raw
@@ -120,13 +90,13 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
             normalizedTopic,
             signalCount: 1,
             sampleHeadlines: [title],
-            primarySource: item.link ? {
-              sourceName: feed.sourceName,
+            primarySource: item.link ? withSourceMetadata({
+              sourceName: feed.source.name,
               articleUrl: item.link,
               headline: title,
               publishedAt: item.pubDate,
               summary: item.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-            } : undefined
+            }, feed.source) : undefined
           });
         }
       }
@@ -160,13 +130,13 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
       });
 
       if (match?.link && match?.title) {
-        return {
+        return withSourceMetadata({
           sourceName,
           articleUrl: match.link,
           headline: match.title,
           publishedAt: match.pubDate,
           summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-        };
+        });
       }
     } catch {
       continue;
@@ -190,13 +160,13 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
     });
 
     if (match?.link && match?.title) {
-      return {
+      return withSourceMetadata({
         sourceName,
         articleUrl: match.link,
         headline: match.title,
         publishedAt: match.pubDate,
         summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-      };
+      });
     }
   } catch (error) {
     console.error(`Google News fallback failed for ${sourceName}:`, error);

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from "react";
 import { Article } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
-import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp } from "lucide-react";
+import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, ShieldCheck, AlertTriangle, FileText } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { formatDate, cn } from "../lib/utils";
 import { DEFAULT_IMAGE } from "../services/newsService";
@@ -23,6 +23,10 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   const [isExpanding, setIsExpanding] = useState(false);
   const [content, setContent] = useState(article.content);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sourceCount = article.credits?.length ?? 0;
+  const confirmedFactCount = article.credits?.reduce((count, credit) => count + (credit.factBullets?.length ?? 0), 0) ?? 0;
+  const citationCount = article.citations?.length ?? 0;
+  const sourceTypeLabel = (type?: string) => (type || "reporting").replace(/_/g, " ");
   
   const { scrollYProgress } = useScroll({
     container: scrollRef
@@ -156,7 +160,12 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   {article.title}
                </h1>
                <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
-                  <span className="italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
+                <span className="italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
+                <div className="flex flex-wrap items-center justify-center gap-2 text-[9px] font-mono uppercase tracking-widest text-ink/45">
+                  <span className="px-2 py-1 border border-ink/10 bg-paper">Sources: {sourceCount || "review below"}</span>
+                  <span className="px-2 py-1 border border-ink/10 bg-paper">Evidence facts: {confirmedFactCount}</span>
+                  <span className="px-2 py-1 border border-ink/10 bg-paper">Citations: {citationCount}</span>
+                </div>
                   <div className="flex items-center gap-4 font-mono uppercase tracking-[0.1em]">
                     <span>By {article.author}</span>
                     <span className="w-1 h-1 bg-ink/10 rounded-full" />
@@ -185,7 +194,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   >
                     <div className="mt-4 pt-6 border-t border-ink/5 flex flex-col gap-6">
                       <p className="text-sm font-serif italic text-ink/70 leading-relaxed">
-                        {article.excerpt} This report explores {article.title.toLowerCase()} from a multi-disciplinary perspective, highlighting the socio-economic impact on San Francisco's evolving urban landscape.
+                        {article.excerpt} This AI-assisted report is generated from linked source material. Review the source list and claim notes below before relying on any specific detail.
                       </p>
                       
                       {article.tldr && (
@@ -243,11 +252,40 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
               <div className="hidden lg:block lg:col-span-3">
                  <div className="sticky top-32 space-y-12 pr-8 border-r border-ink/5">
                     <div>
-                      <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Metadata</h4>
-                      <p className="text-[11px] leading-relaxed italic text-ink/50">
-                        This story was verified by the Times of SF Editorial Board and follows strict local sourcing guidelines.
-                      </p>
+                      <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Truth Status</h4>
+                      <div className="space-y-3 text-[11px] leading-relaxed text-ink/55">
+                        <div className="flex items-start gap-2">
+                          <ShieldCheck size={14} className="text-accent shrink-0 mt-0.5" />
+                          <span>{confirmedFactCount} source-backed fact notes from {sourceCount || "linked"} source{sourceCount === 1 ? "" : "s"}.</span>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle size={14} className="text-ink/35 shrink-0 mt-0.5" />
+                          <span>AI-assisted synthesis. Source notes below show what is confirmed, unclear, and attributed.</span>
+                        </div>
+                      </div>
                     </div>
+                    {!!article.credits?.length && (
+                      <div>
+                        <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Source Map</h4>
+                        <div className="space-y-3">
+                          {article.credits.slice(0, 8).map((credit, idx) => (
+                            <a
+                              key={`${credit.articleUrl}-${idx}`}
+                              href={credit.articleUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="block border border-ink/10 p-3 hover:border-accent/40 hover:bg-accent/[0.02] transition-colors"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/70">{credit.sourceName}</span>
+                                <ExternalLink size={12} className="text-accent shrink-0" />
+                              </div>
+                              <p className="mt-2 text-[9px] font-mono uppercase tracking-tight text-ink/35">{sourceTypeLabel(credit.sourceType)} / {credit.confidence || "medium"} confidence</p>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {article.additionalImages && article.additionalImages.length > 0 && (
                       <div className="space-y-6">
                         <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30">Visual Evidence</h4>
@@ -282,9 +320,116 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
               </div>
 
               <div className="lg:col-span-8 lg:col-start-5">
+                <section className="mb-12 md:mb-16 border-2 border-ink bg-paper shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+                  <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-ink">
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 text-accent mb-3">
+                        <ShieldCheck size={16} />
+                        <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest">Confirmed</h3>
+                      </div>
+                      <p className="text-3xl font-black leading-none mb-2">{confirmedFactCount}</p>
+                      <p className="text-[11px] leading-relaxed text-ink/55">fact notes attached to named sources.</p>
+                    </div>
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 text-ink/50 mb-3">
+                        <FileText size={16} />
+                        <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest">Receipts</h3>
+                      </div>
+                      <p className="text-3xl font-black leading-none mb-2">{sourceCount}</p>
+                      <p className="text-[11px] leading-relaxed text-ink/55">linked sources used in this article, not a generic source count.</p>
+                    </div>
+                    <div className="p-5">
+                      <div className="flex items-center gap-2 text-ink/40 mb-3">
+                        <AlertTriangle size={16} />
+                        <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest">Unknowns</h3>
+                      </div>
+                      <p className="text-3xl font-black leading-none mb-2">Open</p>
+                      <p className="text-[11px] leading-relaxed text-ink/55">uncertainty is called out inside the report, not hidden.</p>
+                    </div>
+                  </div>
+                </section>
+
                 <div className="markdown-body">
                   <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
                 </div>
+
+                {(!!article.citations?.length || !!article.credits?.length) && (
+                  <section className="mt-16 md:mt-20 border-t-[3px] border-ink pt-10">
+                    <div className="mb-8">
+                      <p className="text-[10px] font-mono font-bold uppercase tracking-[0.3em] text-accent mb-3">Receipts</p>
+                      <h3 className="text-3xl md:text-4xl font-black tracking-tight">Sources & Evidence</h3>
+                      <p className="mt-3 text-sm text-ink/55 leading-relaxed max-w-2xl">
+                        These are the sources and claim notes used for this AI-assisted report. The article does not claim to be based on hundreds of sources; it cites the specific evidence used.
+                      </p>
+                    </div>
+
+                    {!!article.citations?.length && (
+                      <div className="mb-10">
+                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-4">Claim Notes</h4>
+                        <div className="grid grid-cols-1 gap-3">
+                          {article.citations.map((citation, idx) => (
+                            <a
+                              key={`${citation.sourceUrl}-${idx}`}
+                              href={citation.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="group border border-ink/10 p-4 hover:border-accent/40 hover:bg-accent/[0.02] transition-colors"
+                            >
+                              <div className="flex items-start justify-between gap-4">
+                                <div>
+                                  <p className="text-sm font-bold leading-snug text-ink/85">{citation.claim}</p>
+                                  <p className="mt-2 text-xs leading-relaxed text-ink/55">{citation.quoteOrFact}</p>
+                                </div>
+                                <ExternalLink size={14} className="text-accent shrink-0 mt-1 opacity-60 group-hover:opacity-100" />
+                              </div>
+                              <p className="mt-3 text-[9px] font-mono uppercase tracking-widest text-ink/35">{citation.sourceName}</p>
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {!!article.credits?.length && (
+                      <div>
+                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-4">Source Cards</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {article.credits.map((credit, idx) => (
+                            <article key={`${credit.articleUrl}-${idx}`} className="border border-ink/10 bg-ink/[0.015] p-5">
+                              <div className="flex items-start justify-between gap-4 mb-4">
+                                <div>
+                                  <h5 className="text-sm font-black leading-tight">{credit.sourceName}</h5>
+                                  <p className="mt-1 text-[9px] font-mono uppercase tracking-widest text-ink/35">
+                                    {sourceTypeLabel(credit.sourceType)} / {credit.confidence || "medium"} confidence
+                                  </p>
+                                  {credit.publishedAt && (
+                                    <p className="mt-1 text-[9px] font-mono uppercase tracking-widest text-ink/25">{formatDate(credit.publishedAt)}</p>
+                                  )}
+                                </div>
+                                <a
+                                  href={credit.articleUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-2 text-[9px] font-mono font-bold uppercase tracking-widest text-accent hover:text-ink transition-colors"
+                                >
+                                  Source <ExternalLink size={12} />
+                                </a>
+                              </div>
+                              {!!credit.factBullets?.length && (
+                                <ul className="space-y-2">
+                                  {credit.factBullets.map((fact, factIdx) => (
+                                    <li key={factIdx} className="text-xs leading-relaxed text-ink/65 border-l border-accent/30 pl-3">
+                                      {fact}
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                )}
                 
                 <div className="mt-16 p-8 border-2 border-ink bg-paper shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] group/expand">
                   <div className="flex flex-col md:flex-row items-center justify-between gap-6">
