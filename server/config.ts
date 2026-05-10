@@ -67,6 +67,11 @@ export const config = {
    * Skip Python news-please extraction (RSS/HTML fallback only). Use on hosts without a working venv/Python (common on Render).
    */
   disableNewsPlease: process.env.DISABLE_NEWS_PLEASE === "true",
+  /**
+   * When false (default), if LLM synthesis fails after sources pass grounding, publish a wire-format recap from extracted facts.
+   * Set to true to keep prior behavior (no post on synthesis failure).
+   */
+  disableSynthesisFallback: process.env.DISABLE_SYNTHESIS_FALLBACK === "true",
 };
 
 export function isProduction() {

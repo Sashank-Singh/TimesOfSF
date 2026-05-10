@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { buildEventsDigestPost, synthesizePost } from "./agents";
+import { buildEventsDigestPost, buildFallbackPostFromSources, synthesizePost } from "./agents";
 import {
   classifyEditorialCategory,
   fetchQuotaSeedCandidate,
@@ -231,16 +231,80 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     await completeRun(published);
     return published;
   } catch (error) {
-    const failed: PipelineRunResult = {
-      runId,
-      topic,
-      successfulSources,
-      failedSources,
-      published: false,
-      reason: `Synthesis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-    };
-    await completeRun(failed);
-    return failed;
+    const msg = error instanceof Error ? error.message : "Unknown error";
+
+    if (config.disableSynthesisFallback) {
+      const failed: PipelineRunResult = {
+        runId,
+        topic,
+        successfulSources,
+        failedSources,
+        published: false,
+        reason: `Synthesis failed: ${msg}`,
+      };
+      await completeRun(failed);
+      return failed;
+    }
+
+    console.warn(`⚠️ Primary synthesis failed; attempting wire-format fallback publish: ${msg}`);
+
+    try {
+      let post = buildFallbackPostFromSources(topic, successfulSources, { synthesisError: msg });
+      let copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
+      if (copyrightRisk) {
+        console.warn(`⚠️ Fallback copyright check: ${copyrightRisk}; retrying minimal body.`);
+        post = buildFallbackPostFromSources(topic, successfulSources, {
+          synthesisError: msg,
+          copyrightMinimal: true,
+        });
+        copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
+        if (copyrightRisk) {
+          throw new Error(`Fallback blocked by copyright safety: ${copyrightRisk}`);
+        }
+      }
+
+      const fingerprint = buildStoryFingerprint(topic, successfulSources, post.headline);
+      post.sourceUrls = fingerprint.sourceUrls;
+      post.headlineHash = fingerprint.headlineHash;
+      post.canonicalKey = fingerprint.canonicalKey;
+      post.storyFingerprint = fingerprint.storyFingerprint;
+
+      const sourceWithImage = successfulSources.find(
+        (s) =>
+          s.imageUrl &&
+          s.imageUrl.startsWith("http") &&
+          (s.allowedUse === "licensed" || s.allowedUse === "public_domain"),
+      );
+      if (sourceWithImage?.imageUrl) {
+        post.imageUrl = sourceWithImage.imageUrl;
+      }
+
+      const postId = await saveGeneratedPost(runId, post);
+
+      const published: PipelineRunResult = {
+        runId,
+        topic,
+        successfulSources,
+        failedSources,
+        published: true,
+        postId: postId?.toString(),
+        publishedViaFallback: true,
+        reason: "Published wire recap after grounded sources (full synthesis unavailable).",
+      };
+      await completeRun(published);
+      return published;
+    } catch (fallbackErr) {
+      const failed: PipelineRunResult = {
+        runId,
+        topic,
+        successfulSources,
+        failedSources,
+        published: false,
+        reason: `Synthesis failed: ${msg}; fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : "unknown"}`,
+      };
+      await completeRun(failed);
+      return failed;
+    }
   }
 }
 
