@@ -68,6 +68,7 @@ export async function ensureSchema() {
     sql`CREATE INDEX IF NOT EXISTS generated_posts_headline_hash_idx ON generated_posts (headline_hash)`,
     sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`,
     sql`CREATE INDEX IF NOT EXISTS generated_posts_category_created_idx ON generated_posts (category, created_at DESC)`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS image_credit TEXT`,
     sql`
       CREATE TABLE IF NOT EXISTS events (
         id BIGSERIAL PRIMARY KEY,
@@ -164,7 +165,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
 export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
   const inserted = (await sql`
     INSERT INTO generated_posts (
-      run_id, topic, headline, slug, dek, image_url, body_markdown, short_post, credits, citations,
+      run_id, topic, headline, slug, dek, image_url, image_credit, body_markdown, short_post, credits, citations,
       source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks, category
     )
     VALUES (
@@ -174,6 +175,7 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
       ${post.slug},
       ${post.dek},
       ${post.imageUrl ?? null},
+      ${post.imageCredit ?? null},
       ${post.bodyMarkdown},
       ${post.shortPost},
       ${JSON.stringify(post.credits)},
@@ -213,6 +215,7 @@ export async function fetchRecentPosts(limit = 1000) {
       slug,
       dek,
       image_url as "imageUrl",
+      image_credit as "imageCredit",
       body_markdown,
       short_post,
       credits,

@@ -3,7 +3,7 @@ import { Article } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { formatDate, formatPublishedTimestamp, cn } from "../lib/utils";
+import { formatPublishedTimestamp, cn } from "../lib/utils";
 import { DEFAULT_IMAGE } from "../services/newsService";
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
@@ -23,7 +23,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   const [isExpanding, setIsExpanding] = useState(false);
   const [content, setContent] = useState(article.content);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const sourceTypeLabel = (type?: string) => (type || "reporting").replace(/_/g, " ");
   
   const { scrollYProgress } = useScroll({
     container: scrollRef
@@ -299,79 +298,37 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
                 </div>
 
-                {(!!article.citations?.length || !!article.credits?.length) && (
+                {(!!article.citations?.length) && (
                   <section className="mt-16 md:mt-20 border-t-[3px] border-ink pt-10">
                     <div className="mb-8">
                       <p className="text-[10px] font-mono font-bold uppercase tracking-[0.3em] text-accent mb-3">Receipts</p>
                       <h3 className="text-3xl md:text-4xl font-black tracking-tight">Sources & Evidence</h3>
-                      <p className="mt-3 text-sm text-ink/55 leading-relaxed max-w-2xl">
-                        These are the sources and claim notes used for this AI-assisted report. The article does not claim to be based on hundreds of sources; it cites the specific evidence used.
+                      <p className="mt-3 text-xs text-ink/50 leading-relaxed max-w-2xl">
+                        One-line linked receipts for claims used in this report.
                       </p>
                     </div>
 
                     {!!article.citations?.length && (
                       <div className="mb-10">
-                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-4">Claim Notes</h4>
-                        <div className="grid grid-cols-1 gap-3">
+                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-3">Claim Notes</h4>
+                        <ul className="border border-ink/10 rounded-sm divide-y divide-ink/10">
                           {article.citations.map((citation, idx) => (
-                            <a
-                              key={`${citation.sourceUrl}-${idx}`}
-                              href={citation.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="group border border-ink/10 p-4 hover:border-accent/40 hover:bg-accent/[0.02] transition-colors"
-                            >
-                              <div className="flex items-start justify-between gap-4">
-                                <div>
-                                  <p className="text-sm font-bold leading-snug text-ink/85">{citation.claim}</p>
-                                  <p className="mt-2 text-xs leading-relaxed text-ink/55">{citation.quoteOrFact}</p>
-                                </div>
-                                <ExternalLink size={14} className="text-accent shrink-0 mt-1 opacity-60 group-hover:opacity-100" />
-                              </div>
-                              <p className="mt-3 text-[9px] font-mono uppercase tracking-widest text-ink/35">{citation.sourceName}</p>
-                            </a>
+                            <li key={`${citation.sourceUrl}-${idx}`}>
+                              <a
+                                href={citation.sourceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/[0.03] transition-colors group"
+                              >
+                                <span className="flex-1 min-w-0 text-xs text-ink/80 truncate">{citation.claim}</span>
+                                <span className="shrink-0 text-[10px] font-mono uppercase tracking-tight text-ink/35">
+                                  {citation.sourceName}
+                                </span>
+                                <ExternalLink size={14} className="text-accent shrink-0 opacity-40 group-hover:opacity-100" />
+                              </a>
+                            </li>
                           ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {!!article.credits?.length && (
-                      <div>
-                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-4">Source Cards</h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {article.credits.map((credit, idx) => (
-                            <article key={`${credit.articleUrl}-${idx}`} className="border border-ink/10 bg-ink/[0.015] p-5">
-                              <div className="flex items-start justify-between gap-4 mb-4">
-                                <div>
-                                  <h5 className="text-sm font-black leading-tight">{credit.sourceName}</h5>
-                                  <p className="mt-1 text-[9px] font-mono uppercase tracking-widest text-ink/35">
-                                    {sourceTypeLabel(credit.sourceType)} / {credit.confidence || "medium"} confidence
-                                  </p>
-                                  {credit.publishedAt && (
-                                    <p className="mt-1 text-[9px] font-mono uppercase tracking-widest text-ink/25">{formatDate(credit.publishedAt)}</p>
-                                  )}
-                                </div>
-                                <a
-                                  href={credit.articleUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-2 text-[9px] font-mono font-bold uppercase tracking-widest text-accent hover:text-ink transition-colors"
-                                >
-                                  Source <ExternalLink size={12} />
-                                </a>
-                              </div>
-                              {!!credit.factBullets?.length && (
-                                <ul className="space-y-2">
-                                  {credit.factBullets.map((fact, factIdx) => (
-                                    <li key={factIdx} className="text-xs leading-relaxed text-ink/65 border-l border-accent/30 pl-3">
-                                      {fact}
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </article>
-                          ))}
-                        </div>
+                        </ul>
                       </div>
                     )}
                   </section>
