@@ -24,7 +24,7 @@ export async function loadInngestState(): Promise<InngestModuleState> {
 
   if (!config.inngestEventKey || !config.inngestSigningKey) {
     console.warn(
-      "⚠️ INNGEST NOT ENABLED: Missing INNGEST_EVENT_KEY or INNGEST_SIGNING_KEY. Scheduled jobs from Inngest will not run; the API server falls back to its internal timer when it starts (see /health → internalPipelineCron).",
+      "⚠️ INNGEST NOT ENABLED: Missing INNGEST_EVENT_KEY or INNGEST_SIGNING_KEY. Inngest-managed cron will not call this app. The server still starts its own interval scheduler unless DISABLE_INTERNAL_PIPELINE_CRON=true (see /health).",
     );
     cachedState = {
       enabled: false,
