@@ -19,15 +19,19 @@ function clampPromptText(raw: string, maxChars: number): string {
 }
 
 /** Shrink / clean source payloads so the model is less likely to emit broken JSON when paraphrasing them. */
-function sanitizeSourcesForPrompt(sources: SourceExtraction[]): SourceExtraction[] {
+function sanitizeSourcesForPrompt(sources: SourceExtraction[], compact: boolean): SourceExtraction[] {
+  const maxFacts = compact ? 5 : 8;
+  const maxExcerpt = compact ? 2200 : 3200;
   return sources.map((s) => ({
     ...s,
     headline: clampPromptText(s.headline, 400),
-    summary: clampPromptText(s.summary, 1200),
-    textExcerpt: clampPromptText(s.textExcerpt, 3200),
-    facts: (s.facts ?? []).slice(0, 8).map((f) => clampPromptText(f, 550)),
+    summary: clampPromptText(s.summary, compact ? 900 : 1200),
+    textExcerpt: clampPromptText(s.textExcerpt, maxExcerpt),
+    facts: (s.facts ?? []).slice(0, maxFacts).map((f) => clampPromptText(f, compact ? 420 : 550)),
   }));
 }
+
+type PromptMode = "full" | "compact";
 
 function parseModelJson(raw: string, context: string): unknown {
   const trimmed = raw.trim();
@@ -66,7 +70,7 @@ function parseModelJson(raw: string, context: string): unknown {
   throw new Error(`${context} — ${lastMessage}`);
 }
 
-function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
+function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: PromptMode): string {
   const desk: EditorialCategory = topic.editorialCategory ?? classifyEditorialCategory(topic);
   const deskNotes =
     desk === "Food"
@@ -81,50 +85,52 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
               ? "Desk focus: arts, institutions, and civic life that shape the region."
               : "Desk focus: technology industry, semiconductors, AI, cybersecurity, and platform economics.";
 
+  const compact = mode === "compact";
+  const lengthGuide = compact
+    ? "TARGET LENGTH: ~850–1,100 words total. Keep paragraphs tight so JSON stays valid."
+    : "TARGET LENGTH: ~1,200–1,700 words. This is a magazine-style feature, not a bullet recap.";
+  const entityGuide = compact
+    ? "Use [[Bracketed Terms]] for 6–10 entities drawn verbatim from sources; entities array must define each bracketed term."
+    : "Use [[Bracketed Terms]] for 10–14 entities drawn from sources; entities array must define each bracketed term.";
+  const citationGuide = compact
+    ? "citations: at most 5 objects. quoteOrFact must be ONE short line (≤ 160 chars) supporting the claim."
+    : "citations: up to 10 objects with concise quoteOrFact lines.";
+
   return [
     "You are the Senior Executive Editor of the Times of SF.",
     `You are filing for the ${desk} desk. ${deskNotes}`,
-    "Your goal is to transform source facts into a readable, truth-seeking feature report (approx 1,200-1,700 words).",
+    lengthGuide,
     "Write with analytical authority, but stay strictly grounded in the provided source facts.",
-    "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods (like the Mission or Financial District) unless they are explicitly mentioned in the source packets.",
-    "Avoid flowery 'SF-themed' filler, clickbait, fake certainty, and hype phrases like 'shocking' or 'you won't believe'.",
-    "Do not say the story is based on '200+ sources'; cite only the 3-8 sources actually provided and used.",
-    "Copyright safety: extract facts, not prose. Do not mimic source wording, sentence structure, headline structure, or distinctive framing.",
-    "Every factual claim must map to a source credit. Use inline citations like (Reuters) immediately after specific factual claims.",
-    "Separate confirmed facts from analysis. Label uncertainty plainly and include what cannot be verified yet.",
+    "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods unless they appear in the source packets.",
+    "Avoid flowery filler, clickbait, fake certainty, and hype phrases like 'shocking' or 'you won't believe'.",
+    "Do not say the story is based on '200+ sources'; cite only the sources actually provided.",
+    "Copyright safety: extract facts, not prose. Do not mimic source wording, sentence cadence, headline structure, or distinctive framing.",
+    "Every factual claim must map to a source credit. Use inline citations like (Reuters) after specific factual claims.",
+    "Separate confirmed facts from analysis. Label uncertainty plainly.",
     "Prefer primary documents, official statements, filings, and public data when present in the source packets.",
-    "Use this bodyMarkdown structure with ### headers in this order:",
-    "1. The News in One Sentence",
-    "2. Why It Matters",
-    "3. What Happened",
-    "4. The Hidden Angle",
-    "5. Who Benefits",
-    "6. Who Loses",
-    "7. What Sources Agree On",
-    "8. What Sources Disagree On",
-    "9. What Is Still Unknown",
-    "10. Timeline",
-    "11. Data / Chart",
-    "12. Context",
-    "13. What Happens Next",
-    "14. Source Notes",
-    "Use short paragraphs, bullets for dense facts, and one evidence-driven pull-quote or key-number moment.",
-    "MANDATORY: Insert [CHART:0] naturally in the Data / Chart section if dataBlocks has usable data.",
-    "dataBlocks can render four chart types: bar, histogram, scatter, and line. Use line when points should be connected over time; use scatter when points should remain unconnected.",
-    "Each dataBlock must include type, title, xAxisLabel, yAxisLabel, and data.",
-    "For bar/histogram data use {label, value}. For scatter/line data use numeric {x, y, label}.",
-    "Chart axes must use concrete dimension names matched to the statistics you cite (examples: Year and Funding ($M), Quarter and Headcount, Agency and Budget share (%)).",
-    "Never set xAxisLabel or yAxisLabel to generic placeholders like Category, Value, Series, Label, X, or Y.",
-    "OUTPUT RULES: Your reply must be ONE valid JSON object only. Inside JSON strings, escape every double-quote as \\\" and represent line breaks as \\n — never paste multi-line raw prose inside a JSON string without escaping.",
-    `Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks, editorialCategory.`,
-    `editorialCategory must be exactly one of: Tech, Funding, Civics, Culture, Transit, Food, Events — use "${desk}" unless the sources clearly belong elsewhere.`,
-    "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, and factBullets.",
-    "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact} for the most important article claims.",
-    "MANDATORY: Use double brackets like [[NVIDIA]] or [[Jane Doe]] for at least 10-15 key people, companies, agencies, products, or technical terms explicitly mentioned in the sources.",
-    "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
-    "entities must be an array of {name, definition} for your bracketed terms.",
-    "dataBlocks must be an array of {type, title, xAxisLabel, yAxisLabel, data} representing core statistics from the sources.",
-    `Source packets (sanitized JSON): ${JSON.stringify(sanitizeSourcesForPrompt(sources))}`,
+    "Structure bodyMarkdown using ### headers in this EXACT order:",
+    "### The Dispatch: The Immediate News and Its Primary Impact",
+    "### The Context: Historical Background and Broader Industry Trends",
+    "### The Data Insight: A Rigorous Analysis of the Underlying Numbers",
+    "### The Horizon: Long-Term Implications and the Future Outlook",
+    "### Source Notes",
+    "The Dispatch leads with what happened and why readers should care now. The Context widens to history and industry dynamics. The Data Insight synthesizes quantitative claims—insert [CHART:0] in this section when dataBlocks[0] holds real numeric values from sources (omit the placeholder if no credible numbers exist). The Horizon covers second-order effects, risks, and what to monitor. Source Notes briefly credits each outlet's contribution.",
+    "Use rich paragraphs; bullet lists only where density demands it.",
+    "dataBlocks may include bar, histogram, scatter, or line charts. Use line for time series; scatter for disconnected points.",
+    "Each dataBlock needs type, title, xAxisLabel, yAxisLabel, and data.",
+    "For bar/histogram use {label, value}. For scatter/line use numeric {x, y, label}.",
+    "Chart axes must name real dimensions (e.g. Quarter and Revenue ($M)); never use Category/Value placeholders.",
+    "OUTPUT RULES: Reply with ONE JSON object only. Escape double-quotes inside strings as \\\" and use \\n for newlines—never output raw multi-line strings inside JSON.",
+    `Return JSON keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks, editorialCategory, tldr.`,
+    `editorialCategory must be one of: Tech, Funding, Civics, Culture, Transit, Food, Events — prefer "${desk}" unless sources clearly belong elsewhere.`,
+    "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, factBullets.",
+    "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact}.",
+    citationGuide,
+    entityGuide,
+    "entities must be {name, definition} entries aligned with your bracketed terms.",
+    "dataBlocks must reflect statistics cited in the Data Insight section (or be an empty array if none).",
+    "Include tldr with keys whyItMatters, whoIsAffected, whatIsNext.",
+    `Source packets (sanitized JSON): ${JSON.stringify(sanitizeSourcesForPrompt(sources, compact))}`,
   ].join("\n");
 }
 
@@ -329,7 +335,7 @@ export function buildEventsDigestPost(events: EventInfo[]): GeneratedPost {
   };
 }
 
-async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtraction[]) {
+async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtraction[], mode: PromptMode) {
   if (!geminiAi) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
@@ -341,7 +347,7 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
         role: "user",
         parts: [
           {
-            text: buildPrompt(topic, sources),
+            text: buildPrompt(topic, sources, mode),
           },
         ],
       },
@@ -443,7 +449,7 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
   return normalizePost(topic, parsed);
 }
 
-async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExtraction[]) {
+async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExtraction[], mode: PromptMode) {
   if (!config.fireworksApiKey) {
     throw new Error("FIREWORKS_API_KEY is not configured.");
   }
@@ -460,14 +466,14 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
         {
           role: "system",
           content:
-            "You are a grounded newsroom writer. Return only valid JSON including editorialCategory (one of: Tech, Funding, Civics, Culture, Transit, Food, Events).",
+            "You are a grounded newsroom writer. Return only valid JSON including editorialCategory (one of: Tech, Funding, Civics, Culture, Transit, Food, Events). Never truncate JSON.",
         },
         {
           role: "user",
-          content: buildPrompt(topic, sources),
+          content: buildPrompt(topic, sources, mode),
         },
       ],
-      temperature: 0.2,
+      temperature: mode === "compact" ? 0.12 : 0.2,
       response_format: {
         type: "json_object",
       },
@@ -496,11 +502,20 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
 }
 
 export async function synthesizePost(topic: TrendCandidate, sources: SourceExtraction[]): Promise<GeneratedPost> {
-  if (config.llmProvider === "fireworks") {
-    return synthesizeWithFireworks(topic, sources);
+  const modes: PromptMode[] = ["full", "compact"];
+  let lastErr: unknown;
+  for (const mode of modes) {
+    try {
+      if (config.llmProvider === "fireworks") {
+        return await synthesizeWithFireworks(topic, sources, mode);
+      }
+      return await synthesizeWithGemini(topic, sources, mode);
+    } catch (err) {
+      lastErr = err;
+      console.warn(`synthesizePost (${mode}) failed:`, err instanceof Error ? err.message : err);
+    }
   }
-
-  return synthesizeWithGemini(topic, sources);
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export async function expandContent(
@@ -518,25 +533,32 @@ export async function expandContent(
     : "";
 
   const prompt = `
-    You are the Times of SF senior editor. 
-    A junior writer has provided a short dispatch. Please expand this into a full feature-length report (approx 1,200-1,700 words).
-    Do not change the existing facts, but add analytical depth and explore the long-term implications.
-    Maintain the existing professional, grounded editorial tone.
-    
-    CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods unless they are explicitly mentioned in the dispatch.
-    Copyright safety: do not mimic source wording, article structure, or distinctive phrasing. Keep facts attributed and analysis clearly separated.
-    
-    IMPORTANT: 
-    1. Use double brackets like [[NVIDIA]] for companies, people, and tech terms—target at least 10 highlighted entities where the dispatch supports it. Prefer the entity list when provided, but you may introduce additional bracketed terms if they appear verbatim in the dispatch.
-    2. Insert [CHART:index] where the data visualizations listed below would naturally fit.
-    3. Return ONLY the new body content in Markdown. No headline, no titles.
-    
+    You are the Times of SF senior editor.
+    Expand the markdown below into a full feature-length report (approx 1,200-1,700 words).
+    Do not change the underlying facts, but add analytical depth and long-term implications.
+    Maintain the grounded editorial tone.
+
+    CRITICAL: Do NOT invent neighborhood-specific SF detail unless it appears in the text below.
+    Copyright safety: do not mimic source wording or distinctive phrasing.
+
+    Structure: preserve existing ### headers when present; otherwise use exactly:
+    ### The Dispatch: The Immediate News and Its Primary Impact
+    ### The Context: Historical Background and Broader Industry Trends
+    ### The Data Insight: A Rigorous Analysis of the Underlying Numbers
+    ### The Horizon: Long-Term Implications and the Future Outlook
+    ### Source Notes
+
+    IMPORTANT:
+    1. Use [[Bracketed Terms]] for companies, people, and technical concepts—aim for at least 10 where supported.
+    2. Insert [CHART:index] where listed charts fit naturally (often inside The Data Insight).
+    3. Return ONLY markdown body content—no JSON, no outer headline.
+
     ${entityContext}
     ${chartContext}
-    
-    Current Dispatch:
+
+    Current article body:
     ${currentContent}
-    
+
     Expand this story:
   `;
 

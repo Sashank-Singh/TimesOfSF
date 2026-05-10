@@ -22,15 +22,24 @@ function normalizeCredits(post: any): Article["credits"] {
 function normalizeCitations(post: any): Article["citations"] {
   if (!Array.isArray(post.citations)) return [];
 
-  return post.citations
+  const mapped = post.citations
     .filter((citation: any) => citation?.claim && citation?.sourceName && citation?.sourceUrl)
     .map((citation: any) => ({
       claim: citation.claim,
       sourceName: citation.sourceName,
       sourceUrl: citation.sourceUrl,
       quoteOrFact: citation.quoteOrFact || citation.claim,
-    }))
-    .slice(0, 12);
+    }));
+
+  const seen = new Set<string>();
+  const deduped = mapped.filter((c) => {
+    const k = `${c.claim}|${c.sourceUrl}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+
+  return deduped.slice(0, 12);
 }
 
 function getCategoryImage(category: string, id: number): string {
@@ -122,7 +131,7 @@ function dbPostToArticle(post: any): Article {
     excerpt: post.dek || post.short_post || "",
     content: post.body_markdown,
     imageUrl: post.imageUrl || getCategoryImage(category, post.id),
-    imageCredit: post.imageUrl ? "Licensed Source Image" : "Unsplash",
+    imageCredit: post.imageCredit ?? (post.imageUrl ? "Source preview" : "Unsplash"),
     readTime: `${Math.max(3, Math.ceil((post.body_markdown || "").split(" ").length / 200))} min`,
     tldr: post.tldr || undefined,
     credits: normalizeCredits(post),

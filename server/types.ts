@@ -85,6 +85,8 @@ export interface SourceSearchResult {
   headline: string;
   publishedAt?: string;
   summary?: string;
+  /** RSS/media thumbnail when extraction has not run yet */
+  imageUrl?: string;
 }
 
 export interface SourceAttempt {
@@ -127,6 +129,8 @@ export interface GeneratedPost {
   slug: string;
   dek: string;
   imageUrl?: string;
+  /** Hero line shown in UI (e.g. outlet attribution for preview images). */
+  imageCredit?: string;
   bodyMarkdown: string;
   shortPost: string;
   topic: string;
