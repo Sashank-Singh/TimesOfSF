@@ -14,7 +14,7 @@ interface ArticleCardProps {
 }
 
 export function ArticleCard({ article, onClick, featured, isBookmarked, onBookmark, onShare }: ArticleCardProps) {
-  const isToday = article.date?.startsWith('2026-05-04') ?? false;
+  const isToday = article.date ? new Date(article.date).toDateString() === new Date().toDateString() : false;
 
   if (featured) {
     return (

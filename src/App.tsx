@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Article } from './types';
+import { Article, EventInfo } from './types';
 import { fetchArticles, fetchEvents } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';

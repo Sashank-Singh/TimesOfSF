@@ -1,6 +1,10 @@
 import {
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  ScatterChart,
+  Scatter,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -13,10 +17,110 @@ import { motion } from "motion/react";
 
 interface DataVisChartProps {
   title: string;
-  data: { label: string; value: number }[];
+  type?: "bar" | "histogram" | "scatter" | "line" | "chart";
+  xAxisLabel?: string;
+  yAxisLabel?: string;
+  data: { label?: string; value?: number; x?: number; y?: number }[];
 }
 
-export function DataVisChart({ title, data }: DataVisChartProps) {
+function normalizeChartData(data: DataVisChartProps["data"]) {
+  return data.map((point, index) => ({
+    label: point.label ?? String(point.x ?? index + 1),
+    value: point.value ?? point.y ?? 0,
+    x: point.x ?? index + 1,
+    y: point.y ?? point.value ?? 0,
+  }));
+}
+
+function formatTick(value: string | number) {
+  if (typeof value === "number") return Number.isInteger(value) ? value.toString() : value.toFixed(1);
+  return value.length > 14 ? `${value.slice(0, 12)}...` : value;
+}
+
+export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAxisLabel = "Value", data }: DataVisChartProps) {
+  const chartType = type === "chart" ? "bar" : type;
+  const normalizedData = normalizeChartData(data);
+  const commonMargin = { top: 20, right: 24, left: 18, bottom: 48 };
+  const axisTick = { fontSize: 10, fontFamily: "monospace", fill: "rgba(0,0,0,0.5)", fontWeight: "bold" };
+  const tooltipStyle = {
+    backgroundColor: "#000",
+    border: "none",
+    borderRadius: "0",
+    color: "#fff",
+    fontSize: "11px",
+    fontFamily: "monospace",
+    padding: "12px",
+  };
+  const xAxis = (
+    <XAxis
+      dataKey={chartType === "scatter" || chartType === "line" ? "x" : "label"}
+      type={chartType === "scatter" || chartType === "line" ? "number" : "category"}
+      axisLine={false}
+      tickLine={false}
+      tick={axisTick}
+      tickFormatter={formatTick}
+      interval={0}
+      angle={chartType === "bar" || chartType === "histogram" ? -18 : 0}
+      textAnchor={chartType === "bar" || chartType === "histogram" ? "end" : "middle"}
+      height={60}
+    >
+      <Label value={xAxisLabel} position="insideBottom" offset={-12} className="fill-ink/50 font-mono text-[10px] uppercase tracking-widest" />
+    </XAxis>
+  );
+  const yAxis = (
+    <YAxis
+      dataKey={chartType === "scatter" || chartType === "line" ? "y" : "value"}
+      type="number"
+      axisLine={false}
+      tickLine={false}
+      tick={axisTick}
+      tickFormatter={formatTick}
+      width={54}
+    >
+      <Label value={yAxisLabel} angle={-90} position="insideLeft" offset={-6} className="fill-ink/50 font-mono text-[10px] uppercase tracking-widest" />
+    </YAxis>
+  );
+
+  const renderChart = () => {
+    if (chartType === "scatter") {
+      return (
+        <ScatterChart data={normalizedData} margin={commonMargin}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" />
+          {xAxis}
+          {yAxis}
+          <Tooltip cursor={{ strokeDasharray: "3 3" }} contentStyle={tooltipStyle} itemStyle={{ color: "#fff", textTransform: "uppercase" }} />
+          <Scatter name={title} data={normalizedData} fill="#8B0000" />
+        </ScatterChart>
+      );
+    }
+
+    if (chartType === "line") {
+      return (
+        <LineChart data={normalizedData} margin={commonMargin}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" />
+          {xAxis}
+          {yAxis}
+          <Tooltip cursor={{ stroke: "rgba(0,0,0,0.12)" }} contentStyle={tooltipStyle} itemStyle={{ color: "#fff", textTransform: "uppercase" }} />
+          <Line type="monotone" dataKey="y" stroke="#8B0000" strokeWidth={3} dot={{ r: 4, fill: "#121212" }} activeDot={{ r: 6 }} />
+        </LineChart>
+      );
+    }
+
+    return (
+      <BarChart data={normalizedData} margin={commonMargin} barCategoryGap={chartType === "histogram" ? 0 : "20%"}>
+        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.08)" />
+        {xAxis}
+        {yAxis}
+        <Tooltip cursor={{ fill: "rgba(0,0,0,0.03)" }} contentStyle={tooltipStyle} itemStyle={{ color: "#fff", textTransform: "uppercase" }} />
+        <Bar dataKey="value" radius={chartType === "histogram" ? [0, 0, 0, 0] : [2, 2, 0, 0]} barSize={chartType === "histogram" ? undefined : 40}>
+          {normalizedData.map((_, index) => (
+            <Cell key={`cell-${index}`} fill={index === normalizedData.length - 1 ? "#8B0000" : "#1a1a1a"} fillOpacity={0.9} />
+          ))}
+        </Bar>
+      </BarChart>
+    );
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, scale: 0.98 }}
@@ -27,46 +131,14 @@ export function DataVisChart({ title, data }: DataVisChartProps) {
       <div className="flex flex-col gap-1 mb-10 relative">
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-mono uppercase tracking-[0.4em] text-accent font-bold">Editorial Data</span>
-          <sup className="text-[10px] font-mono text-accent font-bold">(1)</sup>
+          <span className="text-[9px] font-mono uppercase tracking-widest text-ink/35">{chartType}</span>
         </div>
         <h4 className="text-2xl font-black tracking-tighter leading-tight max-w-xl italic serif">{title}</h4>
       </div>
       
       <div className="h-72 w-full relative">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 20, right: 10, left: -25, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.08)" />
-            <XAxis 
-              dataKey="label" 
-              axisLine={false} 
-              tickLine={false} 
-              tick={{ fontSize: 10, fontFamily: 'monospace', fill: 'rgba(0,0,0,0.5)', fontWeight: 'bold' }}
-              dy={15}
-            />
-            <YAxis 
-              axisLine={false} 
-              tickLine={false} 
-              tick={{ fontSize: 10, fontFamily: 'monospace', fill: 'rgba(0,0,0,0.5)', fontWeight: 'bold' }}
-            />
-            <Tooltip 
-              cursor={{ fill: 'rgba(0,0,0,0.03)' }}
-              contentStyle={{ 
-                backgroundColor: '#000', 
-                border: 'none', 
-                borderRadius: '0',
-                color: '#fff',
-                fontSize: '11px',
-                fontFamily: 'monospace',
-                padding: '12px'
-              }}
-              itemStyle={{ color: '#fff', textTransform: 'uppercase' }}
-            />
-            <Bar dataKey="value" radius={[2, 2, 0, 0]} barSize={40}>
-              {data.map((_, index) => (
-                <Cell key={`cell-${index}`} fill={index === data.length - 1 ? '#ff3e00' : '#1a1a1a'} fillOpacity={0.9} />
-              ))}
-            </Bar>
-          </BarChart>
+          {renderChart()}
         </ResponsiveContainer>
         
         {/* Integrated Citation Overlay in the "image" (chart area) */}

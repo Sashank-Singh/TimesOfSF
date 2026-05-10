@@ -3,14 +3,23 @@ import { synthesizePost } from "./agents";
 import { completeRun, createRun, fetchRecentPosts, saveGeneratedPost, saveSourceAttempt } from "./db";
 import { extractSource } from "./extractor";
 import { config } from "./config";
+import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline } from "./dedupe";
 import { findSourceArticle, getTrendingTopics } from "./rss";
 import { PipelineRunResult, PreferredSourceName, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
 const PREFERRED_SOURCES: PreferredSourceName[] = [
-  "TechCrunch",
-  "Bloomberg",
   "Reuters",
-  "AP News"
+  "AP News",
+  "Bloomberg",
+  "TechCrunch",
+  "The Verge",
+  "BBC",
+  "New York Times",
+  "The San Francisco Standard",
+  "Mission Local",
+  "Fox News",
+  "Engadget",
+  "San Francisco Chronicle"
 ];
 
 function makeRunId() {
@@ -34,6 +43,41 @@ function validateGrounding(topic: TrendCandidate, sources: SourceExtraction[]) {
 
   if (!tokenMatches) {
     return "Rejected: source evidence did not align strongly enough with the selected trend topic.";
+  }
+
+  return null;
+}
+
+function normalizeForCopyrightCheck(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[`*_#[\]()]/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function ngrams(text: string, size = 8) {
+  const words = normalizeForCopyrightCheck(text).split(/\s+/).filter(Boolean);
+  const grams = new Set<string>();
+  for (let index = 0; index <= words.length - size; index += 1) {
+    grams.add(words.slice(index, index + size).join(" "));
+  }
+  return grams;
+}
+
+function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
+  const generated = ngrams(generatedText);
+  if (!generated.size) return null;
+
+  for (const source of sources) {
+    const sourceGrams = ngrams(source.textExcerpt);
+    if (!sourceGrams.size) continue;
+    const overlap = [...sourceGrams].filter((gram) => generated.has(gram)).length;
+    const ratio = overlap / Math.min(sourceGrams.size, generated.size);
+    if (overlap >= 4 || ratio >= 0.08) {
+      return `${source.sourceName} has excessive phrase overlap with generated copy`;
+    }
   }
 
   return null;
@@ -68,11 +112,12 @@ async function attemptSource(topic: TrendCandidate, sourceName: PreferredSourceN
 /**
  * Core logic to process a single trending topic into a published news post.
  */
-async function processTopic(topic: TrendCandidate): Promise<PipelineRunResult> {
+async function processTopic(topic: TrendCandidate, existingPosts: Awaited<ReturnType<typeof fetchRecentPosts>>): Promise<PipelineRunResult> {
   const runId = makeRunId();
   await createRun(runId, topic);
 
-  const sourcesToTry = PREFERRED_SOURCES.filter(s => s !== topic?.primarySource?.sourceName);
+  const sourcesToTry = [...new Set([...(topic.signalSources ?? []), ...PREFERRED_SOURCES])]
+    .filter(s => s !== topic?.primarySource?.sourceName);
   const attempts: SourceAttempt[] = [];
   
   // Process sources sequentially to minimize memory spikes on Render
@@ -120,16 +165,41 @@ async function processTopic(topic: TrendCandidate): Promise<PipelineRunResult> {
     return rejected;
   }
 
+  const duplicate = findDuplicateStory(topic, successfulSources, existingPosts);
+  if (duplicate) {
+    const rejected: PipelineRunResult = {
+      runId,
+      topic,
+      successfulSources,
+      failedSources,
+      published: false,
+      reason: `Rejected: duplicate story detected (${duplicate.reason}).`,
+    };
+    await completeRun(rejected);
+    return rejected;
+  }
+
   try {
     const post = await synthesizePost(topic, successfulSources);
+    const fingerprint = buildStoryFingerprint(topic, successfulSources, post.headline);
+    post.sourceUrls = fingerprint.sourceUrls;
+    post.headlineHash = fingerprint.headlineHash;
+    post.canonicalKey = fingerprint.canonicalKey;
+    post.storyFingerprint = fingerprint.storyFingerprint;
+
+    const copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
+    if (copyrightRisk) {
+      throw new Error(`Copyright safety check failed: ${copyrightRisk}`);
+    }
     
-    // High-fidelity Image Selection
-    const sourceWithImage = successfulSources.find(s => s.imageUrl && s.imageUrl.startsWith("http"));
+    // Only reuse images when the source explicitly permits licensed/public-domain use.
+    const sourceWithImage = successfulSources.find(s =>
+      s.imageUrl &&
+      s.imageUrl.startsWith("http") &&
+      (s.allowedUse === "licensed" || s.allowedUse === "public_domain")
+    );
     if (sourceWithImage?.imageUrl) {
       post.imageUrl = sourceWithImage.imageUrl;
-    } else {
-      const { searchGoogleImage } = await import("./extractor");
-      post.imageUrl = await searchGoogleImage(topic.topic);
     }
 
     const postId = await saveGeneratedPost(runId, post);
@@ -187,11 +257,12 @@ export async function runPipeline() {
   console.log(`🚀 Starting batch processing for ${targets.length} topics...`);
   
   const results: PipelineRunResult[] = [];
-  const processedTopics: string[] = [...existing.map(p => p.topic.toLowerCase())];
+  const processedTopics: string[] = [...existing.map(p => normalizeHeadline(p.topic || p.headline || ""))];
+  const existingSnapshots = [...existing];
 
   for (const target of targets) {
     // Secondary check: ensure this topic isn't too similar to what we just published or fetched
-    const targetLower = target.topic.toLowerCase();
+    const targetLower = normalizeHeadline(target.topic);
     const targetTokens = targetLower.split(/\s+/).filter(t => t.length > 3);
     
     const isDuplicate = processedTopics.some(existingTopic => {
@@ -207,10 +278,20 @@ export async function runPipeline() {
     }
 
     try {
-      const res = await processTopic(target);
+      const res = await processTopic(target, existingSnapshots);
       results.push(res);
       if (res.published) {
         processedTopics.push(targetLower);
+        existingSnapshots.push({
+          id: res.postId,
+          topic: target.topic,
+          headline: target.topic,
+          sourceUrls: res.successfulSources.map((source) => source.canonicalUrl || source.articleUrl),
+          credits: res.successfulSources.map((source) => ({
+            sourceName: source.sourceName,
+            articleUrl: source.articleUrl,
+          })),
+        } as any);
       }
     } catch (err) {
       console.error(`Failed to process topic ${target.topic}:`, err);
