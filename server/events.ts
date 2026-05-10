@@ -34,17 +34,29 @@ async function fetchFeedXml(url: string) {
   return response.text();
 }
 
-function extractUrlsFromText(text: string): string[] {
+function extractMatches(text: string, re: RegExp): string[] {
   const out: string[] = [];
-  const re = /https?:\/\/(?:[\w.-]+\.)?lu\.ma\/[^\s"'<>]+/gi;
+  const flags = re.global ? re.flags : `${re.flags}g`;
+  const r = new RegExp(re.source, flags);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
+  while ((m = r.exec(text)) !== null) {
     out.push(m[0].replace(/[),.]+$/, ""));
   }
   return out;
 }
 
+/** Direct Luma RSVP pages when Google News embeds them in title/description. */
+function extractLumaUrls(text: string): string[] {
+  return extractMatches(text, /https?:\/\/(?:[\w.-]+\.)?lu\.ma\/[^\s"'<>]+/gi);
+}
+
+/** Direct Cerebral Valley pages when the RSS item HTML includes the canonical URL. */
+function extractCerebralValleyUrls(text: string): string[] {
+  return extractMatches(text, /https?:\/\/(?:[\w.-]+\.)?cerebralvalley\.[a-z]{2,}\/[^\s"'<>]+/gi);
+}
+
 function classifyEventSource(url: string, title: string): string {
+  if (/cerebralvalley\./i.test(url)) return "Cerebral Valley";
   const t = title.toLowerCase();
   if (/cerebral\s+valley/.test(t)) return "Cerebral Valley";
   if (url.includes("lu.ma") || url.includes("luma.co")) return "Luma";
@@ -59,12 +71,14 @@ function parsePubDate(raw?: string): string {
 }
 
 /**
- * Prefer real cal links (lu.ma) parsed from RSS — avoids hallucinated URLs from LLMs.
+ * Event links from Google News RSS: prefer real `lu.ma` / `cerebralvalley.*` URLs parsed from
+ * the item body; fall back to the RSS item link for Cerebral-titled stories when needed.
  */
 export async function fetchEvents(): Promise<EventInfo[]> {
   const queries = [
     "site:lu.ma (San Francisco OR SF OR Oakland) (startup OR founder OR AI OR tech OR VC)",
     "site:lu.ma (Silicon Valley OR Palo Alto OR Sunnyvale OR \"San Jose\") (startup OR AI OR founder)",
+    'site:cerebralvalley.com (San Francisco OR "Bay Area" OR founder OR AI OR startup)',
     '("Cerebral Valley" OR cerebralvalley) (event OR summit OR meetup)',
   ];
 
@@ -85,10 +99,12 @@ export async function fetchEvents(): Promise<EventInfo[]> {
 
         const link = item.link?.trim() ?? "";
         const blob = `${title} ${item.description ?? ""} ${link}`;
-        const lumaUrls = extractUrlsFromText(blob);
+        const lumaUrls = extractLumaUrls(blob);
+        const cerebralUrls = extractCerebralValleyUrls(blob);
 
         const primaryUrl =
           lumaUrls[0] ||
+          cerebralUrls[0] ||
           (link.includes("lu.ma") || link.includes("luma.co") ? link : "") ||
           (/cerebral/i.test(title) ? link : "");
 
