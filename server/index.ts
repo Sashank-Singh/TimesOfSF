@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import { config } from "./config";
 import { ensureSchema, fetchRecentPosts, fetchRun } from "./db";
-import { fetchEvents } from "./events";
 import { loadInngestState } from "./inngest";
 import { runPipeline } from "./pipeline";
 
@@ -15,12 +14,16 @@ async function start() {
   app.use(express.json());
 
   app.get("/health", (_req, res) => {
+    const internalActive = !inngestState.enabled && !config.disableInternalPipelineCron;
     res.json({
       ok: true,
       env: config.appEnv,
       llmProvider: config.llmProvider,
       inngestEnabled: inngestState.enabled,
       inngestReason: inngestState.reason ?? null,
+      internalPipelineCron: internalActive
+        ? { active: true, intervalMs: Math.max(60_000, config.internalPipelineIntervalMs) }
+        : { active: false, intervalMs: null },
     });
   });
 
@@ -117,6 +120,18 @@ async function start() {
     console.log(`Server listening on http://0.0.0.0:${config.port}`);
     if (!inngestState.enabled && inngestState.reason) {
       console.log(`Inngest disabled: ${inngestState.reason}`);
+    }
+    if (!inngestState.enabled && !config.disableInternalPipelineCron) {
+      const ms = Math.max(60_000, config.internalPipelineIntervalMs);
+      console.log(
+        `Internal pipeline scheduler: every ${ms / 1000}s. Configure Inngest keys on Render to use managed cron instead.`,
+      );
+      setInterval(() => {
+        runPipeline().catch((err) => console.error("Internal pipeline tick failed:", err));
+      }, ms);
+      setTimeout(() => {
+        runPipeline().catch((err) => console.error("Initial pipeline warm-up failed:", err));
+      }, 30_000);
     }
   });
 }

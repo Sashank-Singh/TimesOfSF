@@ -43,6 +43,25 @@ export type AllowedSourceUse =
   | "licensed"
   | "public_domain";
 
+export type EditorialCategory =
+  | "Tech"
+  | "Funding"
+  | "Civics"
+  | "Culture"
+  | "Transit"
+  | "Food"
+  | "Events";
+
+export const ALL_EDITORIAL_CATEGORIES: EditorialCategory[] = [
+  "Tech",
+  "Funding",
+  "Civics",
+  "Culture",
+  "Transit",
+  "Food",
+  "Events",
+];
+
 export interface TrendCandidate {
   topic: string;
   normalizedTopic: string;
@@ -50,6 +69,10 @@ export interface TrendCandidate {
   signalSources?: PreferredSourceName[];
   sampleHeadlines: string[];
   primarySource?: SourceSearchResult;
+  /** Desk routing for quotas and prompts */
+  editorialCategory?: EditorialCategory;
+  /** True when synthesized only to satisfy a quiet daily lane */
+  quotaSeed?: boolean;
 }
 
 export interface SourceSearchResult {
@@ -105,6 +128,7 @@ export interface GeneratedPost {
   bodyMarkdown: string;
   shortPost: string;
   topic: string;
+  editorialCategory?: EditorialCategory;
   credits: Array<{
     sourceName: PreferredSourceName;
     articleUrl: string;

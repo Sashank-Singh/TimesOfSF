@@ -32,6 +32,46 @@ function normalizeChartData(data: DataVisChartProps["data"]) {
   }));
 }
 
+function isPlaceholderAxisLabel(label?: string) {
+  if (!label?.trim()) return true;
+  const t = label.trim().toLowerCase();
+  return ["category", "value", "label", "series", "x", "y", "axis"].includes(t);
+}
+
+function inferAxisLabels(
+  title: string,
+  chartType: "bar" | "histogram" | "scatter" | "line",
+  data: ReturnType<typeof normalizeChartData>,
+) {
+  const tl = title.toLowerCase();
+  let x = "Segment";
+  let y = "Amount";
+
+  if (chartType === "scatter" || chartType === "line") {
+    x = tl.includes("year") || tl.includes("time") ? "Year" : tl.includes("quarter") ? "Quarter" : "Independent variable";
+    y = tl.includes("%") || tl.includes("percent") ? "Share (%)" : tl.includes("fund") || tl.includes("$") ? "Funding ($M)" : "Measured value";
+  } else {
+    if (tl.includes("year") || tl.includes("time")) {
+      x = "Year";
+      y = "Level";
+    } else if (tl.includes("city") || tl.includes("metro") || tl.includes("region") || tl.includes("county")) {
+      x = "Region";
+      y = "Reported value";
+    } else if (tl.includes("company") || tl.includes("firm")) {
+      x = "Company";
+      y = "Metric";
+    }
+  }
+
+  const labels = data.map((d) => d.label).filter((l): l is string => typeof l === "string" && !!l.trim());
+  if (labels.length >= 2 && labels.every((l) => /^\d{4}$/.test(l.trim()))) {
+    x = "Year";
+    if (y === "Amount" || y === "Level") y = "Reported level";
+  }
+
+  return { x, y };
+}
+
 function formatTick(value: string | number) {
   if (typeof value === "number") return Number.isInteger(value) ? value.toString() : value.toFixed(1);
   return value.length > 14 ? `${value.slice(0, 12)}...` : value;
@@ -40,6 +80,9 @@ function formatTick(value: string | number) {
 export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAxisLabel = "Value", data }: DataVisChartProps) {
   const chartType = type === "chart" ? "bar" : type;
   const normalizedData = normalizeChartData(data);
+  const inferred = inferAxisLabels(title, chartType, normalizedData);
+  const xResolved = isPlaceholderAxisLabel(xAxisLabel) ? inferred.x : xAxisLabel.trim();
+  const yResolved = isPlaceholderAxisLabel(yAxisLabel) ? inferred.y : yAxisLabel.trim();
   const commonMargin = { top: 20, right: 24, left: 18, bottom: 48 };
   const axisTick = { fontSize: 10, fontFamily: "monospace", fill: "rgba(0,0,0,0.5)", fontWeight: "bold" };
   const tooltipStyle = {
@@ -64,7 +107,7 @@ export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAx
       textAnchor={chartType === "bar" || chartType === "histogram" ? "end" : "middle"}
       height={60}
     >
-      <Label value={xAxisLabel} position="insideBottom" offset={-12} className="fill-ink/50 font-mono text-[10px] uppercase tracking-widest" />
+      <Label value={xResolved} position="insideBottom" offset={-12} className="fill-ink/50 font-mono text-[10px] uppercase tracking-widest" />
     </XAxis>
   );
   const yAxis = (
@@ -77,7 +120,7 @@ export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAx
       tickFormatter={formatTick}
       width={54}
     >
-      <Label value={yAxisLabel} angle={-90} position="insideLeft" offset={-6} className="fill-ink/50 font-mono text-[10px] uppercase tracking-widest" />
+      <Label value={yResolved} angle={-90} position="insideLeft" offset={-6} className="fill-ink/50 font-mono text-[10px] uppercase tracking-widest" />
     </YAxis>
   );
 

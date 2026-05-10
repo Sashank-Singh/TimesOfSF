@@ -23,10 +23,13 @@ export async function loadInngestState(): Promise<InngestModuleState> {
   if (cachedState) return cachedState;
 
   if (!config.inngestEventKey || !config.inngestSigningKey) {
-    console.warn("⚠️ INNGEST NOT ENABLED: Missing INNGEST_EVENT_KEY or INNGEST_SIGNING_KEY in environment variables.");
+    console.warn(
+      "⚠️ INNGEST NOT ENABLED: Missing INNGEST_EVENT_KEY or INNGEST_SIGNING_KEY. Scheduled jobs from Inngest will not run; the API server falls back to its internal timer when it starts (see /health → internalPipelineCron).",
+    );
     cachedState = {
       enabled: false,
-      reason: "Inngest env vars are not configured. Manual pipeline mode is still available.",
+      reason:
+        "Inngest env vars are not configured. The server uses an internal interval scheduler unless DISABLE_INTERNAL_PIPELINE_CRON=true.",
     };
     return cachedState;
   }
