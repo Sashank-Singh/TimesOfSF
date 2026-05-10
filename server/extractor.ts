@@ -75,40 +75,72 @@ function buildFallbackExtraction(searchResult: SourceSearchResult): SourceExtrac
   };
 }
 
+function resolvePythonBinary(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "venv", "bin", "python3"),
+    path.resolve(process.cwd(), "venv", "bin", "python3.14"),
+    path.resolve(process.cwd(), "venv", "bin", "python3.13"),
+    path.resolve(process.cwd(), "venv", "bin", "python"),
+  ];
+  const hit = candidates.find((p) => fs.existsSync(p));
+  return hit ?? "python3";
+}
+
 async function runPythonExtractor(url: string): Promise<any> {
-  const venvPath = path.resolve(process.cwd(), "venv", "bin", "python3");
-  const pythonBin = fs.existsSync(venvPath) ? venvPath : "python3";
+  const pythonBin = resolvePythonBinary();
   const scriptPath = path.resolve(process.cwd(), "server", "extractor.py");
 
   return new Promise((resolve, reject) => {
-    const pythonProcess = spawn(pythonBin, [scriptPath, url]);
-    let result = '';
-    let error = '';
-    
-    pythonProcess.stdout.on('data', (data) => {
+    const pythonProcess = spawn(pythonBin, [scriptPath, url], {
+      env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    });
+    let result = "";
+    let stderrBuf = "";
+
+    pythonProcess.stdout.on("data", (data) => {
       result += data.toString();
     });
-    
-    pythonProcess.stderr.on('data', (data) => {
-      error += data.toString();
+
+    pythonProcess.stderr.on("data", (data) => {
+      stderrBuf += data.toString();
     });
-    
-    pythonProcess.on('close', (code) => {
-      if (code !== 0) {
-        reject(new Error(error || `Python process failed with code ${code}`));
-      } else {
+
+    pythonProcess.on("close", (code) => {
+      const parseStdoutJson = (): { ok?: boolean; error?: string; title?: string; text?: string } | null => {
+        const jsonMatch = result.match(/(\{[\s\S]*\})/);
+        if (!jsonMatch) return null;
         try {
-          // Find the last JSON block in stdout to ignore any preceding warnings
-          const jsonMatch = result.match(/(\{[\s\S]*\})/);
-          if (jsonMatch) {
-            resolve(JSON.parse(jsonMatch[1]));
-          } else {
-            reject(new Error(`No JSON found in Python output: ${result}`));
-          }
-        } catch (e) {
-          reject(new Error(`Failed to parse Python output: ${result}`));
+          return JSON.parse(jsonMatch[1]) as { ok?: boolean; error?: string; title?: string; text?: string };
+        } catch {
+          return null;
         }
+      };
+
+      const parsed = parseStdoutJson();
+
+      if (parsed && parsed.ok === false) {
+        reject(new Error(parsed.error || "News-please extraction failed"));
+        return;
       }
+
+      if (parsed && parsed.ok === true && parsed.text) {
+        resolve(parsed);
+        return;
+      }
+
+      // Legacy: JSON without `ok` but with body text
+      if (parsed && parsed.title && parsed.text) {
+        resolve(parsed);
+        return;
+      }
+
+      if (code !== 0) {
+        const hint = stderrBuf.trim() || result.trim().slice(0, 400) || "(no output)";
+        reject(new Error(`Python exited ${code}: ${hint}`));
+        return;
+      }
+
+      reject(new Error(`No usable JSON from extractor: ${result.slice(0, 400)}`));
     });
   });
 }
@@ -146,7 +178,13 @@ export async function extractSource(searchResult: SourceSearchResult): Promise<S
       facts,
     };
   } catch (error) {
-    console.error("News-please extraction failed, falling back to basic metadata:", error);
+    const msg = error instanceof Error ? error.message : String(error);
+    const quietFailure =
+      /no main text extracted|newsplease returned no article|^NewsPlease\b/i.test(msg) ||
+      /newsplease extraction failed$/i.test(msg);
+    if (!quietFailure) {
+      console.warn("News-please extraction failed, falling back to basic metadata:", msg);
+    }
     return buildFallbackExtraction(searchResult);
   }
 }
