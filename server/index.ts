@@ -42,15 +42,11 @@ async function start() {
             : "Uses Python news-please when available; otherwise falls back to RSS headline/summary metadata.",
         },
         synthesis: {
-          wireFallbackOnModelFailure: !config.disableSynthesisFallback,
-          copyrightCheckWireFallback: config.copyrightCheckWireFallback,
+          mode: "full_feature_only",
           copyrightOverlapGramThreshold: config.copyrightOverlapGramThreshold,
           copyrightOverlapRatioThreshold: config.copyrightOverlapRatioThreshold,
-          note: config.disableSynthesisFallback
-            ? "Wire recap on synthesis failure is disabled by default (full-format articles only). Set ENABLE_SYNTHESIS_FALLBACK=true to publish bullet recaps when the model fails."
-            : config.copyrightCheckWireFallback
-              ? "Wire fallback runs the same phrase-overlap heuristic as full synthesis (often blocks fallback)."
-              : "Wire fallback skips phrase-overlap checks by default (fact bullets overlap excerpts). Set COPYRIGHT_CHECK_WIRE_FALLBACK=true for strict checks.",
+          note:
+            "Only LLM-generated Dispatch / Data Insight articles are published. Wire recap posts were removed. Tune COPYRIGHT_OVERLAP_* if legitimate stories fail the phrase-overlap check.",
         },
       });
     } catch (error) {
