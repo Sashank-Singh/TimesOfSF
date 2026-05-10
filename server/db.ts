@@ -48,12 +48,24 @@ export async function ensureSchema() {
         body_markdown TEXT NOT NULL,
         short_post TEXT NOT NULL,
         credits JSONB NOT NULL,
+        citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+        source_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+        headline_hash TEXT,
+        canonical_key TEXT,
+        story_fingerprint JSONB,
         tldr JSONB,
         entities JSONB,
         data_blocks JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS citations JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS source_urls JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS headline_hash TEXT`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS canonical_key TEXT`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS story_fingerprint JSONB`,
+    sql`CREATE INDEX IF NOT EXISTS generated_posts_headline_hash_idx ON generated_posts (headline_hash)`,
+    sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`,
     sql`
       CREATE TABLE IF NOT EXISTS events (
         id BIGSERIAL PRIMARY KEY,
@@ -118,7 +130,8 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
 export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
   const inserted = (await sql`
     INSERT INTO generated_posts (
-      run_id, topic, headline, slug, dek, image_url, body_markdown, short_post, credits, tldr, entities, data_blocks
+      run_id, topic, headline, slug, dek, image_url, body_markdown, short_post, credits, citations,
+      source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks
     )
     VALUES (
       ${runId},
@@ -130,6 +143,11 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
       ${post.bodyMarkdown},
       ${post.shortPost},
       ${JSON.stringify(post.credits)},
+      ${JSON.stringify(post.citations ?? [])},
+      ${JSON.stringify(post.sourceUrls ?? [])},
+      ${post.headlineHash ?? null},
+      ${post.canonicalKey ?? null},
+      ${post.storyFingerprint ? JSON.stringify(post.storyFingerprint) : null},
       ${post.tldr ? JSON.stringify(post.tldr) : null},
       ${post.entities ? JSON.stringify(post.entities) : null},
       ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null}
@@ -163,6 +181,11 @@ export async function fetchRecentPosts(limit = 1000) {
       body_markdown,
       short_post,
       credits,
+      citations,
+      source_urls as "sourceUrls",
+      headline_hash as "headlineHash",
+      canonical_key as "canonicalKey",
+      story_fingerprint as "storyFingerprint",
       tldr,
       entities,
       data_blocks as "dataBlocks",
@@ -195,7 +218,17 @@ export async function fetchRun(runId: string) {
 }
 export async function fetchPostById(id: string) {
   const numericId = id.replace("db-", "");
-  const result = await sql`SELECT *, data_blocks as "dataBlocks" FROM generated_posts WHERE id = ${numericId}`;
+  const result = await sql`
+    SELECT
+      *,
+      source_urls as "sourceUrls",
+      headline_hash as "headlineHash",
+      canonical_key as "canonicalKey",
+      story_fingerprint as "storyFingerprint",
+      data_blocks as "dataBlocks"
+    FROM generated_posts
+    WHERE id = ${numericId}
+  `;
   return result[0];
 }
 

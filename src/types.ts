@@ -4,9 +4,27 @@ export interface ArticleEntity {
 }
 
 export interface DataBlock {
-  type: "chart";
+  type: "bar" | "histogram" | "scatter" | "line" | "chart";
   title: string;
-  data: { label: string; value: number }[];
+  xAxisLabel?: string;
+  yAxisLabel?: string;
+  data: { label?: string; value?: number; x?: number; y?: number }[];
+}
+
+export interface ArticleCredit {
+  sourceName: string;
+  articleUrl: string;
+  sourceType?: string;
+  publishedAt?: string;
+  confidence?: "high" | "medium" | "low";
+  factBullets: string[];
+}
+
+export interface ArticleCitation {
+  claim: string;
+  sourceName: string;
+  sourceUrl: string;
+  quoteOrFact: string;
 }
 
 export interface Article {
@@ -31,8 +49,18 @@ export interface Article {
     whoIsAffected: string;
     whatIsNext: string;
   };
+  credits?: ArticleCredit[];
+  citations?: ArticleCitation[];
+  sourceUrls?: string[];
   entities?: ArticleEntity[];
   dataBlocks?: DataBlock[];
 }
 
 export type ArticleCategory = Article["category"];
+
+export interface EventInfo {
+  title: string;
+  url: string;
+  date: string;
+  source: string;
+}
