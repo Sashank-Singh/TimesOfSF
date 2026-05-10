@@ -35,6 +35,12 @@ async function start() {
           : { active: false, intervalMs: null, coalesceMs: null },
         pipelineActivity: activity,
         cronPingConfigured: Boolean(config.cronSecret),
+        extraction: {
+          newsPleaseEnabled: !config.disableNewsPlease,
+          note: config.disableNewsPlease
+            ? "DISABLE_NEWS_PLEASE=true: skipping Python extractor (use on Render without news-please)."
+            : "Uses Python news-please when available; otherwise falls back to RSS headline/summary metadata.",
+        },
       });
     } catch (error) {
       res.status(500).json({

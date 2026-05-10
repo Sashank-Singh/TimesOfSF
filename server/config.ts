@@ -63,6 +63,10 @@ export const config = {
   sourceTimeoutMs: readOptionalInt("SOURCE_TIMEOUT_MS", 15000),
   trendLimit: readOptionalInt("TREND_LIMIT", 20),
   serperApiKey: process.env.SERPER_API_KEY,
+  /**
+   * Skip Python news-please extraction (RSS/HTML fallback only). Use on hosts without a working venv/Python (common on Render).
+   */
+  disableNewsPlease: process.env.DISABLE_NEWS_PLEASE === "true",
 };
 
 export function isProduction() {
