@@ -91,7 +91,7 @@ function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
     if (!sourceGrams.size) continue;
     const overlap = [...sourceGrams].filter((gram) => generated.has(gram)).length;
     const ratio = overlap / Math.min(sourceGrams.size, generated.size);
-    if (overlap >= 4 || ratio >= 0.08) {
+    if (overlap >= config.copyrightOverlapGramThreshold || ratio >= config.copyrightOverlapRatioThreshold) {
       return `${source.sourceName} has excessive phrase overlap with generated copy`;
     }
   }
