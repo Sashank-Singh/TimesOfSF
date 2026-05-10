@@ -80,8 +80,49 @@ function countTokenMatches(tokens: string[], text: string) {
 }
 
 function deriveTopicFromHeadline(headline: string) {
-  const clean = headline.replace(/[-|:].*$/, "").trim();
-  return normalizeTopic(clean);
+  const withoutPublisher = stripPublisherSuffix(headline);
+  const withoutPipeSite = withoutPublisher.replace(/\s*\|\s*[^|]{2,100}$/, "").trim();
+  return normalizeTopic(withoutPipeSite);
+}
+
+/** Rich token bag for cross-outlet RSS matching (includes sample headlines, not just normalizedTopic). */
+export function collectTopicMatchTokens(topic: TrendCandidate): string[] {
+  const blob = [topic.topic, topic.normalizedTopic, ...(topic.sampleHeadlines ?? [])].filter(Boolean).join(" ");
+  const tokens = significantTokens(blob);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of tokens) {
+    if (t.length < 4) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 14) break;
+  }
+  return out;
+}
+
+function minDistinctMatches(tokenCount: number): number {
+  if (tokenCount <= 0) return 99;
+  if (tokenCount <= 2) return 1;
+  return 2;
+}
+
+function pickBestFeedMatch(items: RssItem[], tokens: string[]): RssItem | null {
+  const limit = Math.min(items.length, 45);
+  const need = minDistinctMatches(tokens.length);
+  let best: RssItem | null = null;
+  let bestScore = 0;
+  for (let i = 0; i < limit; i += 1) {
+    const item = items[i];
+    if (!item?.link || !item.title) continue;
+    const searchable = `${stripPublisherSuffix(item.title)} ${item.description ?? ""}`;
+    const score = countTokenMatches(tokens, searchable);
+    if (score >= need && score > bestScore) {
+      best = item;
+      bestScore = score;
+    }
+  }
+  return best;
 }
 
 export async function getTrendingTopics(): Promise<TrendCandidate[]> {
@@ -147,16 +188,13 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
   const feeds = SOURCE_FEEDS[sourceName];
   if (!feeds) return null;
 
-  const topicTokens = significantTokens(topic.normalizedTopic).slice(0, 5);
+  const topicTokens = collectTopicMatchTokens(topic);
+  if (topicTokens.length === 0) return null;
 
   for (const feedUrl of feeds) {
     try {
       const items = await fetchFeedItems(feedUrl);
-      const match = items.find((item) => {
-        if (!item.link || !item.title) return false;
-        const searchable = `${stripPublisherSuffix(item.title)} ${item.description ?? ""}`;
-        return countTokenMatches(topicTokens, searchable) >= Math.min(2, topicTokens.length);
-      });
+      const match = pickBestFeedMatch(items, topicTokens);
 
       if (match?.link && match?.title) {
         return withSourceMetadata({
@@ -176,27 +214,34 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
   // If the direct feeds don't have it, we search Google News for the specific publication
   try {
     const sourceIdentifier = getSourceAliases(sourceName)[0].replace(/\s+/g, "");
-    // Google News supports boolean operators and source filters in its RSS search
-    const query = encodeURIComponent(`"${topicTokens.join('" "')}" source:${sourceIdentifier}`);
+    const qToks = topicTokens.slice(0, 6);
+    const query = encodeURIComponent(`${qToks.join(" ")} source:${sourceIdentifier}`);
     const gnUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
-    
-    const items = await fetchFeedItems(gnUrl);
-    
-    // Google News appends " - Source Name" to titles.
-    const match = items.find(item => {
-        if (!item.link || !item.title) return false;
-        if (!isGoogleNewsPublisherMatch(item.title, sourceName)) return false;
-        const searchable = `${stripPublisherSuffix(item.title)} ${item.description ?? ""}`;
-        return countTokenMatches(topicTokens, searchable) >= Math.min(2, topicTokens.length);
-    });
 
-    if (match?.link && match?.title) {
+    const items = await fetchFeedItems(gnUrl);
+
+    const gnNeed = minDistinctMatches(topicTokens.length);
+    let best: RssItem | null = null;
+    let bestScore = 0;
+    for (let i = 0; i < Math.min(items.length, 25); i += 1) {
+      const item = items[i];
+      if (!item?.link || !item.title) continue;
+      if (!isGoogleNewsPublisherMatch(item.title, sourceName)) continue;
+      const searchable = `${stripPublisherSuffix(item.title)} ${item.description ?? ""}`;
+      const score = countTokenMatches(topicTokens, searchable);
+      if (score >= gnNeed && score > bestScore) {
+        best = item;
+        bestScore = score;
+      }
+    }
+
+    if (best?.link && best?.title) {
       return withSourceMetadata({
         sourceName,
-        articleUrl: match.link,
-        headline: stripPublisherSuffix(match.title),
-        publishedAt: match.pubDate,
-        summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        articleUrl: best.link,
+        headline: stripPublisherSuffix(best.title),
+        publishedAt: best.pubDate,
+        summary: best.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
       });
     }
   } catch (error) {
