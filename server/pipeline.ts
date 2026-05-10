@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { buildEventsDigestPost, buildFallbackPostFromSources, finalizePostForPublish, synthesizePost } from "./agents";
+import { buildEventsDigestPost, finalizePostForPublish, synthesizePost } from "./agents";
 import {
   classifyEditorialCategory,
   fetchQuotaSeedCandidate,
@@ -149,6 +149,28 @@ function pickHeroImageFromSources(
   return {};
 }
 
+/** Drop RSS hits whose headline/summary barely overlaps the trend (prevents unrelated wires in one story). */
+function keepsSourceAlignedWithTopic(topic: TrendCandidate, s: SourceExtraction): boolean {
+  const primaryUrl = topic.primarySource?.articleUrl;
+  if (primaryUrl) {
+    const target = normalizeUrl(primaryUrl);
+    if (
+      normalizeUrl(s.articleUrl) === target ||
+      normalizeUrl(s.canonicalUrl || s.articleUrl) === target
+    ) {
+      return true;
+    }
+  }
+
+  const tokens = topic.normalizedTopic.split(/\s+/).filter((w) => w.length > 3);
+  if (tokens.length === 0) return true;
+
+  const hay = `${s.headline} ${s.summary}`.toLowerCase();
+  const matched = tokens.filter((tok) => hay.includes(tok.toLowerCase())).length;
+  const need = tokens.length <= 5 ? 2 : Math.max(2, Math.ceil(tokens.length * 0.45));
+  return matched >= need;
+}
+
 async function attemptSource(topic: TrendCandidate, sourceName: PreferredSourceName): Promise<SourceAttempt> {
   const match = await findSourceArticle(topic, sourceName);
   if (!match) {
@@ -217,12 +239,28 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     .map((attempt) => attempt.result);
   const failedSources = attempts.filter((attempt) => attempt.status === "failed");
 
-  const rejectionReason = validateGrounding(topic, successfulSources);
+  const topicAlignedSources = successfulSources.filter((s) => keepsSourceAlignedWithTopic(topic, s));
+  if (topicAlignedSources.length < config.minSuccessfulSources) {
+    const rejected: PipelineRunResult = {
+      runId,
+      topic,
+      successfulSources: topicAlignedSources,
+      failedSources,
+      published: false,
+      reason: `Rejected: only ${topicAlignedSources.length} source(s) matched the trend headline after alignment filter (minimum ${config.minSuccessfulSources}).`,
+    };
+    await completeRun(rejected);
+    return rejected;
+  }
+
+  const sourcesForStory = topicAlignedSources;
+
+  const rejectionReason = validateGrounding(topic, sourcesForStory);
   if (rejectionReason) {
     const rejected: PipelineRunResult = {
       runId,
       topic,
-      successfulSources,
+      successfulSources: sourcesForStory,
       failedSources,
       published: false,
       reason: rejectionReason,
@@ -231,12 +269,12 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     return rejected;
   }
 
-  const duplicate = findDuplicateStory(topic, successfulSources, existingPosts);
+  const duplicate = findDuplicateStory(topic, sourcesForStory, existingPosts);
   if (duplicate) {
     const rejected: PipelineRunResult = {
       runId,
       topic,
-      successfulSources,
+      successfulSources: sourcesForStory,
       failedSources,
       published: false,
       reason: `Rejected: duplicate story detected (${duplicate.reason}).`,
@@ -246,19 +284,19 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
   }
 
   try {
-    const post = await synthesizePost(topic, successfulSources);
-    const fingerprint = buildStoryFingerprint(topic, successfulSources, post.headline);
+    const post = await synthesizePost(topic, sourcesForStory);
+    const fingerprint = buildStoryFingerprint(topic, sourcesForStory, post.headline);
     post.sourceUrls = fingerprint.sourceUrls;
     post.headlineHash = fingerprint.headlineHash;
     post.canonicalKey = fingerprint.canonicalKey;
     post.storyFingerprint = fingerprint.storyFingerprint;
 
-    const copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
+    const copyrightRisk = findCopyrightRisk(post.bodyMarkdown, sourcesForStory);
     if (copyrightRisk) {
       throw new Error(`Copyright safety check failed: ${copyrightRisk}`);
     }
     
-    const hero = pickHeroImageFromSources(successfulSources, topic);
+    const hero = pickHeroImageFromSources(sourcesForStory, topic);
     if (hero.url) {
       post.imageUrl = hero.url;
       post.imageCredit = hero.credit;
@@ -269,7 +307,7 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     const published: PipelineRunResult = {
       runId,
       topic,
-      successfulSources,
+      successfulSources: sourcesForStory,
       failedSources,
       published: true,
       postId: postId?.toString(),
@@ -278,84 +316,17 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     return published;
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
-
-    if (config.disableSynthesisFallback) {
-      const failed: PipelineRunResult = {
-        runId,
-        topic,
-        successfulSources,
-        failedSources,
-        published: false,
-        reason: `Synthesis failed: ${msg}`,
-      };
-      await completeRun(failed);
-      return failed;
-    }
-
-    console.warn(`⚠️ Primary synthesis failed; attempting wire-format fallback publish: ${msg}`);
-
-    try {
-      let post = buildFallbackPostFromSources(topic, successfulSources, { synthesisError: msg });
-
-      if (config.copyrightCheckWireFallback) {
-        let copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
-        if (copyrightRisk) {
-          console.warn(`⚠️ Fallback copyright check: ${copyrightRisk}; retrying minimal body.`);
-          post = buildFallbackPostFromSources(topic, successfulSources, {
-            synthesisError: msg,
-            copyrightMinimal: true,
-          });
-          copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
-          if (copyrightRisk) {
-            throw new Error(`Fallback blocked by copyright safety: ${copyrightRisk}`);
-          }
-        }
-      } else {
-        console.log(
-          "📋 Wire fallback: skipping phrase-overlap check (fact bullets align with excerpts by design). Set COPYRIGHT_CHECK_WIRE_FALLBACK=true to enforce.",
-        );
-      }
-
-      post = finalizePostForPublish(post);
-
-      const fingerprint = buildStoryFingerprint(topic, successfulSources, post.headline);
-      post.sourceUrls = fingerprint.sourceUrls;
-      post.headlineHash = fingerprint.headlineHash;
-      post.canonicalKey = fingerprint.canonicalKey;
-      post.storyFingerprint = fingerprint.storyFingerprint;
-
-      const hero = pickHeroImageFromSources(successfulSources, topic);
-      if (hero.url) {
-        post.imageUrl = hero.url;
-        post.imageCredit = hero.credit;
-      }
-
-      const postId = await saveGeneratedPost(runId, post);
-
-      const published: PipelineRunResult = {
-        runId,
-        topic,
-        successfulSources,
-        failedSources,
-        published: true,
-        postId: postId?.toString(),
-        publishedViaFallback: true,
-        reason: "Published wire recap after grounded sources (full synthesis unavailable).",
-      };
-      await completeRun(published);
-      return published;
-    } catch (fallbackErr) {
-      const failed: PipelineRunResult = {
-        runId,
-        topic,
-        successfulSources,
-        failedSources,
-        published: false,
-        reason: `Synthesis failed: ${msg}; fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : "unknown"}`,
-      };
-      await completeRun(failed);
-      return failed;
-    }
+    console.warn(`⚠️ Story not published (full synthesis required): ${msg}`);
+    const failed: PipelineRunResult = {
+      runId,
+      topic,
+      successfulSources: sourcesForStory,
+      failedSources,
+      published: false,
+      reason: `Synthesis failed: ${msg}`,
+    };
+    await completeRun(failed);
+    return failed;
   }
 }
 

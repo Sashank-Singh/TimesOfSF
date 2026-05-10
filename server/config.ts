@@ -74,19 +74,6 @@ export const config = {
    * Skip Python news-please extraction (RSS/HTML fallback only). Use on hosts without a working venv/Python (common on Render).
    */
   disableNewsPlease: process.env.DISABLE_NEWS_PLEASE === "true",
-  /**
-   * Wire recap when LLM synthesis fails after grounding.
-   * Default OFF so only full Dispatch/Data Insight articles publish.
-   * Enable with ENABLE_SYNTHESIS_FALLBACK=true (or legacy DISABLE_SYNTHESIS_FALLBACK=false).
-   */
-  disableSynthesisFallback:
-    !(process.env.ENABLE_SYNTHESIS_FALLBACK === "true" || process.env.DISABLE_SYNTHESIS_FALLBACK === "false"),
-  /**
-   * Wire-format fallback posts reuse extracted fact bullets, which naturally share 8-word spans with textExcerpt.
-   * Default false = skip phrase-overlap checks on fallback bodies so posts still ship.
-   * Set true to enforce the same n-gram heuristic as full synthesis (often blocks fallback entirely).
-   */
-  copyrightCheckWireFallback: process.env.COPYRIGHT_CHECK_WIRE_FALLBACK === "true",
   /** Primary synthesis: min overlapping 8-word n-grams vs any source excerpt before rejecting as too close. Default 7 (was 4). */
   copyrightOverlapGramThreshold: readOptionalInt("COPYRIGHT_OVERLAP_GRAM_THRESHOLD", 7),
   /** Primary synthesis: overlap count / min(set sizes) threshold. Default 0.12 (was 0.08). */
