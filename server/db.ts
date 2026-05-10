@@ -225,6 +225,7 @@ export async function fetchRecentPosts(limit = 1000) {
       entities,
       data_blocks as "dataBlocks",
       category,
+      created_at as "publishedAt",
       created_at
     FROM generated_posts
     ORDER BY created_at DESC

@@ -1,5 +1,5 @@
 import { Article } from "../types";
-import { cn, formatDate } from "../lib/utils";
+import { cn, formatPublishedTimestamp } from "../lib/utils";
 import { motion } from "motion/react";
 import { Bookmark, Share2 } from "lucide-react";
 import { DEFAULT_IMAGE } from "../services/newsService";
@@ -14,7 +14,9 @@ interface ArticleCardProps {
 }
 
 export function ArticleCard({ article, onClick, featured, isBookmarked, onBookmark, onShare }: ArticleCardProps) {
-  const isToday = article.date ? new Date(article.date).toDateString() === new Date().toDateString() : false;
+  const isToday = article.publishedAt
+    ? new Date(article.publishedAt).toDateString() === new Date().toDateString()
+    : false;
 
   if (featured) {
     return (
@@ -68,8 +70,12 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
                  Share
                </button>
             </div>
-            <div className="mt-8 pt-8 border-t-2 border-ink flex items-center justify-between text-[11px] font-mono uppercase tracking-widest text-ink/50">
+            <div className="mt-8 pt-8 border-t-2 border-ink flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-[11px] font-mono uppercase tracking-widest text-ink/50">
               <span className="font-bold">By {article.author}</span>
+              <div className="flex flex-col sm:items-end gap-1 normal-case tracking-tight">
+                <span className="text-[10px] text-ink/35">Published</span>
+                <span className="text-ink/65">{formatPublishedTimestamp(article.publishedAt)}</span>
+              </div>
               <span>{article.readTime} Read</span>
             </div>
           </div>
@@ -102,10 +108,17 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           </div>
         )}
       </div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2">
         <div className="text-accent font-mono text-[9px] uppercase tracking-[0.3em]">
           {article.category}
         </div>
+        <time
+          dateTime={article.publishedAt}
+          className="text-[9px] font-mono text-ink/45 uppercase tracking-widest shrink-0"
+          title={article.publishedAt}
+        >
+          {formatPublishedTimestamp(article.publishedAt)}
+        </time>
       </div>
       <h3 className="text-xl font-bold leading-tight mb-3 group-hover:text-accent transition-colors line-clamp-2">
         {article.title}
