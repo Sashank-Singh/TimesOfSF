@@ -70,7 +70,13 @@ function getCategoryImage(category: string, id: number): string {
       "photo-1517248135467-4c7edcad34c4", // Restaurant
       "photo-1414235077428-338989a2e8c0", // Fine dining
       "photo-1559339352-11d035aa65de"  // Cafe
-    ]
+    ],
+    Events: [
+      "photo-1492684223066-81342ee5ff30",
+      "photo-1511578314322-379afb476865",
+      "photo-1540575467063-030a4c18b661",
+      "photo-1505373877841-8d25f7d46678",
+    ],
   };
 
   const pool = images[category] || images["Tech"];
@@ -79,16 +85,23 @@ function getCategoryImage(category: string, id: number): string {
 }
 
 function dbPostToArticle(post: any): Article {
+  const desks: Article["category"][] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events"];
+  const fromDb = typeof post.category === "string" && desks.includes(post.category as Article["category"])
+    ? (post.category as Article["category"])
+    : null;
+
   const categoryMap: Record<string, Article["category"]> = {
     tech: "Tech", technology: "Tech", ai: "Tech", software: "Tech", computing: "Tech",
-    funding: "Funding" as any, startup: "Funding" as any, venture: "Funding" as any, ipo: "Funding" as any, raises: "Funding" as any, capital: "Funding" as any, round: "Funding" as any, investment: "Funding" as any,
-    politics: "Civics", civics: "Civics", government: "Civics", policy: "Civics", mayor: "Civics", "city hall": "Civics", election: "Civics", sf: "Civics", "san francisco": "Civics", musk: "Civics", elon: "Civics",
+    funding: "Funding", startup: "Funding", venture: "Funding", ipo: "Funding", raises: "Funding", capital: "Funding", round: "Funding", investment: "Funding",
+    politics: "Civics", civics: "Civics", government: "Civics", policy: "Civics", mayor: "Civics", "city hall": "Civics", election: "Civics",
     culture: "Culture", arts: "Culture", entertainment: "Culture", music: "Culture", movie: "Culture", film: "Culture", festival: "Culture",
     transit: "Transit", transportation: "Transit", infrastructure: "Transit", muni: "Transit", bart: "Transit", train: "Transit", bus: "Transit", traffic: "Transit", caltrain: "Transit",
     food: "Food", restaurant: "Food", dining: "Food", chef: "Food", menu: "Food", opening: "Food", cafe: "Food", eat: "Food",
+    events: "Events", meetup: "Events", summit: "Events", conference: "Events",
   };
   const topicLower = (post.topic || "").toLowerCase();
-  const category = Object.entries(categoryMap).find(([key]) => topicLower.includes(key))?.[1] || "Tech";
+  const category =
+    fromDb ?? Object.entries(categoryMap).find(([key]) => topicLower.includes(key))?.[1] ?? "Tech";
 
   return {
     id: post.id.toString(),

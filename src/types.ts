@@ -33,7 +33,7 @@ export interface Article {
   title: string;
   author: string;
   date: string;
-  category: "Civics" | "Culture" | "Tech" | "Transit" | "Food";
+  category: "Civics" | "Culture" | "Tech" | "Funding" | "Transit" | "Food" | "Events";
   excerpt: string;
   content: string;
   imageUrl: string;

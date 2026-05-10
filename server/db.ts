@@ -64,8 +64,10 @@ export async function ensureSchema() {
     sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS headline_hash TEXT`,
     sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS canonical_key TEXT`,
     sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS story_fingerprint JSONB`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS category TEXT`,
     sql`CREATE INDEX IF NOT EXISTS generated_posts_headline_hash_idx ON generated_posts (headline_hash)`,
     sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`,
+    sql`CREATE INDEX IF NOT EXISTS generated_posts_category_created_idx ON generated_posts (category, created_at DESC)`,
     sql`
       CREATE TABLE IF NOT EXISTS events (
         id BIGSERIAL PRIMARY KEY,
@@ -131,7 +133,7 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
   const inserted = (await sql`
     INSERT INTO generated_posts (
       run_id, topic, headline, slug, dek, image_url, body_markdown, short_post, credits, citations,
-      source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks
+      source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks, category
     )
     VALUES (
       ${runId},
@@ -150,7 +152,8 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
       ${post.storyFingerprint ? JSON.stringify(post.storyFingerprint) : null},
       ${post.tldr ? JSON.stringify(post.tldr) : null},
       ${post.entities ? JSON.stringify(post.entities) : null},
-      ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null}
+      ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null},
+      ${post.editorialCategory ?? null}
     )
     RETURNING id
   `) as Array<{ id: number }>;
@@ -189,6 +192,7 @@ export async function fetchRecentPosts(limit = 1000) {
       tldr,
       entities,
       data_blocks as "dataBlocks",
+      category,
       created_at
     FROM generated_posts
     ORDER BY created_at DESC
