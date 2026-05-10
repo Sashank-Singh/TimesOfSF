@@ -1,12 +1,30 @@
+import crypto from "node:crypto";
 import { GoogleGenAI, Type } from "@google/genai";
 import { config } from "./config";
-import { GeneratedPost, SourceExtraction, TrendCandidate } from "./types";
+import { classifyEditorialCategory } from "./editorial";
+import type { EventInfo } from "./events";
+import { EditorialCategory, GeneratedPost, SourceExtraction, TrendCandidate } from "./types";
 
 const geminiAi = config.geminiApiKey ? new GoogleGenAI({ apiKey: config.geminiApiKey }) : null;
 
 function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
+  const desk: EditorialCategory = topic.editorialCategory ?? classifyEditorialCategory(topic);
+  const deskNotes =
+    desk === "Food"
+      ? "Desk focus: Bay Area food & hospitality stories tied to founders, startups, investors, and tech-industry culture—not generic tourist spots."
+      : desk === "Funding"
+        ? "Desk focus: venture financings, M&A, IPOs, cap tables, and macro implications for builders."
+        : desk === "Transit"
+          ? "Desk focus: SF Bay mobility—Muni, BART, Caltrain, bridges, traffic policy, and infrastructure delivery."
+          : desk === "Civics"
+            ? "Desk focus: SF / Bay governance, housing, elections, civic accountability."
+            : desk === "Culture"
+              ? "Desk focus: arts, institutions, and civic life that shape the region."
+              : "Desk focus: technology industry, semiconductors, AI, cybersecurity, and platform economics.";
+
   return [
     "You are the Senior Executive Editor of the Times of SF.",
+    `You are filing for the ${desk} desk. ${deskNotes}`,
     "Your goal is to transform source facts into a readable, truth-seeking feature report (approx 1,200-1,700 words).",
     "Write with analytical authority, but stay strictly grounded in the provided source facts.",
     "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods (like the Mission or Financial District) unless they are explicitly mentioned in the source packets.",
@@ -36,10 +54,13 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
     "dataBlocks can render four chart types: bar, histogram, scatter, and line. Use line when points should be connected over time; use scatter when points should remain unconnected.",
     "Each dataBlock must include type, title, xAxisLabel, yAxisLabel, and data.",
     "For bar/histogram data use {label, value}. For scatter/line data use numeric {x, y, label}.",
-    "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks.",
+    "Chart axes must use concrete dimension names matched to the statistics you cite (examples: Year and Funding ($M), Quarter and Headcount, Agency and Budget share (%)).",
+    "Never set xAxisLabel or yAxisLabel to generic placeholders like Category, Value, Series, Label, X, or Y.",
+    `Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks, editorialCategory.`,
+    `editorialCategory must be exactly one of: Tech, Funding, Civics, Culture, Transit, Food, Events — use "${desk}" unless the sources clearly belong elsewhere.`,
     "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, and factBullets.",
     "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact} for the most important article claims.",
-    "MANDATORY: Use double brackets like [[NVIDIA]] or [[Jane Doe]] for at least 5-8 key people, companies, or tech terms explicitly mentioned in the sources.",
+    "MANDATORY: Use double brackets like [[NVIDIA]] or [[Jane Doe]] for at least 10-15 key people, companies, agencies, products, or technical terms explicitly mentioned in the sources.",
     "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
     "entities must be an array of {name, definition} for your bracketed terms.",
     "dataBlocks must be an array of {type, title, xAxisLabel, yAxisLabel, data} representing core statistics from the sources.",
@@ -48,6 +69,12 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
 }
 
 function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
+  const parsedDesk = typeof parsed.editorialCategory === "string" ? parsed.editorialCategory.trim() : "";
+  const allowedDesks: EditorialCategory[] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events"];
+  const editorialCategory = allowedDesks.includes(parsedDesk as EditorialCategory)
+    ? (parsedDesk as EditorialCategory)
+    : (topic.editorialCategory ?? classifyEditorialCategory(topic));
+
   return {
     headline: parsed.headline,
     slug: parsed.slug,
@@ -55,11 +82,60 @@ function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
     bodyMarkdown: parsed.bodyMarkdown,
     shortPost: parsed.shortPost,
     topic: topic.topic,
+    editorialCategory,
     credits: Array.isArray(parsed.credits) ? parsed.credits : [],
     citations: Array.isArray(parsed.citations) ? parsed.citations : [],
     tldr: parsed.tldr,
     entities: parsed.entities,
     dataBlocks: parsed.dataBlocks,
+  };
+}
+
+export function buildEventsDigestPost(events: EventInfo[]): GeneratedPost {
+  const dayStamp = new Date().toISOString().slice(0, 10);
+  const headline = `Bay Area builder & VC events — ${dayStamp}`;
+  const slug = `events-digest-${dayStamp}-${crypto.randomUUID().slice(0, 8)}`;
+  const bodyMarkdown = [
+    "### The lineup",
+    "",
+    ...events.flatMap((e) => [
+      `#### ${e.title}`,
+      `- **When:** ${e.date}`,
+      `- **RSVP (${e.source}):** ${e.url}`,
+      "",
+    ]),
+    "### Source notes",
+    "Links open the public RSVP pages we parsed from Luma / organizer listings (see receipts).",
+  ].join("\n");
+
+  return {
+    headline,
+    slug,
+    dek: "Curated SF / peninsula happenings weighted toward founders, investors, and AI builders.",
+    bodyMarkdown,
+    shortPost: `${events.length} upcoming Bay Area events for founders and investors — full RSVP links inside.`,
+    topic: headline,
+    editorialCategory: "Events",
+    credits: events.map((e) => ({
+      sourceName: "Public Data",
+      articleUrl: e.url,
+      factBullets: [`${e.title} (${e.date})`],
+      sourceType: "data_source",
+      confidence: "high" as const,
+    })),
+    citations: events.slice(0, 8).map((e) => ({
+      claim: `${e.title} is listed for ${e.date}.`,
+      sourceName: "Public Data",
+      sourceUrl: e.url,
+      quoteOrFact: `RSVP via ${e.source}`,
+    })),
+    tldr: {
+      whyItMatters: "These gatherings concentrate founders, capital, and hiring momentum.",
+      whoIsAffected: "Operators raising rounds, engineers switching roles, and investors sourcing pipeline.",
+      whatIsNext: "RSVP early; capacity constraints are common on popular nights.",
+    },
+    entities: [],
+    dataBlocks: [],
   };
 }
 
@@ -166,8 +242,9 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
               required: ["type", "title", "xAxisLabel", "yAxisLabel", "data"],
             },
           },
+          editorialCategory: { type: Type.STRING },
         },
-        required: ["headline", "slug", "dek", "bodyMarkdown", "shortPost", "credits", "citations", "tldr", "entities", "dataBlocks"],
+        required: ["headline", "slug", "dek", "bodyMarkdown", "shortPost", "credits", "citations", "tldr", "entities", "dataBlocks", "editorialCategory"],
       },
     },
   });
@@ -192,7 +269,8 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
       messages: [
         {
           role: "system",
-          content: "You are a grounded newsroom writer. Return only valid JSON.",
+          content:
+            "You are a grounded newsroom writer. Return only valid JSON including editorialCategory (one of: Tech, Funding, Civics, Culture, Transit, Food, Events).",
         },
         {
           role: "user",
@@ -259,7 +337,7 @@ export async function expandContent(
     Copyright safety: do not mimic source wording, article structure, or distinctive phrasing. Keep facts attributed and analysis clearly separated.
     
     IMPORTANT: 
-    1. Use double brackets like [[NVIDIA]] for companies, people, and tech terms. Only use them for the available entities listed below if provided.
+    1. Use double brackets like [[NVIDIA]] for companies, people, and tech terms—target at least 10 highlighted entities where the dispatch supports it. Prefer the entity list when provided, but you may introduce additional bracketed terms if they appear verbatim in the dispatch.
     2. Insert [CHART:index] where the data visualizations listed below would naturally fit.
     3. Return ONLY the new body content in Markdown. No headline, no titles.
     
