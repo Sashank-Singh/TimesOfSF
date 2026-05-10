@@ -30,7 +30,7 @@ async function start() {
               intervalMs: Math.max(60_000, config.internalPipelineIntervalMs),
               coalesceMs,
               note:
-                "This timer runs only while the Node process is awake. On Render Free, instances spin down—configure GET /api/cron/pipeline with CRON_SECRET plus an external cron ping, or upgrade the instance.",
+                "This timer calls runPipeline on an interval while the process is awake—it does not create an Inngest dashboard entry. Inngest cron (if configured) invokes the same code path separately. Set DISABLE_INTERNAL_PIPELINE_CRON=true to rely only on Inngest + manual/cron HTTP triggers. On Render Free, instances spin down—use GET /api/cron/pipeline with CRON_SECRET or upgrade the instance.",
             }
           : { active: false, intervalMs: null, coalesceMs: null },
         pipelineActivity: activity,
@@ -43,9 +43,12 @@ async function start() {
         },
         synthesis: {
           wireFallbackOnModelFailure: !config.disableSynthesisFallback,
+          copyrightCheckWireFallback: config.copyrightCheckWireFallback,
           note: config.disableSynthesisFallback
             ? "DISABLE_SYNTHESIS_FALLBACK=true: no post when LLM JSON synthesis fails after grounding."
-            : "If LLM synthesis fails after sources pass checks, a wire-format recap is published from extracted facts.",
+            : config.copyrightCheckWireFallback
+              ? "Wire fallback runs the same phrase-overlap heuristic as full synthesis (often blocks fallback)."
+              : "Wire fallback skips phrase-overlap checks by default (fact bullets overlap excerpts). Set COPYRIGHT_CHECK_WIRE_FALLBACK=true for strict checks.",
         },
       });
     } catch (error) {
@@ -176,7 +179,7 @@ async function start() {
       const ms = Math.max(60_000, config.internalPipelineIntervalMs);
       const coalesce = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
       console.log(
-        `Internal pipeline scheduler: every ${ms / 1000}s; coalesce=${coalesce ? `${coalesce / 1000}s` : "off"}; inngestEnabled=${inngestState.enabled}`,
+        `Internal pipeline scheduler: every ${ms / 1000}s; coalesce=${coalesce ? `${coalesce / 1000}s` : "off"}; inngestEnabled=${inngestState.enabled} (timer runs inside this process—not an Inngest UI event; disable with DISABLE_INTERNAL_PIPELINE_CRON=true).`,
       );
       const tick = () =>
         runPipeline({ coalesceWithinMs: coalesce }).catch((err) =>

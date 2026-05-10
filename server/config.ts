@@ -72,6 +72,12 @@ export const config = {
    * Set to true to keep prior behavior (no post on synthesis failure).
    */
   disableSynthesisFallback: process.env.DISABLE_SYNTHESIS_FALLBACK === "true",
+  /**
+   * Wire-format fallback posts reuse extracted fact bullets, which naturally share 8-word spans with textExcerpt.
+   * Default false = skip phrase-overlap checks on fallback bodies so posts still ship.
+   * Set true to enforce the same n-gram heuristic as full synthesis (often blocks fallback entirely).
+   */
+  copyrightCheckWireFallback: process.env.COPYRIGHT_CHECK_WIRE_FALLBACK === "true",
 };
 
 export function isProduction() {
