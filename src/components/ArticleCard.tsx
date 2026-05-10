@@ -15,7 +15,6 @@ interface ArticleCardProps {
 
 export function ArticleCard({ article, onClick, featured, isBookmarked, onBookmark, onShare }: ArticleCardProps) {
   const isToday = article.date ? new Date(article.date).toDateString() === new Date().toDateString() : false;
-  const sourceCount = article.credits?.length ?? 0;
 
   if (featured) {
     return (
@@ -46,9 +45,6 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
             <div className="flex items-center gap-3 text-accent font-mono text-[10px] uppercase tracking-[0.3em] mb-6">
               <span className="w-10 h-[1px] bg-accent/30" />
               {article.category}
-              {sourceCount > 0 && (
-                <span className="tracking-widest text-ink/35">/ {sourceCount} sources</span>
-              )}
             </div>
             <h2 className="text-3xl md:text-4xl lg:text-4xl font-black leading-[0.95] mb-5 group-hover:text-accent transition-colors duration-500 tracking-tighter">
               {article.title}
@@ -109,7 +105,6 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
       <div className="flex items-center justify-between mb-4">
         <div className="text-accent font-mono text-[9px] uppercase tracking-[0.3em]">
           {article.category}
-          {sourceCount > 0 && <span className="text-ink/35 tracking-widest"> / {sourceCount} sources</span>}
         </div>
       </div>
       <h3 className="text-xl font-bold leading-tight mb-3 group-hover:text-accent transition-colors line-clamp-2">

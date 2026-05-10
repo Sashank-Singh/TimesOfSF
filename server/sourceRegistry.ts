@@ -9,6 +9,7 @@ import {
 export interface SourceRegistryEntry {
   id: string;
   name: PreferredSourceName;
+  aliases?: string[];
   feeds: string[];
   type: SourceType;
   reliabilityTier: SourceReliabilityTier;
@@ -20,6 +21,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "techcrunch",
     name: "TechCrunch",
+    aliases: ["TechCrunch"],
     feeds: [
       "https://techcrunch.com/category/startups/feed/",
       "https://techcrunch.com/funding/feed/",
@@ -33,6 +35,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "reuters",
     name: "Reuters",
+    aliases: ["Reuters"],
     feeds: [
       "https://feeds.reuters.com/reuters/technologyNews",
       "https://feeds.reuters.com/reuters/businessNews",
@@ -47,6 +50,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "bloomberg",
     name: "Bloomberg",
+    aliases: ["Bloomberg"],
     feeds: ["https://feeds.bloomberg.com/technology/news.rss"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -56,6 +60,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "ap",
     name: "AP News",
+    aliases: ["AP", "AP News", "Associated Press"],
     feeds: ["https://apnews.com/hub/ap-top-news?output=rss"],
     type: "wire",
     reliabilityTier: "wire_service",
@@ -65,6 +70,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "fox-news",
     name: "Fox News",
+    aliases: ["Fox News"],
     feeds: [
       "https://moxie.foxnews.com/google-publisher/tech.xml",
       "https://moxie.foxnews.com/google-publisher/politics.xml",
@@ -78,6 +84,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "sf-chronicle",
     name: "San Francisco Chronicle",
+    aliases: ["San Francisco Chronicle", "SF Chronicle"],
     feeds: ["https://www.sfchronicle.com/bayarea/feed/Bay-Area-News-106.php"],
     type: "local_news",
     reliabilityTier: "local_publisher",
@@ -87,6 +94,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "sf-standard",
     name: "The San Francisco Standard",
+    aliases: ["The San Francisco Standard", "San Francisco Standard", "SF Standard"],
     feeds: ["https://sfstandard.com/feed/"],
     type: "local_news",
     reliabilityTier: "local_publisher",
@@ -96,6 +104,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "mission-local",
     name: "Mission Local",
+    aliases: ["Mission Local"],
     feeds: ["https://missionlocal.org/feed/"],
     type: "local_news",
     reliabilityTier: "local_publisher",
@@ -105,6 +114,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "the-verge",
     name: "The Verge",
+    aliases: ["The Verge"],
     feeds: ["https://www.theverge.com/rss/index.xml"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -114,6 +124,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "new-york-times",
     name: "New York Times",
+    aliases: ["New York Times", "The New York Times", "NYTimes"],
     feeds: ["https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -123,6 +134,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "bbc",
     name: "BBC",
+    aliases: ["BBC", "BBC News"],
     feeds: ["https://feeds.bbci.co.uk/news/technology/rss.xml"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -132,6 +144,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "engadget",
     name: "Engadget",
+    aliases: ["Engadget"],
     feeds: ["https://www.engadget.com/rss.xml"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -141,6 +154,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "wsj",
     name: "WSJ",
+    aliases: ["WSJ", "Wall Street Journal", "The Wall Street Journal"],
     feeds: ["https://feeds.a.dj.com/rss/RSSWSJD.xml"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -149,6 +163,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "cnn",
     name: "CNN",
+    aliases: ["CNN"],
     feeds: ["http://rss.cnn.com/rss/edition_technology.rss"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -157,6 +172,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "npr",
     name: "NPR",
+    aliases: ["NPR"],
     feeds: ["https://feeds.npr.org/1019/rss.xml"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -165,6 +181,7 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
   {
     id: "the-guardian",
     name: "The Guardian",
+    aliases: ["The Guardian", "Guardian"],
     feeds: ["https://www.theguardian.com/technology/rss"],
     type: "reporting",
     reliabilityTier: "known_publisher",
@@ -191,6 +208,11 @@ export const SOURCE_FEEDS = SOURCE_REGISTRY.reduce(
 
 export function getSourceMetadata(sourceName: PreferredSourceName) {
   return SOURCE_REGISTRY.find((source) => source.name === sourceName);
+}
+
+export function getSourceAliases(sourceName: PreferredSourceName) {
+  const source = getSourceMetadata(sourceName);
+  return source?.aliases ?? [sourceName];
 }
 
 export function withSourceMetadata<T extends SourceSearchResult>(

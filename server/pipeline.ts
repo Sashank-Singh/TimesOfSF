@@ -15,7 +15,11 @@ const PREFERRED_SOURCES: PreferredSourceName[] = [
   "The Verge",
   "BBC",
   "New York Times",
-  "The San Francisco Standard"
+  "The San Francisco Standard",
+  "Mission Local",
+  "Fox News",
+  "Engadget",
+  "San Francisco Chronicle"
 ];
 
 function makeRunId() {
@@ -112,7 +116,8 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
   const runId = makeRunId();
   await createRun(runId, topic);
 
-  const sourcesToTry = PREFERRED_SOURCES.filter(s => s !== topic?.primarySource?.sourceName);
+  const sourcesToTry = [...new Set([...(topic.signalSources ?? []), ...PREFERRED_SOURCES])]
+    .filter(s => s !== topic?.primarySource?.sourceName);
   const attempts: SourceAttempt[] = [];
   
   // Process sources sequentially to minimize memory spikes on Render

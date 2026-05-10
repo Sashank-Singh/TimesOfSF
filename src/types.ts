@@ -4,9 +4,11 @@ export interface ArticleEntity {
 }
 
 export interface DataBlock {
-  type: "chart";
+  type: "bar" | "histogram" | "scatter" | "line" | "chart";
   title: string;
-  data: { label: string; value: number }[];
+  xAxisLabel?: string;
+  yAxisLabel?: string;
+  data: { label?: string; value?: number; x?: number; y?: number }[];
 }
 
 export interface ArticleCredit {
