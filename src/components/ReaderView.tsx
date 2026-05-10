@@ -3,7 +3,7 @@ import { Article } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { formatDate, cn } from "../lib/utils";
+import { formatDate, formatPublishedTimestamp, cn } from "../lib/utils";
 import { DEFAULT_IMAGE } from "../services/newsService";
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
@@ -167,10 +167,19 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                </h1>
                <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
                 <span className="italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
-                  <div className="flex items-center gap-4 font-mono uppercase tracking-[0.1em]">
-                    <span>By {article.author}</span>
-                    <span className="w-1 h-1 bg-ink/10 rounded-full" />
-                    <span>{formatDate(article.date)}</span>
+                  <div className="flex flex-col items-center gap-1 font-mono uppercase tracking-[0.1em]">
+                    <span className="flex items-center gap-4">
+                      <span>By {article.author}</span>
+                      <span className="w-1 h-1 bg-ink/10 rounded-full" />
+                      <span>{article.readTime} read</span>
+                    </span>
+                    <time
+                      dateTime={article.publishedAt}
+                      className="text-[10px] tracking-widest text-ink/45 normal-case"
+                      title={article.publishedAt}
+                    >
+                      Published {formatPublishedTimestamp(article.publishedAt)}
+                    </time>
                   </div>
                </div>
             </header>

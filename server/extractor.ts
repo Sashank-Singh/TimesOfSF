@@ -1,5 +1,6 @@
 import { SourceExtraction, SourceSearchResult } from "./types";
 import { spawn } from "child_process";
+import fs from "fs";
 import path from "path";
 import { config } from "./config";
 
@@ -56,12 +57,31 @@ function buildFacts(summary: string, paragraphs: string[]) {
   return [...new Set(sentences)].slice(0, 3);
 }
 
+function buildFallbackExtraction(searchResult: SourceSearchResult): SourceExtraction {
+  return {
+    sourceName: searchResult.sourceName,
+    sourceId: searchResult.sourceId,
+    sourceType: searchResult.sourceType,
+    reliabilityTier: searchResult.reliabilityTier,
+    allowedUse: searchResult.allowedUse,
+    articleUrl: searchResult.articleUrl,
+    canonicalUrl: searchResult.articleUrl,
+    headline: searchResult.headline,
+    imageUrl: "",
+    publishedAt: searchResult.publishedAt,
+    summary: searchResult.headline,
+    textExcerpt: searchResult.summary || "",
+    facts: [searchResult.summary].filter(Boolean) as string[],
+  };
+}
+
 async function runPythonExtractor(url: string): Promise<any> {
   const venvPath = path.resolve(process.cwd(), "venv", "bin", "python3");
+  const pythonBin = fs.existsSync(venvPath) ? venvPath : "python3";
   const scriptPath = path.resolve(process.cwd(), "server", "extractor.py");
 
   return new Promise((resolve, reject) => {
-    const pythonProcess = spawn(venvPath, [scriptPath, url]);
+    const pythonProcess = spawn(pythonBin, [scriptPath, url]);
     let result = '';
     let error = '';
     
@@ -94,6 +114,10 @@ async function runPythonExtractor(url: string): Promise<any> {
 }
 
 export async function extractSource(searchResult: SourceSearchResult): Promise<SourceExtraction> {
+  if (config.disableNewsPlease) {
+    return buildFallbackExtraction(searchResult);
+  }
+
   try {
     const article = await runPythonExtractor(searchResult.articleUrl);
     
@@ -123,22 +147,7 @@ export async function extractSource(searchResult: SourceSearchResult): Promise<S
     };
   } catch (error) {
     console.error("News-please extraction failed, falling back to basic metadata:", error);
-    // Minimal fallback if Python fails
-    return {
-      sourceName: searchResult.sourceName,
-      sourceId: searchResult.sourceId,
-      sourceType: searchResult.sourceType,
-      reliabilityTier: searchResult.reliabilityTier,
-      allowedUse: searchResult.allowedUse,
-      articleUrl: searchResult.articleUrl,
-      canonicalUrl: searchResult.articleUrl,
-      headline: searchResult.headline,
-      imageUrl: "",
-      publishedAt: searchResult.publishedAt,
-      summary: searchResult.headline,
-      textExcerpt: searchResult.summary || "",
-      facts: [searchResult.summary].filter(Boolean) as string[],
-    };
+    return buildFallbackExtraction(searchResult);
   }
 }
 

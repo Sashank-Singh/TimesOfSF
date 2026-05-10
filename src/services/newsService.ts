@@ -84,6 +84,12 @@ function getCategoryImage(category: string, id: number): string {
   return `https://images.unsplash.com/${photoId}?auto=format&fit=crop&q=80&w=1200`;
 }
 
+function toIsoTimestamp(raw: unknown): string {
+  if (raw == null) return new Date().toISOString();
+  const d = typeof raw === "string" ? new Date(raw) : raw instanceof Date ? raw : new Date(String(raw));
+  return Number.isFinite(d.getTime()) ? d.toISOString() : new Date().toISOString();
+}
+
 function dbPostToArticle(post: any): Article {
   const desks: Article["category"][] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events"];
   const fromDb = typeof post.category === "string" && desks.includes(post.category as Article["category"])
@@ -103,12 +109,15 @@ function dbPostToArticle(post: any): Article {
   const category =
     fromDb ?? Object.entries(categoryMap).find(([key]) => topicLower.includes(key))?.[1] ?? "Tech";
 
+  const publishedAt = toIsoTimestamp(post.created_at ?? post.publishedAt);
+
   return {
     id: post.id.toString(),
     slug: post.slug,
     title: post.headline,
     author: "Times of SF Agent",
-    date: post.created_at,
+    date: publishedAt,
+    publishedAt,
     category,
     excerpt: post.dek || post.short_post || "",
     content: post.body_markdown,

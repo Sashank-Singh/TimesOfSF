@@ -9,7 +9,14 @@ import {
   type ExistingPostSummary,
 } from "./editorial";
 import type { EventInfo } from "./events";
-import { completeRun, createRun, fetchRecentPosts, saveGeneratedPost, saveSourceAttempt } from "./db";
+import {
+  completeRun,
+  createRun,
+  fetchLatestPipelineRunCreatedAt,
+  fetchRecentPosts,
+  saveGeneratedPost,
+  saveSourceAttempt,
+} from "./db";
 import { extractSource } from "./extractor";
 import { config } from "./config";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline } from "./dedupe";
@@ -294,7 +301,38 @@ async function publishEventsDigestArticle(
   }
 }
 
-export async function runPipeline() {
+export type RunPipelineOptions = {
+  /**
+   * When set (>0), skip if `pipeline_runs` shows an attempt newer than this window.
+   * Used by the internal timer and cron pings—not by manual `/api/pipeline/run` or Inngest.
+   */
+  coalesceWithinMs?: number | null;
+};
+
+export async function runPipeline(options?: RunPipelineOptions) {
+  const coalesceMs = options?.coalesceWithinMs;
+  if (typeof coalesceMs === "number" && coalesceMs > 0) {
+    const latest = await fetchLatestPipelineRunCreatedAt();
+    if (latest) {
+      const delta = Date.now() - latest.getTime();
+      if (delta < coalesceMs) {
+        console.log(
+          `⏭️ Pipeline coalesced: last attempt ${Math.round(delta / 1000)}s ago (window ${Math.round(coalesceMs / 1000)}s).`,
+        );
+        return [
+          {
+            runId: `coalesce_${Date.now()}`,
+            topic: null,
+            successfulSources: [],
+            failedSources: [],
+            published: false,
+            reason: `Coalesced: pipeline attempted ${Math.round(delta / 1000)}s ago.`,
+          },
+        ];
+      }
+    }
+  }
+
   const DAY_MS = 24 * 60 * 60 * 1000;
   let existing = await fetchRecentPosts();
 
@@ -327,6 +365,10 @@ export async function runPipeline() {
 
   const organicFresh = trending.filter((t) => !topicAlreadyPublished(t, existingSummary));
   const merged = prioritizeCandidates([...quotaCandidates, ...organicFresh]);
+
+  console.log(
+    `[pipeline] staleDesks=${staleLanes.length} quotaSeeds=${quotaCandidates.length} organicFresh=${organicFresh.length} merged=${merged.length}`,
+  );
 
   const results: PipelineRunResult[] = [];
 

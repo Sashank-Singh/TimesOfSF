@@ -98,6 +98,38 @@ export async function fetchStoredEvents() {
   return sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 10`;
 }
 
+/** Latest pipeline attempt (includes rejected / empty ticks). */
+export async function fetchLatestPipelineRunCreatedAt(): Promise<Date | null> {
+  const rows = await sql`
+    SELECT created_at FROM pipeline_runs ORDER BY created_at DESC LIMIT 1
+  `;
+  const raw = rows[0]?.created_at as string | Date | undefined;
+  if (!raw) return null;
+  const d = typeof raw === "string" ? new Date(raw) : raw;
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/** Lightweight snapshot for /health (debugging automations on Render). */
+export async function fetchPipelineActivitySummary() {
+  const runRows = await sql`
+    SELECT created_at, status, published_at, reason
+    FROM pipeline_runs
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const postRows = await sql`
+    SELECT created_at FROM generated_posts ORDER BY created_at DESC LIMIT 1
+  `;
+  const r = runRows[0] as { created_at?: string | Date; status?: string; published_at?: string | Date | null; reason?: string | null } | undefined;
+  const p = postRows[0] as { created_at?: string | Date } | undefined;
+  return {
+    lastRunAt: r?.created_at ?? null,
+    lastRunStatus: r?.status ?? null,
+    lastRunReason: r?.reason ?? null,
+    lastPublishedPostAt: p?.created_at ?? null,
+  };
+}
+
 export async function createRun(runId: string, topic: TrendCandidate | null) {
   await sql`
     INSERT INTO pipeline_runs (id, status, topic, normalized_topic)
@@ -193,6 +225,7 @@ export async function fetchRecentPosts(limit = 1000) {
       entities,
       data_blocks as "dataBlocks",
       category,
+      created_at as "publishedAt",
       created_at
     FROM generated_posts
     ORDER BY created_at DESC

@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { config } from "./config";
-import { ensureSchema, fetchRecentPosts, fetchRun } from "./db";
+import { ensureSchema, fetchPipelineActivitySummary, fetchRecentPosts, fetchRun } from "./db";
 import { loadInngestState } from "./inngest";
 import { runPipeline } from "./pipeline";
 
@@ -13,18 +13,63 @@ async function start() {
   app.use(cors());
   app.use(express.json());
 
-  app.get("/health", (_req, res) => {
-    const internalActive = !inngestState.enabled && !config.disableInternalPipelineCron;
-    res.json({
-      ok: true,
-      env: config.appEnv,
-      llmProvider: config.llmProvider,
-      inngestEnabled: inngestState.enabled,
-      inngestReason: inngestState.reason ?? null,
-      internalPipelineCron: internalActive
-        ? { active: true, intervalMs: Math.max(60_000, config.internalPipelineIntervalMs) }
-        : { active: false, intervalMs: null },
-    });
+  app.get("/health", async (_req, res) => {
+    try {
+      const activity = await fetchPipelineActivitySummary();
+      const internalActive = !config.disableInternalPipelineCron;
+      const coalesceMs = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
+      res.json({
+        ok: true,
+        env: config.appEnv,
+        llmProvider: config.llmProvider,
+        inngestEnabled: inngestState.enabled,
+        inngestReason: inngestState.reason ?? null,
+        internalPipelineCron: internalActive
+          ? {
+              active: true,
+              intervalMs: Math.max(60_000, config.internalPipelineIntervalMs),
+              coalesceMs,
+              note:
+                "This timer runs only while the Node process is awake. On Render Free, instances spin down—configure GET /api/cron/pipeline with CRON_SECRET plus an external cron ping, or upgrade the instance.",
+            }
+          : { active: false, intervalMs: null, coalesceMs: null },
+        pipelineActivity: activity,
+        cronPingConfigured: Boolean(config.cronSecret),
+        extraction: {
+          newsPleaseEnabled: !config.disableNewsPlease,
+          note: config.disableNewsPlease
+            ? "DISABLE_NEWS_PLEASE=true: skipping Python extractor (use on Render without news-please)."
+            : "Uses Python news-please when available; otherwise falls back to RSS headline/summary metadata.",
+        },
+      });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "health failed",
+      });
+    }
+  });
+
+  /**
+   * Wake + run from UptimeRobot, Render Cron Jobs, GitHub Actions, etc.
+   * Example: GET /api/cron/pipeline?secret=$CRON_SECRET
+   */
+  app.get("/api/cron/pipeline", async (req, res) => {
+    if (!config.cronSecret || req.query.secret !== config.cronSecret) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+    try {
+      const coalesce = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
+      const result = await runPipeline({ coalesceWithinMs: coalesce });
+      const published = result.some((r) => r.published);
+      res.status(published ? 201 : 202).json({ ok: true, published, result });
+    } catch (error) {
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown pipeline failure",
+      });
+    }
   });
 
   app.all("/api/pipeline/run", async (_req, res) => {
@@ -83,7 +128,7 @@ async function start() {
     }
   });
 
-  app.get("/api/events", async (req, res) => {
+  app.get("/api/events", async (_req, res) => {
     try {
       const { fetchStoredEvents } = await import("./db");
       const events = await fetchStoredEvents();
@@ -98,13 +143,13 @@ async function start() {
     try {
       const { fetchPostById, updatePostContent } = await import("./db");
       const { expandContent } = await import("./agents");
-      
+
       const post = await fetchPostById(req.params.id);
       if (!post) return res.status(404).json({ error: "Post not found" });
 
       const expanded = await expandContent(post.headline, post.body_markdown, post.entities, post.dataBlocks);
       await updatePostContent(req.params.id, expanded);
-      
+
       res.json({ content: expanded });
     } catch (error) {
       console.error("Failed to expand post:", error);
@@ -119,19 +164,20 @@ async function start() {
   app.listen(config.port, "0.0.0.0", () => {
     console.log(`Server listening on http://0.0.0.0:${config.port}`);
     if (!inngestState.enabled && inngestState.reason) {
-      console.log(`Inngest disabled: ${inngestState.reason}`);
+      console.log(`Inngest inactive: ${inngestState.reason}`);
     }
-    if (!inngestState.enabled && !config.disableInternalPipelineCron) {
+    if (!config.disableInternalPipelineCron) {
       const ms = Math.max(60_000, config.internalPipelineIntervalMs);
+      const coalesce = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
       console.log(
-        `Internal pipeline scheduler: every ${ms / 1000}s. Configure Inngest keys on Render to use managed cron instead.`,
+        `Internal pipeline scheduler: every ${ms / 1000}s; coalesce=${coalesce ? `${coalesce / 1000}s` : "off"}; inngestEnabled=${inngestState.enabled}`,
       );
-      setInterval(() => {
-        runPipeline().catch((err) => console.error("Internal pipeline tick failed:", err));
-      }, ms);
-      setTimeout(() => {
-        runPipeline().catch((err) => console.error("Initial pipeline warm-up failed:", err));
-      }, 30_000);
+      const tick = () =>
+        runPipeline({ coalesceWithinMs: coalesce }).catch((err) =>
+          console.error("Internal pipeline tick failed:", err),
+        );
+      setInterval(tick, ms);
+      setTimeout(tick, 30_000);
     }
   });
 }
