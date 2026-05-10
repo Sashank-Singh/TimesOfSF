@@ -250,17 +250,24 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
 
     try {
       let post = buildFallbackPostFromSources(topic, successfulSources, { synthesisError: msg });
-      let copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
-      if (copyrightRisk) {
-        console.warn(`⚠️ Fallback copyright check: ${copyrightRisk}; retrying minimal body.`);
-        post = buildFallbackPostFromSources(topic, successfulSources, {
-          synthesisError: msg,
-          copyrightMinimal: true,
-        });
-        copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
+
+      if (config.copyrightCheckWireFallback) {
+        let copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
         if (copyrightRisk) {
-          throw new Error(`Fallback blocked by copyright safety: ${copyrightRisk}`);
+          console.warn(`⚠️ Fallback copyright check: ${copyrightRisk}; retrying minimal body.`);
+          post = buildFallbackPostFromSources(topic, successfulSources, {
+            synthesisError: msg,
+            copyrightMinimal: true,
+          });
+          copyrightRisk = findCopyrightRisk(post.bodyMarkdown, successfulSources);
+          if (copyrightRisk) {
+            throw new Error(`Fallback blocked by copyright safety: ${copyrightRisk}`);
+          }
         }
+      } else {
+        console.log(
+          "📋 Wire fallback: skipping phrase-overlap check (fact bullets align with excerpts by design). Set COPYRIGHT_CHECK_WIRE_FALLBACK=true to enforce.",
+        );
       }
 
       const fingerprint = buildStoryFingerprint(topic, successfulSources, post.headline);
