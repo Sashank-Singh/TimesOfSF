@@ -41,6 +41,12 @@ async function start() {
             ? "DISABLE_NEWS_PLEASE=true: skipping Python extractor (use on Render without news-please)."
             : "Uses Python news-please when available; otherwise falls back to RSS headline/summary metadata.",
         },
+        synthesis: {
+          wireFallbackOnModelFailure: !config.disableSynthesisFallback,
+          note: config.disableSynthesisFallback
+            ? "DISABLE_SYNTHESIS_FALLBACK=true: no post when LLM JSON synthesis fails after grounding."
+            : "If LLM synthesis fails after sources pass checks, a wire-format recap is published from extracted facts.",
+        },
       });
     } catch (error) {
       res.status(500).json({
