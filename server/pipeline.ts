@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { buildEventsDigestPost, buildFallbackPostFromSources, synthesizePost } from "./agents";
+import { buildEventsDigestPost, buildFallbackPostFromSources, finalizePostForPublish, synthesizePost } from "./agents";
 import {
   classifyEditorialCategory,
   fetchQuotaSeedCandidate,
@@ -19,7 +19,7 @@ import {
 } from "./db";
 import { extractSource } from "./extractor";
 import { config } from "./config";
-import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline } from "./dedupe";
+import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline, normalizeUrl } from "./dedupe";
 import { findSourceArticle, getTrendingTopics } from "./rss";
 import { PipelineRunResult, PreferredSourceName, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
@@ -99,8 +99,11 @@ function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
   return null;
 }
 
-/** Prefer licensed hero frames; otherwise first extracted/RSS preview image (editorial contexts only). */
-function pickHeroImageFromSources(sources: SourceExtraction[]): { url?: string; credit?: string } {
+/** Hero image only from the quoted / primary story when possible—never a random successful fetch. */
+function pickHeroImageFromSources(
+  sources: SourceExtraction[],
+  topic: TrendCandidate,
+): { url?: string; credit?: string } {
   const licensed = sources.find(
     (s) =>
       s.imageUrl?.startsWith("http") &&
@@ -109,10 +112,40 @@ function pickHeroImageFromSources(sources: SourceExtraction[]): { url?: string; 
   if (licensed?.imageUrl) {
     return { url: licensed.imageUrl, credit: `${licensed.sourceName} — licensed reference` };
   }
-  const preview = sources.find((s) => s.imageUrl?.startsWith("http"));
-  if (preview?.imageUrl) {
-    return { url: preview.imageUrl, credit: `${preview.sourceName} article preview` };
+
+  const primaryUrl = topic.primarySource?.articleUrl;
+  if (primaryUrl) {
+    const target = normalizeUrl(primaryUrl);
+    const match = sources.find((s) => normalizeUrl(s.articleUrl) === target || normalizeUrl(s.canonicalUrl || s.articleUrl) === target);
+    if (match?.imageUrl?.startsWith("http")) {
+      return { url: match.imageUrl, credit: `${match.sourceName} article preview` };
+    }
+    return {};
   }
+
+  for (const name of topic.signalSources ?? []) {
+    const hit = sources.find((s) => s.sourceName === name && s.imageUrl?.startsWith("http"));
+    if (hit) {
+      return { url: hit.imageUrl!, credit: `${hit.sourceName} article preview` };
+    }
+  }
+
+  const tokens = topic.normalizedTopic.split(/\s+/).filter((t) => t.length > 4);
+  let best: SourceExtraction | undefined;
+  let bestScore = 0;
+  for (const s of sources) {
+    if (!s.imageUrl?.startsWith("http")) continue;
+    const hay = `${s.headline} ${s.summary}`.toLowerCase();
+    const score = tokens.reduce((acc, t) => acc + (hay.includes(t.toLowerCase()) ? 1 : 0), 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = s;
+    }
+  }
+  if (best && bestScore >= 2) {
+    return { url: best.imageUrl!, credit: `${best.sourceName} article preview` };
+  }
+
   return {};
 }
 
@@ -225,7 +258,7 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
       throw new Error(`Copyright safety check failed: ${copyrightRisk}`);
     }
     
-    const hero = pickHeroImageFromSources(successfulSources);
+    const hero = pickHeroImageFromSources(successfulSources, topic);
     if (hero.url) {
       post.imageUrl = hero.url;
       post.imageCredit = hero.credit;
@@ -283,13 +316,15 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
         );
       }
 
+      post = finalizePostForPublish(post);
+
       const fingerprint = buildStoryFingerprint(topic, successfulSources, post.headline);
       post.sourceUrls = fingerprint.sourceUrls;
       post.headlineHash = fingerprint.headlineHash;
       post.canonicalKey = fingerprint.canonicalKey;
       post.storyFingerprint = fingerprint.storyFingerprint;
 
-      const hero = pickHeroImageFromSources(successfulSources);
+      const hero = pickHeroImageFromSources(successfulSources, topic);
       if (hero.url) {
         post.imageUrl = hero.url;
         post.imageCredit = hero.credit;
