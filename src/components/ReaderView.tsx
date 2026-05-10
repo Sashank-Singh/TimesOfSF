@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo } from "react";
 import { Article } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
-import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, ShieldCheck, AlertTriangle, FileText } from "lucide-react";
+import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { formatDate, cn } from "../lib/utils";
 import { DEFAULT_IMAGE } from "../services/newsService";
@@ -23,9 +23,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   const [isExpanding, setIsExpanding] = useState(false);
   const [content, setContent] = useState(article.content);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const sourceCount = article.credits?.length ?? 0;
-  const confirmedFactCount = article.credits?.reduce((count, credit) => count + (credit.factBullets?.length ?? 0), 0) ?? 0;
-  const citationCount = article.citations?.length ?? 0;
   const sourceTypeLabel = (type?: string) => (type || "reporting").replace(/_/g, " ");
   
   const { scrollYProgress } = useScroll({
@@ -56,7 +53,16 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             if (article.dataBlocks?.[chartIdx]) {
               const block = article.dataBlocks[chartIdx];
               if (block.title && Array.isArray(block.data)) {
-                parts.push(<DataVisChart key={`chart-${chartIdx}`} title={block.title} data={block.data} />);
+                parts.push(
+                  <DataVisChart
+                    key={`chart-${chartIdx}`}
+                    title={block.title}
+                    type={block.type}
+                    xAxisLabel={block.xAxisLabel}
+                    yAxisLabel={block.yAxisLabel}
+                    data={block.data}
+                  />
+                );
               }
             }
             lastIndex = chartRegex.lastIndex;
@@ -161,11 +167,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                </h1>
                <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
                 <span className="italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
-                <div className="flex flex-wrap items-center justify-center gap-2 text-[9px] font-mono uppercase tracking-widest text-ink/45">
-                  <span className="px-2 py-1 border border-ink/10 bg-paper">Sources: {sourceCount || "review below"}</span>
-                  <span className="px-2 py-1 border border-ink/10 bg-paper">Evidence facts: {confirmedFactCount}</span>
-                  <span className="px-2 py-1 border border-ink/10 bg-paper">Citations: {citationCount}</span>
-                </div>
                   <div className="flex items-center gap-4 font-mono uppercase tracking-[0.1em]">
                     <span>By {article.author}</span>
                     <span className="w-1 h-1 bg-ink/10 rounded-full" />
@@ -244,48 +245,13 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                    </span>
                    <sup className="text-[8px] font-mono text-accent font-bold">(2)</sup>
                  </div>
-                 <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Press Dispatch / Verified</span>
+                 <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Source-linked dispatch</span>
                </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
               <div className="hidden lg:block lg:col-span-3">
                  <div className="sticky top-32 space-y-12 pr-8 border-r border-ink/5">
-                    <div>
-                      <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Truth Status</h4>
-                      <div className="space-y-3 text-[11px] leading-relaxed text-ink/55">
-                        <div className="flex items-start gap-2">
-                          <ShieldCheck size={14} className="text-accent shrink-0 mt-0.5" />
-                          <span>{confirmedFactCount} source-backed fact notes from {sourceCount || "linked"} source{sourceCount === 1 ? "" : "s"}.</span>
-                        </div>
-                        <div className="flex items-start gap-2">
-                          <AlertTriangle size={14} className="text-ink/35 shrink-0 mt-0.5" />
-                          <span>AI-assisted synthesis. Source notes below show what is confirmed, unclear, and attributed.</span>
-                        </div>
-                      </div>
-                    </div>
-                    {!!article.credits?.length && (
-                      <div>
-                        <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Source Map</h4>
-                        <div className="space-y-3">
-                          {article.credits.slice(0, 8).map((credit, idx) => (
-                            <a
-                              key={`${credit.articleUrl}-${idx}`}
-                              href={credit.articleUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block border border-ink/10 p-3 hover:border-accent/40 hover:bg-accent/[0.02] transition-colors"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/70">{credit.sourceName}</span>
-                                <ExternalLink size={12} className="text-accent shrink-0" />
-                              </div>
-                              <p className="mt-2 text-[9px] font-mono uppercase tracking-tight text-ink/35">{sourceTypeLabel(credit.sourceType)} / {credit.confidence || "medium"} confidence</p>
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                     {article.additionalImages && article.additionalImages.length > 0 && (
                       <div className="space-y-6">
                         <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30">Visual Evidence</h4>
@@ -320,35 +286,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
               </div>
 
               <div className="lg:col-span-8 lg:col-start-5">
-                <section className="mb-12 md:mb-16 border-2 border-ink bg-paper shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
-                  <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-ink">
-                    <div className="p-5">
-                      <div className="flex items-center gap-2 text-accent mb-3">
-                        <ShieldCheck size={16} />
-                        <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest">Confirmed</h3>
-                      </div>
-                      <p className="text-3xl font-black leading-none mb-2">{confirmedFactCount}</p>
-                      <p className="text-[11px] leading-relaxed text-ink/55">fact notes attached to named sources.</p>
-                    </div>
-                    <div className="p-5">
-                      <div className="flex items-center gap-2 text-ink/50 mb-3">
-                        <FileText size={16} />
-                        <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest">Receipts</h3>
-                      </div>
-                      <p className="text-3xl font-black leading-none mb-2">{sourceCount}</p>
-                      <p className="text-[11px] leading-relaxed text-ink/55">linked sources used in this article, not a generic source count.</p>
-                    </div>
-                    <div className="p-5">
-                      <div className="flex items-center gap-2 text-ink/40 mb-3">
-                        <AlertTriangle size={16} />
-                        <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest">Unknowns</h3>
-                      </div>
-                      <p className="text-3xl font-black leading-none mb-2">Open</p>
-                      <p className="text-[11px] leading-relaxed text-ink/55">uncertainty is called out inside the report, not hidden.</p>
-                    </div>
-                  </div>
-                </section>
-
                 <div className="markdown-body">
                   <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
                 </div>

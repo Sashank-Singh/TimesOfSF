@@ -1,7 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
 import { config } from "./config";
 import { PreferredSourceName, SourceSearchResult, TrendCandidate } from "./types";
-import { SOURCE_FEEDS, TREND_FEEDS, withSourceMetadata } from "./sourceRegistry";
+import { getSourceAliases, SOURCE_FEEDS, TREND_FEEDS, withSourceMetadata } from "./sourceRegistry";
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -51,6 +51,34 @@ async function fetchFeedItems(url: string) {
   return toArray<RssItem>(items);
 }
 
+function stripPublisherSuffix(title: string) {
+  return title.replace(/\s+-\s+[^-]+$/, "").trim();
+}
+
+function normalizePublisher(raw: string) {
+  return raw.toLowerCase().replace(/^the\s+/, "").replace(/[^a-z0-9]/g, "");
+}
+
+function googleNewsPublisher(title: string) {
+  const parts = title.split(/\s+-\s+/);
+  return parts.length > 1 ? parts[parts.length - 1] : "";
+}
+
+function isGoogleNewsPublisherMatch(title: string, sourceName: PreferredSourceName) {
+  const publisher = normalizePublisher(googleNewsPublisher(title));
+  if (!publisher) return false;
+  return getSourceAliases(sourceName).some((alias) => normalizePublisher(alias) === publisher);
+}
+
+function significantTokens(text: string) {
+  return normalizeTopic(text).split(" ").filter((w) => w.length > 3);
+}
+
+function countTokenMatches(tokens: string[], text: string) {
+  const normalized = normalizeTopic(text);
+  return tokens.filter((token) => normalized.includes(token)).length;
+}
+
 function deriveTopicFromHeadline(headline: string) {
   const clean = headline.replace(/[-|:].*$/, "").trim();
   return normalizeTopic(clean);
@@ -74,13 +102,17 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
         let existing = buckets.find(b => {
           const bTokens = b.normalizedTopic.split(" ").filter(t => t.length > 3);
           const overlap = currentTokens.filter(t => bTokens.includes(t));
-          // If more than 50% overlap of significant keywords, they are the same story
+          // Require multiple shared keywords so short headlines like "Robot wars" do not merge
+          // unrelated stories just because one generic word overlaps.
           const overlapRatio = overlap.length / Math.min(currentTokens.length, bTokens.length);
-          return overlapRatio >= 0.5;
+          return overlap.length >= 2 && overlapRatio >= 0.5;
         });
 
         if (existing) {
-          existing.signalCount += 1;
+          if (!existing.signalSources?.includes(feed.source.name)) {
+            existing.signalCount += 1;
+            existing.signalSources = [...(existing.signalSources ?? []), feed.source.name];
+          }
           if (existing.sampleHeadlines.length < 4) {
             existing.sampleHeadlines.push(title);
           }
@@ -89,6 +121,7 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
             topic: title.replace(/\s*-\s*[^-]+$/, "").trim(),
             normalizedTopic,
             signalCount: 1,
+            signalSources: [feed.source.name],
             sampleHeadlines: [title],
             primarySource: item.link ? withSourceMetadata({
               sourceName: feed.source.name,
@@ -114,19 +147,15 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
   const feeds = SOURCE_FEEDS[sourceName];
   if (!feeds) return null;
 
-  const topicTokens = topic.normalizedTopic
-    .split(" ")
-    .filter((w) => w.length > 3)
-    .slice(0, 4);
+  const topicTokens = significantTokens(topic.normalizedTopic).slice(0, 5);
 
   for (const feedUrl of feeds) {
     try {
       const items = await fetchFeedItems(feedUrl);
       const match = items.find((item) => {
         if (!item.link || !item.title) return false;
-        const normalizedHeadline = item.title.toLowerCase();
-        const matches = topicTokens.filter(t => normalizedHeadline.includes(t));
-        return matches.length >= Math.min(2, topicTokens.length);
+        const searchable = `${stripPublisherSuffix(item.title)} ${item.description ?? ""}`;
+        return countTokenMatches(topicTokens, searchable) >= Math.min(2, topicTokens.length);
       });
 
       if (match?.link && match?.title) {
@@ -146,7 +175,7 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
   // Fallback: Google News RSS Search
   // If the direct feeds don't have it, we search Google News for the specific publication
   try {
-    const sourceIdentifier = sourceName.replace(/\s+/g, "");
+    const sourceIdentifier = getSourceAliases(sourceName)[0].replace(/\s+/g, "");
     // Google News supports boolean operators and source filters in its RSS search
     const query = encodeURIComponent(`"${topicTokens.join('" "')}" source:${sourceIdentifier}`);
     const gnUrl = `https://news.google.com/rss/search?q=${query}&hl=en-US&gl=US&ceid=US:en`;
@@ -156,14 +185,16 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
     // Google News appends " - Source Name" to titles.
     const match = items.find(item => {
         if (!item.link || !item.title) return false;
-        return item.title.toLowerCase().includes(sourceName.toLowerCase());
+        if (!isGoogleNewsPublisherMatch(item.title, sourceName)) return false;
+        const searchable = `${stripPublisherSuffix(item.title)} ${item.description ?? ""}`;
+        return countTokenMatches(topicTokens, searchable) >= Math.min(2, topicTokens.length);
     });
 
     if (match?.link && match?.title) {
       return withSourceMetadata({
         sourceName,
         articleUrl: match.link,
-        headline: match.title,
+        headline: stripPublisherSuffix(match.title),
         publishedAt: match.pubDate,
         summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
       });

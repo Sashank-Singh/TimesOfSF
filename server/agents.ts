@@ -33,13 +33,16 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
     "14. Source Notes",
     "Use short paragraphs, bullets for dense facts, and one evidence-driven pull-quote or key-number moment.",
     "MANDATORY: Insert [CHART:0] naturally in the Data / Chart section if dataBlocks has usable data.",
+    "dataBlocks can render four chart types: bar, histogram, scatter, and line. Use line when points should be connected over time; use scatter when points should remain unconnected.",
+    "Each dataBlock must include type, title, xAxisLabel, yAxisLabel, and data.",
+    "For bar/histogram data use {label, value}. For scatter/line data use numeric {x, y, label}.",
     "Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks.",
     "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, and factBullets.",
     "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact} for the most important article claims.",
     "MANDATORY: Use double brackets like [[NVIDIA]] or [[Jane Doe]] for at least 5-8 key people, companies, or tech terms explicitly mentioned in the sources.",
     "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
     "entities must be an array of {name, definition} for your bracketed terms.",
-    "dataBlocks must be an array of {type: 'chart', title, data: [{label, value}]} representing core statistics from the sources.",
+    "dataBlocks must be an array of {type, title, xAxisLabel, yAxisLabel, data} representing core statistics from the sources.",
     `Source packets: ${JSON.stringify(sources)}`,
   ].join("\n");
 }
@@ -145,6 +148,8 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
               properties: {
                 type: { type: Type.STRING },
                 title: { type: Type.STRING },
+                xAxisLabel: { type: Type.STRING },
+                yAxisLabel: { type: Type.STRING },
                 data: {
                   type: Type.ARRAY,
                   items: {
@@ -152,12 +157,13 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
                     properties: {
                       label: { type: Type.STRING },
                       value: { type: Type.NUMBER },
+                      x: { type: Type.NUMBER },
+                      y: { type: Type.NUMBER },
                     },
-                    required: ["label", "value"],
                   },
                 },
               },
-              required: ["type", "title", "data"],
+              required: ["type", "title", "xAxisLabel", "yAxisLabel", "data"],
             },
           },
         },

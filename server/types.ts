@@ -47,6 +47,7 @@ export interface TrendCandidate {
   topic: string;
   normalizedTopic: string;
   signalCount: number;
+  signalSources?: PreferredSourceName[];
   sampleHeadlines: string[];
   primarySource?: SourceSearchResult;
 }
@@ -138,8 +139,10 @@ export interface GeneratedPost {
     definition: string;
   }>;
   dataBlocks?: Array<{
-    type: "chart";
+    type: "bar" | "histogram" | "scatter" | "line";
     title: string;
-    data: Array<{ label: string; value: number }>;
+    xAxisLabel: string;
+    yAxisLabel: string;
+    data: Array<{ label?: string; value?: number; x?: number; y?: number }>;
   }>;
 }
