@@ -58,6 +58,8 @@ function buildFacts(summary: string, paragraphs: string[]) {
 }
 
 function buildFallbackExtraction(searchResult: SourceSearchResult): SourceExtraction {
+  const thumb =
+    searchResult.imageUrl && searchResult.imageUrl.startsWith("http") ? searchResult.imageUrl : "";
   return {
     sourceName: searchResult.sourceName,
     sourceId: searchResult.sourceId,
@@ -67,7 +69,7 @@ function buildFallbackExtraction(searchResult: SourceSearchResult): SourceExtrac
     articleUrl: searchResult.articleUrl,
     canonicalUrl: searchResult.articleUrl,
     headline: searchResult.headline,
-    imageUrl: "",
+    imageUrl: thumb,
     publishedAt: searchResult.publishedAt,
     summary: searchResult.headline,
     textExcerpt: searchResult.summary || "",
@@ -146,6 +148,9 @@ async function runPythonExtractor(url: string): Promise<any> {
 }
 
 export async function extractSource(searchResult: SourceSearchResult): Promise<SourceExtraction> {
+  const rssThumb =
+    searchResult.imageUrl && searchResult.imageUrl.startsWith("http") ? searchResult.imageUrl : "";
+
   if (config.disableNewsPlease) {
     return buildFallbackExtraction(searchResult);
   }
@@ -171,7 +176,7 @@ export async function extractSource(searchResult: SourceSearchResult): Promise<S
       articleUrl: searchResult.articleUrl,
       canonicalUrl: searchResult.articleUrl,
       headline: article.title || searchResult.headline,
-      imageUrl: article.imageUrl || "",
+      imageUrl: (article.imageUrl && String(article.imageUrl).startsWith("http") ? article.imageUrl : "") || rssThumb,
       publishedAt: article.publishedAt || searchResult.publishedAt,
       summary: article.title || searchResult.headline,
       textExcerpt: article.text.slice(0, 1200),
