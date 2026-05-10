@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 import { config } from "./config";
 import { classifyEditorialCategory } from "./editorial";
+import { normalizeUrl } from "./dedupe";
 import type { EventInfo } from "./events";
 import { EditorialCategory, GeneratedPost, SourceExtraction, TrendCandidate } from "./types";
 
@@ -93,8 +94,8 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     ? "Use [[Bracketed Terms]] for 6–10 entities drawn verbatim from sources; entities array must define each bracketed term."
     : "Use [[Bracketed Terms]] for 10–14 entities drawn from sources; entities array must define each bracketed term.";
   const citationGuide = compact
-    ? "citations: at most 5 objects. quoteOrFact must be ONE short line (≤ 160 chars) supporting the claim."
-    : "citations: up to 10 objects with concise quoteOrFact lines.";
+    ? "citations: at most 4 objects—only for claims you explicitly support in the prose. quoteOrFact = ONE short line (≤ 160 chars)."
+    : "citations: at most 6 objects—only for claims grounded in the narrative. Skip outlets you did not rely on.";
 
   return [
     "You are the Senior Executive Editor of the Times of SF.",
@@ -114,17 +115,18 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     "### The Data Insight: A Rigorous Analysis of the Underlying Numbers",
     "### The Horizon: Long-Term Implications and the Future Outlook",
     "### Source Notes",
-    "The Dispatch leads with what happened and why readers should care now. The Context widens to history and industry dynamics. The Data Insight synthesizes quantitative claims—insert [CHART:0] in this section when dataBlocks[0] holds real numeric values from sources (omit the placeholder if no credible numbers exist). The Horizon covers second-order effects, risks, and what to monitor. Source Notes briefly credits each outlet's contribution.",
+    "The Dispatch leads with what happened and why readers should care now. The Context widens to history and industry dynamics. The Data Insight focuses on quantitative interpretation—ONLY when the sources supply at least TWO comparable numeric facts worth plotting. If there is nothing meaningful to chart, write analytic prose only: set dataBlocks to [] and do NOT insert any [CHART:N] tokens anywhere. When you do chart, insert [CHART:0] exactly once inside The Data Insight and ensure dataBlocks[0] matches those numbers.",
     "Use rich paragraphs; bullet lists only where density demands it.",
-    "dataBlocks may include bar, histogram, scatter, or line charts. Use line for time series; scatter for disconnected points.",
+    "When charts are warranted: use bar, histogram, scatter, or line. Line for time series; scatter for disconnected points.",
     "Each dataBlock needs type, title, xAxisLabel, yAxisLabel, and data.",
     "For bar/histogram use {label, value}. For scatter/line use numeric {x, y, label}.",
     "Chart axes must name real dimensions (e.g. Quarter and Revenue ($M)); never use Category/Value placeholders.",
+    "credits must ONLY list outlets you actually cite or link to inside bodyMarkdown. Omit every unused RSS packet.",
     "OUTPUT RULES: Reply with ONE JSON object only. Escape double-quotes inside strings as \\\" and use \\n for newlines—never output raw multi-line strings inside JSON.",
     `Return JSON keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks, editorialCategory, tldr.`,
     `editorialCategory must be one of: Tech, Funding, Civics, Culture, Transit, Food, Events — prefer "${desk}" unless sources clearly belong elsewhere.`,
-    "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, factBullets.",
-    "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact}.",
+    "credits: include sourceName, articleUrl, sourceType, publishedAt when known, confidence, factBullets — one row per outlet you truly used.",
+    "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact} aligned only with reporting referenced in the article.",
     citationGuide,
     entityGuide,
     "entities must be {name, definition} entries aligned with your bracketed terms.",
@@ -285,6 +287,120 @@ function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
     entities: parsed.entities,
     dataBlocks: parsed.dataBlocks,
   };
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hostnameFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+/** True when the story prose clearly references this outlet (name, linked domain, or parenthetical tag). */
+export function sourceReferencedInBody(bodyRaw: string, sourceName: string, articleUrl: string): boolean {
+  const body = bodyRaw.toLowerCase();
+  const name = sourceName.trim().toLowerCase();
+  if (name.length >= 3 && body.includes(name)) return true;
+  const host = hostnameFromUrl(articleUrl);
+  if (host && body.includes(host)) return true;
+  const short = sourceName.replace(/^The\s+/i, "").trim();
+  if (short.length >= 3 && new RegExp(`\\(${escapeRegExp(short)}\\)`, "i").test(bodyRaw)) return true;
+
+  // Wire-style shorthand seen in prose
+  if (/^ap news$/i.test(sourceName.trim()) && /(\(ap\)|\bassociated press\b|\bap news\b)/i.test(bodyRaw)) return true;
+  if (/^bbc$/i.test(sourceName.trim()) && /(\(bbc\)|\bbbc news\b|\bbbc\b)/i.test(bodyRaw)) return true;
+
+  return false;
+}
+
+function isUsableDataBlock(block: unknown): block is NonNullable<GeneratedPost["dataBlocks"]>[number] {
+  if (!block || typeof block !== "object") return false;
+  const b = block as Record<string, unknown>;
+  const type = b.type;
+  const title = b.title;
+  const data = b.data;
+  const xl = b.xAxisLabel;
+  const yl = b.yAxisLabel;
+  if (typeof type !== "string" || typeof title !== "string") return false;
+  if (!["bar", "histogram", "scatter", "line"].includes(type)) return false;
+  if (typeof xl !== "string" || typeof yl !== "string") return false;
+  if (!Array.isArray(data) || data.length < 2) return false;
+  for (const row of data) {
+    if (!row || typeof row !== "object") return false;
+    const r = row as Record<string, unknown>;
+    if (type === "bar" || type === "histogram") {
+      if (typeof r.label !== "string" || typeof r.value !== "number" || Number.isNaN(r.value)) return false;
+    } else {
+      if (typeof r.x !== "number" || typeof r.y !== "number" || Number.isNaN(r.x) || Number.isNaN(r.y)) return false;
+    }
+  }
+  return true;
+}
+
+function syncChartPlaceholders(
+  body: string,
+  originalBlocks: GeneratedPost["dataBlocks"],
+): { body: string; blocks: GeneratedPost["dataBlocks"] } {
+  const orig = Array.isArray(originalBlocks) ? originalBlocks : [];
+  const usablePairs: { block: NonNullable<GeneratedPost["dataBlocks"]>[number]; oldIdx: number }[] = [];
+  orig.forEach((b, oldIdx) => {
+    if (isUsableDataBlock(b)) usablePairs.push({ block: b, oldIdx });
+  });
+  const newBlocks = usablePairs.map((p) => p.block);
+  const oldToNew = new Map<number, number>();
+  usablePairs.forEach((p, newIdx) => oldToNew.set(p.oldIdx, newIdx));
+
+  let out = body.replace(/\[CHART:(\d+)\]/g, (_, raw) => {
+    const oldIdx = Number.parseInt(raw, 10);
+    const nu = oldToNew.get(oldIdx);
+    return nu !== undefined ? `[CHART:${nu}]` : "";
+  });
+
+  if (newBlocks.length === 0) {
+    out = out.replace(/\[CHART:\d+\]/g, "");
+  }
+
+  return { body: out.trim(), blocks: newBlocks };
+}
+
+function pruneReceiptsToBody(post: GeneratedPost): GeneratedPost {
+  const body = post.bodyMarkdown || "";
+  let citations = (post.citations ?? []).filter((c) => sourceReferencedInBody(body, c.sourceName, c.sourceUrl));
+  citations = citations.slice(0, 8);
+
+  const citeKey = (name: string, url: string) => `${name.trim().toLowerCase()}|${normalizeUrl(url)}`;
+  const citationKeys = new Set(citations.map((c) => citeKey(c.sourceName, c.sourceUrl)));
+
+  let credits = (post.credits ?? []).filter(
+    (c) =>
+      sourceReferencedInBody(body, c.sourceName, c.articleUrl) ||
+      citationKeys.has(citeKey(c.sourceName, c.articleUrl)),
+  );
+
+  const seenCreditUrl = new Set<string>();
+  credits = credits.filter((c) => {
+    const k = normalizeUrl(c.articleUrl);
+    if (seenCreditUrl.has(k)) return false;
+    seenCreditUrl.add(k);
+    return true;
+  });
+
+  return { ...post, citations, credits };
+}
+
+/** Remove orphan charts and receipts for outlets not referenced in the narrative. */
+export function finalizePostForPublish(post: GeneratedPost): GeneratedPost {
+  const synced = syncChartPlaceholders(post.bodyMarkdown ?? "", post.dataBlocks);
+  return pruneReceiptsToBody({
+    ...post,
+    bodyMarkdown: synced.body,
+    dataBlocks: synced.blocks,
+  });
 }
 
 export function buildEventsDigestPost(events: EventInfo[]): GeneratedPost {
@@ -507,9 +623,9 @@ export async function synthesizePost(topic: TrendCandidate, sources: SourceExtra
   for (const mode of modes) {
     try {
       if (config.llmProvider === "fireworks") {
-        return await synthesizeWithFireworks(topic, sources, mode);
+        return finalizePostForPublish(await synthesizeWithFireworks(topic, sources, mode));
       }
-      return await synthesizeWithGemini(topic, sources, mode);
+      return finalizePostForPublish(await synthesizeWithGemini(topic, sources, mode));
     } catch (err) {
       lastErr = err;
       console.warn(`synthesizePost (${mode}) failed:`, err instanceof Error ? err.message : err);
@@ -550,7 +666,7 @@ export async function expandContent(
 
     IMPORTANT:
     1. Use [[Bracketed Terms]] for companies, people, and technical concepts—aim for at least 10 where supported.
-    2. Insert [CHART:index] where listed charts fit naturally (often inside The Data Insight).
+    2. Insert [CHART:index] ONLY when charts are listed below and the surrounding prose analyzes those exact figures—never add chart placeholders without real plotted data.
     3. Return ONLY markdown body content—no JSON, no outer headline.
 
     ${entityContext}
