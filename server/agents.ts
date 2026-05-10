@@ -68,6 +68,136 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
   ].join("\n");
 }
 
+function slugFragment(raw: string): string {
+  const base = raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return base || "wire";
+}
+
+export type BuildFallbackPostOptions = {
+  synthesisError?: string;
+  /** Use only fact bullets and bare links—helps pass phrase-overlap checks when fuller copy trips copyright safety. */
+  copyrightMinimal?: boolean;
+};
+
+/**
+ * When full LLM JSON synthesis fails, still ship something grounded: fact bullets + outbound links to primary reporting.
+ */
+export function buildFallbackPostFromSources(
+  topic: TrendCandidate,
+  sources: SourceExtraction[],
+  opts?: BuildFallbackPostOptions,
+): GeneratedPost {
+  const synthesisError = opts?.synthesisError?.trim();
+  const copyrightMinimal = opts?.copyrightMinimal ?? false;
+
+  const desk: EditorialCategory = topic.editorialCategory ?? classifyEditorialCategory(topic);
+  const primaryHeadline = sources[0]?.headline?.trim();
+  const topicTitle = topic.topic?.trim();
+  const headline =
+    topicTitle && topicTitle.length > 12 ? topicTitle : primaryHeadline ?? topicTitle ?? "Wire dispatch";
+  const slug = `${slugFragment(headline)}-${crypto.randomUUID().slice(0, 8)}`;
+
+  const factLines: string[] = [];
+  for (const s of sources) {
+    for (const f of s.facts.slice(0, 14)) {
+      const line = f.trim();
+      if (line.length && !factLines.includes(line)) factLines.push(line);
+    }
+  }
+  const cappedFacts = factLines.slice(0, 28);
+
+  const credits = sources.map((s) => ({
+    sourceName: s.sourceName,
+    articleUrl: s.articleUrl,
+    sourceType: s.sourceType,
+    publishedAt: s.publishedAt,
+    confidence: "high" as const,
+    factBullets: s.facts.slice(0, 10),
+  }));
+
+  const citations = cappedFacts.slice(0, 10).map((claim, i) => {
+    const src = sources[i % sources.length];
+    return {
+      claim,
+      sourceName: src.sourceName,
+      sourceUrl: src.articleUrl,
+      quoteOrFact: claim,
+    };
+  });
+
+  const errNote =
+    synthesisError && synthesisError.length > 0
+      ? `Automated long-form synthesis did not complete (${synthesisError.slice(0, 240)}). `
+      : "";
+
+  const bodyMarkdown = copyrightMinimal
+    ? [
+        "### Wire dispatch",
+        "",
+        `${errNote}Ultra-compact recap from extracted fact bullets only.`,
+        "",
+        "### Reported lines",
+        "",
+        ...sources
+          .flatMap((s) => s.facts.slice(0, 10).map((f) => `- (${s.sourceName}) ${f.trim()}`))
+          .slice(0, 30),
+        "",
+        "### Primary reporting",
+        "",
+        ...sources.map((s) => `- [${s.sourceName}](${s.articleUrl})`),
+      ].join("\n")
+    : [
+        "### Wire dispatch",
+        "",
+        `${errNote}This brief is assembled directly from retrieved source packets so reporting still ships when synthesis is unavailable.`,
+        "",
+        "### What outlets report",
+        "",
+        ...cappedFacts.map((f) => `- ${f}`),
+        "",
+        "### Source list",
+        "",
+        ...sources.map((s) => `- **${s.sourceName}** — [Open article](${s.articleUrl})`),
+      ].join("\n");
+
+  const summaryBlob = sources
+    .map((s) => s.summary)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 420);
+
+  const dek =
+    copyrightMinimal
+      ? `Minimal attributed recap from ${sources.length} wire source(s).`
+      : `Attributed recap from ${sources.length} wire source(s); full AI write-up unavailable this run.`;
+
+  return {
+    headline: headline.length > 140 ? `${headline.slice(0, 137)}…` : headline,
+    slug,
+    dek,
+    bodyMarkdown,
+    shortPost: `${headline.slice(0, 200)} — Times of SF wire recap with primary links.`,
+    topic: topic.topic,
+    editorialCategory: desk,
+    credits,
+    citations,
+    tldr: {
+      whyItMatters: summaryBlob || "Multiple outlets are covering this thread.",
+      whoIsAffected: "Readers following regional and national developments cited below.",
+      whatIsNext: "Follow the linked primary reporting for updates.",
+    },
+    entities: [],
+    dataBlocks: [],
+  };
+}
+
 function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
   const parsedDesk = typeof parsed.editorialCategory === "string" ? parsed.editorialCategory.trim() : "";
   const allowedDesks: EditorialCategory[] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events"];

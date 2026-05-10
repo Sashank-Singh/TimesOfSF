@@ -118,6 +118,8 @@ export interface PipelineRunResult {
   published: boolean;
   postId?: string;
   reason?: string;
+  /** True when the article was assembled from source packets without full LLM synthesis (recovery path). */
+  publishedViaFallback?: boolean;
 }
 
 export interface GeneratedPost {
