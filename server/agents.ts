@@ -1,11 +1,70 @@
 import crypto from "node:crypto";
 import { GoogleGenAI, Type } from "@google/genai";
+import { jsonrepair } from "jsonrepair";
 import { config } from "./config";
 import { classifyEditorialCategory } from "./editorial";
 import type { EventInfo } from "./events";
 import { EditorialCategory, GeneratedPost, SourceExtraction, TrendCandidate } from "./types";
 
 const geminiAi = config.geminiApiKey ? new GoogleGenAI({ apiKey: config.geminiApiKey }) : null;
+
+function clampPromptText(raw: string, maxChars: number): string {
+  if (!raw) return "";
+  const cleaned = raw
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (cleaned.length <= maxChars) return cleaned;
+  return `${cleaned.slice(0, maxChars)}…`;
+}
+
+/** Shrink / clean source payloads so the model is less likely to emit broken JSON when paraphrasing them. */
+function sanitizeSourcesForPrompt(sources: SourceExtraction[]): SourceExtraction[] {
+  return sources.map((s) => ({
+    ...s,
+    headline: clampPromptText(s.headline, 400),
+    summary: clampPromptText(s.summary, 1200),
+    textExcerpt: clampPromptText(s.textExcerpt, 3200),
+    facts: (s.facts ?? []).slice(0, 8).map((f) => clampPromptText(f, 550)),
+  }));
+}
+
+function parseModelJson(raw: string, context: string): unknown {
+  const trimmed = raw.trim();
+  const attempts: Array<{ label: string; fn: () => unknown }> = [
+    { label: "direct", fn: () => JSON.parse(trimmed) },
+    { label: "jsonrepair-full", fn: () => JSON.parse(jsonrepair(trimmed)) },
+    {
+      label: "slice",
+      fn: () => {
+        const start = trimmed.indexOf("{");
+        const end = trimmed.lastIndexOf("}");
+        if (start < 0 || end <= start) throw new Error("No JSON object found");
+        return JSON.parse(trimmed.slice(start, end + 1));
+      },
+    },
+    {
+      label: "jsonrepair-slice",
+      fn: () => {
+        const start = trimmed.indexOf("{");
+        const end = trimmed.lastIndexOf("}");
+        if (start < 0 || end <= start) throw new Error("No JSON object found");
+        return JSON.parse(jsonrepair(trimmed.slice(start, end + 1)));
+      },
+    },
+  ];
+
+  let lastMessage = "unknown";
+  for (const { label, fn } of attempts) {
+    try {
+      return fn();
+    } catch (err) {
+      lastMessage = `${label}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  throw new Error(`${context} — ${lastMessage}`);
+}
 
 function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
   const desk: EditorialCategory = topic.editorialCategory ?? classifyEditorialCategory(topic);
@@ -56,6 +115,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
     "For bar/histogram data use {label, value}. For scatter/line data use numeric {x, y, label}.",
     "Chart axes must use concrete dimension names matched to the statistics you cite (examples: Year and Funding ($M), Quarter and Headcount, Agency and Budget share (%)).",
     "Never set xAxisLabel or yAxisLabel to generic placeholders like Category, Value, Series, Label, X, or Y.",
+    "OUTPUT RULES: Your reply must be ONE valid JSON object only. Inside JSON strings, escape every double-quote as \\\" and represent line breaks as \\n — never paste multi-line raw prose inside a JSON string without escaping.",
     `Return JSON with keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks, editorialCategory.`,
     `editorialCategory must be exactly one of: Tech, Funding, Civics, Culture, Transit, Food, Events — use "${desk}" unless the sources clearly belong elsewhere.`,
     "credits must include sourceName, articleUrl, sourceType, publishedAt when known, confidence, and factBullets.",
@@ -64,7 +124,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[]) {
     "Also include a 'tldr' object with keys: 'whyItMatters', 'whoIsAffected', and 'whatIsNext'.",
     "entities must be an array of {name, definition} for your bracketed terms.",
     "dataBlocks must be an array of {type, title, xAxisLabel, yAxisLabel, data} representing core statistics from the sources.",
-    `Source packets: ${JSON.stringify(sources)}`,
+    `Source packets (sanitized JSON): ${JSON.stringify(sanitizeSourcesForPrompt(sources))}`,
   ].join("\n");
 }
 
@@ -249,7 +309,7 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
     },
   });
 
-  const parsed = JSON.parse(response.text ?? "{}");
+  const parsed = parseModelJson(response.text ?? "{}", "Gemini synthesis JSON") as Record<string, unknown>;
   return normalizePost(topic, parsed);
 }
 
@@ -301,7 +361,7 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
     throw new Error("Fireworks response did not include message content.");
   }
 
-  const parsed = JSON.parse(content);
+  const parsed = parseModelJson(content, "Fireworks synthesis JSON") as Record<string, unknown>;
   return normalizePost(topic, parsed);
 }
 
