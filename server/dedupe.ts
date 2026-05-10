@@ -13,8 +13,9 @@ type ExistingPost = {
   canonical_key?: string;
   storyFingerprint?: GeneratedPost["storyFingerprint"];
   story_fingerprint?: GeneratedPost["storyFingerprint"];
-  credits?: Array<{ articleUrl?: string; sourceName?: string }>;
+  credits?: unknown;
 };
+
 
 const STOPWORDS = new Set([
   "about",
@@ -133,10 +134,39 @@ function getExistingFingerprint(post: ExistingPost) {
   return post.storyFingerprint ?? post.story_fingerprint;
 }
 
+/** JSONB / drivers sometimes yield arrays, stringified JSON, or malformed objects. */
+function asUrlArray(raw: unknown): string[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.filter((u): u is string => typeof u === "string");
+  return [];
+}
+
+function asCreditsForDedupe(raw: unknown): Array<{ articleUrl?: string }> {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw as Array<{ articleUrl?: string }>;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return Array.isArray(parsed) ? (parsed as Array<{ articleUrl?: string }>) : [];
+    } catch {
+      return [];
+    }
+  }
+  if (typeof raw === "object" && raw !== null) {
+    const o = raw as Record<string, unknown>;
+    if ("articleUrl" in o || "article_url" in o) {
+      const url = (o.articleUrl ?? o.article_url) as string | undefined;
+      return url ? [{ articleUrl: url }] : [];
+    }
+  }
+  return [];
+}
+
 function getExistingSourceUrls(post: ExistingPost) {
-  const urls = post.sourceUrls ?? post.source_urls ?? [];
-  const creditUrls = post.credits?.map((credit) => credit.articleUrl).filter(Boolean) as string[] | undefined;
-  return [...new Set([...(urls ?? []), ...(creditUrls ?? [])].map(normalizeUrl))];
+  const urls = asUrlArray(post.sourceUrls ?? post.source_urls);
+  const credits = asCreditsForDedupe(post.credits);
+  const creditUrls = credits.map((c) => c.articleUrl).filter((u): u is string => Boolean(u));
+  return [...new Set([...urls, ...creditUrls].map(normalizeUrl))];
 }
 
 export function buildStoryFingerprint(topic: TrendCandidate, sources: SourceExtraction[], headline?: string) {
