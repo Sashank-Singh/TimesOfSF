@@ -44,8 +44,10 @@ async function start() {
         synthesis: {
           wireFallbackOnModelFailure: !config.disableSynthesisFallback,
           copyrightCheckWireFallback: config.copyrightCheckWireFallback,
+          copyrightOverlapGramThreshold: config.copyrightOverlapGramThreshold,
+          copyrightOverlapRatioThreshold: config.copyrightOverlapRatioThreshold,
           note: config.disableSynthesisFallback
-            ? "DISABLE_SYNTHESIS_FALLBACK=true: no post when LLM JSON synthesis fails after grounding."
+            ? "Wire recap on synthesis failure is disabled by default (full-format articles only). Set ENABLE_SYNTHESIS_FALLBACK=true to publish bullet recaps when the model fails."
             : config.copyrightCheckWireFallback
               ? "Wire fallback runs the same phrase-overlap heuristic as full synthesis (often blocks fallback)."
               : "Wire fallback skips phrase-overlap checks by default (fact bullets overlap excerpts). Set COPYRIGHT_CHECK_WIRE_FALLBACK=true for strict checks.",
