@@ -32,7 +32,10 @@ export interface Article {
   slug: string;
   title: string;
   author: string;
+  /** ISO 8601 — same instant as `publishedAt`; kept for sorting / filters */
   date: string;
+  /** ISO 8601 — when this article was published on Times of SF */
+  publishedAt: string;
   category: "Civics" | "Culture" | "Tech" | "Funding" | "Transit" | "Food" | "Events";
   excerpt: string;
   content: string;
