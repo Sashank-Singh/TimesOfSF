@@ -99,6 +99,23 @@ function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
   return null;
 }
 
+/** Prefer licensed hero frames; otherwise first extracted/RSS preview image (editorial contexts only). */
+function pickHeroImageFromSources(sources: SourceExtraction[]): { url?: string; credit?: string } {
+  const licensed = sources.find(
+    (s) =>
+      s.imageUrl?.startsWith("http") &&
+      (s.allowedUse === "licensed" || s.allowedUse === "public_domain"),
+  );
+  if (licensed?.imageUrl) {
+    return { url: licensed.imageUrl, credit: `${licensed.sourceName} — licensed reference` };
+  }
+  const preview = sources.find((s) => s.imageUrl?.startsWith("http"));
+  if (preview?.imageUrl) {
+    return { url: preview.imageUrl, credit: `${preview.sourceName} article preview` };
+  }
+  return {};
+}
+
 async function attemptSource(topic: TrendCandidate, sourceName: PreferredSourceName): Promise<SourceAttempt> {
   const match = await findSourceArticle(topic, sourceName);
   if (!match) {
@@ -208,14 +225,10 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
       throw new Error(`Copyright safety check failed: ${copyrightRisk}`);
     }
     
-    // Only reuse images when the source explicitly permits licensed/public-domain use.
-    const sourceWithImage = successfulSources.find(s =>
-      s.imageUrl &&
-      s.imageUrl.startsWith("http") &&
-      (s.allowedUse === "licensed" || s.allowedUse === "public_domain")
-    );
-    if (sourceWithImage?.imageUrl) {
-      post.imageUrl = sourceWithImage.imageUrl;
+    const hero = pickHeroImageFromSources(successfulSources);
+    if (hero.url) {
+      post.imageUrl = hero.url;
+      post.imageCredit = hero.credit;
     }
 
     const postId = await saveGeneratedPost(runId, post);
@@ -276,14 +289,10 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
       post.canonicalKey = fingerprint.canonicalKey;
       post.storyFingerprint = fingerprint.storyFingerprint;
 
-      const sourceWithImage = successfulSources.find(
-        (s) =>
-          s.imageUrl &&
-          s.imageUrl.startsWith("http") &&
-          (s.allowedUse === "licensed" || s.allowedUse === "public_domain"),
-      );
-      if (sourceWithImage?.imageUrl) {
-        post.imageUrl = sourceWithImage.imageUrl;
+      const hero = pickHeroImageFromSources(successfulSources);
+      if (hero.url) {
+        post.imageUrl = hero.url;
+        post.imageCredit = hero.credit;
       }
 
       const postId = await saveGeneratedPost(runId, post);

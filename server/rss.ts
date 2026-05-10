@@ -13,6 +13,53 @@ interface RssItem {
   link?: string;
   pubDate?: string;
   description?: string;
+  enclosure?: { "@_url"?: string; "@_type"?: string };
+  "media:content"?: unknown;
+  "media:thumbnail"?: unknown;
+}
+
+function extractImgSrcFromHtml(html: string): string | undefined {
+  const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+  const u = m?.[1]?.trim();
+  return u?.startsWith("http") ? u : undefined;
+}
+
+function extractUrlFromUnknown(obj: unknown): string | undefined {
+  if (!obj) return undefined;
+  if (typeof obj === "string" && obj.startsWith("http")) return obj;
+  if (Array.isArray(obj)) {
+    for (const x of obj) {
+      const hit = extractUrlFromUnknown(x);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  if (typeof obj === "object") {
+    const o = obj as Record<string, unknown>;
+    const direct = o["@_url"];
+    if (typeof direct === "string" && direct.startsWith("http")) return direct;
+    for (const v of Object.values(o)) {
+      const hit = extractUrlFromUnknown(v);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+function rssItemThumbnail(item: RssItem): string | undefined {
+  const desc = item.description ?? "";
+  const fromHtml = extractImgSrcFromHtml(desc);
+  if (fromHtml) return fromHtml;
+  const encUrl = item.enclosure?.["@_url"];
+  if (typeof encUrl === "string" && encUrl.startsWith("http")) {
+    const encType = item.enclosure?.["@_type"] ?? "";
+    if (/image/i.test(encType) || /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(encUrl)) {
+      return encUrl;
+    }
+  }
+  return (
+    extractUrlFromUnknown(item["media:thumbnail"]) ?? extractUrlFromUnknown(item["media:content"])
+  );
 }
 
 function normalizeTopic(raw: string) {
@@ -197,12 +244,14 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
       const match = pickBestFeedMatch(items, topicTokens);
 
       if (match?.link && match?.title) {
+        const thumb = rssItemThumbnail(match);
         return withSourceMetadata({
           sourceName,
           articleUrl: match.link,
           headline: match.title,
           publishedAt: match.pubDate,
           summary: match.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+          imageUrl: thumb,
         });
       }
     } catch {
@@ -236,12 +285,14 @@ export async function findSourceArticle(topic: TrendCandidate, sourceName: Prefe
     }
 
     if (best?.link && best?.title) {
+      const thumb = rssItemThumbnail(best);
       return withSourceMetadata({
         sourceName,
         articleUrl: best.link,
         headline: stripPublisherSuffix(best.title),
         publishedAt: best.pubDate,
         summary: best.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+        imageUrl: thumb,
       });
     }
   } catch (error) {
