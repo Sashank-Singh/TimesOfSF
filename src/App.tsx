@@ -190,7 +190,7 @@ export default function App() {
     }
   };
 
-  const categories = ['Civics', 'Culture', 'Tech', 'Transit', 'Food'];
+  const categories = ['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'];
 
   if (loading) {
     return (
