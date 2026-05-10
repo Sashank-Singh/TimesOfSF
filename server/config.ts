@@ -52,6 +52,13 @@ export const config = {
   /** When Inngest is disabled, still tick the pipeline on this interval (Render cron substitute). */
   internalPipelineIntervalMs: readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", 10 * 60 * 1000),
   disableInternalPipelineCron: process.env.DISABLE_INTERNAL_PIPELINE_CRON === "true",
+  /**
+   * Internal timer + /api/cron/pipeline skip starting work if a pipeline row was created within this window.
+   * Prevents duplicate overlapping runs when both Inngest and the internal timer fire. HTTP /api/pipeline/run ignores this.
+   */
+  pipelineCoalesceMs: readOptionalInt("PIPELINE_COALESCE_MS", 7 * 60 * 1000),
+  /** Optional shared secret for GET /api/cron/pipeline?secret=… (UptimeRobot / Render cron / GitHub Actions). */
+  cronSecret: process.env.CRON_SECRET,
   minSuccessfulSources: readOptionalInt("MIN_SUCCESSFUL_SOURCES", 2),
   sourceTimeoutMs: readOptionalInt("SOURCE_TIMEOUT_MS", 15000),
   trendLimit: readOptionalInt("TREND_LIMIT", 20),
