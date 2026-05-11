@@ -82,21 +82,71 @@ function toArray<T>(value: T | T[] | undefined): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
-const TECH_SOURCES = new Set<string>([
-  "TechCrunch",
-  "The Verge",
-  "Engadget",
-  "New York Times",
-  "BBC",
-  "Bloomberg",
-  "Reuters",
-  "Fox News",
-]);
+/** Only tech-native mastheads—do not treat Reuters/BBC/etc. as “tech desk” by outlet alone. */
+const TECH_NATIVE_OUTLETS = new Set<PreferredSourceName>(["TechCrunch", "The Verge", "Engadget"]);
 
 function haystackFor(candidate: TrendCandidate) {
   return normalizeHeadline(
     [candidate.topic, candidate.normalizedTopic, ...(candidate.sampleHeadlines ?? [])].filter(Boolean).join(" "),
   );
+}
+
+const LOCAL_OUTLETS = new Set<PreferredSourceName>([
+  "The San Francisco Standard",
+  "Mission Local",
+  "San Francisco Chronicle",
+]);
+
+/** Higher = stronger Bay Area / SF relevance for ranking (does not change desk classification). */
+export function topicBayAreaAffinityScore(candidate: TrendCandidate): number {
+  const raw = [candidate.topic, candidate.normalizedTopic, ...(candidate.sampleHeadlines ?? [])].join(" ").toLowerCase();
+  let score = 0;
+  if (
+    /\b(san francisco|\bsf\b|bay area|silicon valley|oakland|berkeley|alameda|marin|san mateo county|san jose|palo alto|menlo park|mountain view|sunnyvale|redwood city|cupertino|fremont|peninsula|east bay|north bay|tenderloin|mission district|caltrain|muni|\bbart\b|transbay|golden gate)\b/.test(
+      raw,
+    )
+  ) {
+    score += 44;
+  }
+  for (const s of candidate.signalSources ?? []) {
+    if (LOCAL_OUTLETS.has(s)) score += 26;
+  }
+  return score;
+}
+
+/** Cross-outlet buzz + high-salience global / breaking patterns (still grounded in sources). */
+export function topicMajorGlobalAffinityScore(candidate: TrendCandidate): number {
+  const text = haystackFor(candidate).toLowerCase();
+  let score = 0;
+  if (
+    /\b(war|invasion|ceasefire|nato|pentagon|earthquake|tsunami|hurricane|tornado|pandemic|outbreak|hostages|evacuation|nuclear test|missile strike|magnitude\s*\d)\b/.test(
+      text,
+    )
+  ) {
+    score += 78;
+  }
+  if (
+    /\b(supreme court|white house|united nations|security council|federal reserve|interest rates|currency crisis|stock market crash|prime minister)\b/.test(
+      text,
+    )
+  ) {
+    score += 48;
+  }
+  score += Math.min((candidate.signalCount ?? 0) * 17, 75);
+  return score;
+}
+
+/** Obvious tech-industry signal beyond desk routing. */
+export function topicTechBeatScore(candidate: TrendCandidate): number {
+  const text = haystackFor(candidate);
+  if (
+    /\b(ai|artificial intelligence|machine learning|llm|openai|anthropic|gemini|gpt|nvidia|gpu|chip|semiconductor|datacenter|cloud|saas|cyber|ransomware|startup|venture|series [a-z]|ipo|acquires|acquisition|layoffs)\b/i.test(
+      text,
+    )
+  ) {
+    return 30;
+  }
+  return 0;
 }
 
 /**
@@ -106,6 +156,10 @@ export function classifyEditorialCategory(candidate: TrendCandidate): EditorialC
   if (candidate.editorialCategory) return candidate.editorialCategory;
 
   const text = haystackFor(candidate);
+  const headBlob = [candidate.topic, candidate.normalizedTopic, ...(candidate.sampleHeadlines ?? [])]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 
   if (
     /\b(series\s+[a-z]|ipo|spac|valuation|acquisition|merger|investment|investors|venture|funding|raised\s+\$|raises\s+\$|seed\s+round|growth\s+round)\b/.test(
@@ -119,7 +173,13 @@ export function classifyEditorialCategory(candidate: TrendCandidate): EditorialC
     return "Transit";
   }
 
-  if (/\b(mayor|supervisor|ballot|housing\s+element|board\s+of\s+supervisors|city\s+council|ordinance|policy|election)\b/.test(text)) {
+  if (
+    /\b(mayor|supervisor|ballot|housing\s+element|board\s+of\s+supervisors|city\s+council|ordinance|policy|election|attorney general|redistricting|supreme court|governor|state legislature|federal court|indictment|impeachment)\b/.test(
+      text,
+    ) ||
+    /\b(attorney general|redistricting|supreme court|governor|state legislature|federal court|indictment|impeachment)\b/.test(headBlob) ||
+    /\b\w+\s+ag\s+/i.test(headBlob)
+  ) {
     return "Civics";
   }
 
@@ -136,7 +196,7 @@ export function classifyEditorialCategory(candidate: TrendCandidate): EditorialC
 
   const techSignals =
     /\b(ai|machine learning|llm|gpu|chip|software|cloud|saas|cyber|startup|founder|venture|tech)\b/.test(text) ||
-    (candidate.signalSources ?? []).some((s) => TECH_SOURCES.has(s));
+    (candidate.signalSources ?? []).some((s) => TECH_NATIVE_OUTLETS.has(s));
 
   if (techSignals) return "Tech";
 
@@ -264,7 +324,7 @@ export function topicAlreadyPublished(candidate: TrendCandidate, existing: Exist
 }
 
 /**
- * Quota seeds for quiet desks run first; remaining buckets rank Tech signal strength highest for frequent ticks.
+ * Quota seeds for quiet desks run first. Organic topics rank by desk + Bay Area/tech affinity + major-global lift.
  */
 export function prioritizeCandidates(candidates: TrendCandidate[]): TrendCandidate[] {
   const seeds = candidates.filter((c) => c.quotaSeed);
@@ -272,8 +332,23 @@ export function prioritizeCandidates(candidates: TrendCandidate[]): TrendCandida
 
   const rank = (c: TrendCandidate) => {
     const cat = classifyEditorialCategory(c);
-    const techBoost = cat === "Tech" ? 50 : 0;
-    return techBoost + c.signalCount * 4 + Math.min((c.sampleHeadlines?.length ?? 0) * 2, 10);
+    const deskBoost =
+      cat === "Tech"
+        ? 50
+        : cat === "Funding"
+          ? 36
+          : cat === "Civics" || cat === "Transit"
+            ? 28
+            : cat === "Culture" || cat === "Food"
+              ? 22
+              : 0;
+    const base = deskBoost + c.signalCount * 4 + Math.min((c.sampleHeadlines?.length ?? 0) * 2, 10);
+    return (
+      base +
+      topicBayAreaAffinityScore(c) +
+      topicTechBeatScore(c) +
+      topicMajorGlobalAffinityScore(c)
+    );
   };
 
   organic.sort((a, b) => rank(b) - rank(a));

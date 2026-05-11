@@ -91,8 +91,8 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     ? "TARGET LENGTH: ~850–1,100 words total. Keep paragraphs tight so JSON stays valid."
     : "TARGET LENGTH: ~1,200–1,700 words. This is a magazine-style feature, not a bullet recap.";
   const entityGuide = compact
-    ? "Use [[Bracketed Terms]] for 6–10 entities drawn verbatim from sources; entities array must define each bracketed term."
-    : "Use [[Bracketed Terms]] for 10–14 entities drawn from sources; entities array must define each bracketed term.";
+    ? "Use [[Bracketed Terms]] for 8–12 entities drawn verbatim from sources; entities array must define each bracketed term."
+    : "Use [[Bracketed Terms]] for 12–18 entities drawn from sources; entities array must define each bracketed term.";
   const citationGuide = compact
     ? "citations: at most 4 objects—only for claims you explicitly support in the prose. quoteOrFact = ONE short line (≤ 160 chars)."
     : "citations: at most 6 objects—only for claims grounded in the narrative. Skip outlets you did not rely on.";
@@ -103,6 +103,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     lengthGuide,
     "Write with analytical authority, but stay strictly grounded in the provided source facts.",
     "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods unless they appear in the source packets.",
+    "AUDIENCE PRIORITY: When sources include Bay Area or Silicon Valley specifics, foreground them for SF readers. When the story is major national or global breaking news with no Bay Area material in the packets, report it clearly for impact—do not invent local color.",
     "Avoid flowery filler, clickbait, fake certainty, and hype phrases like 'shocking' or 'you won't believe'.",
     "Do not say the story is based on '200+ sources'; cite only the sources actually provided.",
     "Copyright safety: extract facts, not prose. Do not mimic source wording, sentence cadence, headline structure, or distinctive framing.",
@@ -117,6 +118,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     "### Source Notes",
     "The Dispatch leads with what happened and why readers should care now. The Context widens to history and industry dynamics. The Data Insight focuses on quantitative interpretation—ONLY when the sources supply at least TWO comparable numeric facts worth plotting. If there is nothing meaningful to chart, write analytic prose only: set dataBlocks to [] and do NOT insert any [CHART:N] tokens anywhere. When you do chart, insert [CHART:0] exactly once inside The Data Insight and ensure dataBlocks[0] matches those numbers.",
     "Use rich paragraphs; bullet lists only where density demands it.",
+    "Entity definitions must be plain-English, jargon-free, and written for non-experts; for each entity, add a short sentence explaining how the term functions in this article (not just a dictionary definition).",
     "When charts are warranted: use bar, histogram, scatter, or line. Line for time series; scatter for disconnected points.",
     "Each dataBlock needs type, title, xAxisLabel, yAxisLabel, and data.",
     "For bar/histogram use {label, value}. For scatter/line use numeric {x, y, label}.",
@@ -536,6 +538,7 @@ export async function expandContent(
 
     IMPORTANT:
     1. Use [[Bracketed Terms]] for companies, people, and technical concepts—aim for at least 10 where supported.
+    1a. Prioritize adding [[Bracketed Terms]] for reader-confusing concepts (acronyms, key mechanisms, bottlenecks, jargon), and keep each definition short and plain-English.
     2. Insert [CHART:index] ONLY when charts are listed below and the surrounding prose analyzes those exact figures—never add chart placeholders without real plotted data.
     3. Return ONLY markdown body content—no JSON, no outer headline.
 

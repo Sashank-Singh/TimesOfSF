@@ -119,6 +119,8 @@ export interface PipelineRunResult {
   failedSources: SourceAttempt[];
   published: boolean;
   postId?: string;
+  /** Final synthesized headline (for in-run dedupe snapshots). */
+  publishedHeadline?: string;
   reason?: string;
   /** True when the article was assembled from source packets without full LLM synthesis (recovery path). */
   publishedViaFallback?: boolean;

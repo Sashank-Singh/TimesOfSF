@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from "react";
-import { Article } from "../types";
+import { Article, ArticleEntity } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -34,24 +34,97 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     restDelta: 0.001
   });
 
-  const components = useMemo(() => ({
-    p: ({ children }: any) => {
-      const processText = (text: string): (string | React.ReactNode)[] => {
-        let result: (string | React.ReactNode)[] = [text];
-        
-        // Charts
-        result = result.flatMap(part => {
-          if (typeof part !== 'string') return part;
-          const chartRegex = /\[CHART:(\d+)\]/g;
-          const parts: (string | React.ReactNode)[] = [];
-          let lastIndex = 0;
-          let match;
-          while ((match = chartRegex.exec(part)) !== null) {
-            parts.push(part.slice(lastIndex, match.index));
-            const chartIdx = parseInt(match[1], 10);
-            if (article.dataBlocks?.[chartIdx]) {
-              const block = article.dataBlocks[chartIdx];
-              if (block.title && Array.isArray(block.data)) {
+  const chartTokensPresent = content.includes("[CHART:");
+
+  const components = useMemo(() => {
+    const entities: ArticleEntity[] = article.entities ?? [];
+    const dataBlocks = article.dataBlocks ?? [];
+
+    const isAlphaNum = (ch: string) => /[A-Za-z0-9]/.test(ch);
+
+    // Fallback highlight: when the LLM doesn't insert [[Entity]] markers in bodyMarkdown,
+    // still highlight entity names if they appear verbatim in the prose.
+    const autoHighlightEntities = (text: string): (string | React.ReactNode)[] => {
+      const usable: ArticleEntity[] = entities
+        .filter((e): e is ArticleEntity => !!e?.name && !!e?.definition)
+        .filter((e) => e.name.trim().length >= 3);
+
+      if (usable.length === 0) return [text];
+
+      const textLower = text.toLowerCase();
+      type Match = { start: number; end: number; entity: ArticleEntity };
+      const matches: Match[] = [];
+
+      for (const entity of usable) {
+        const needleLower = entity.name.toLowerCase();
+        if (!needleLower.trim()) continue;
+
+        let idx = 0;
+        while (idx < textLower.length) {
+          const found = textLower.indexOf(needleLower, idx);
+          if (found < 0) break;
+
+          const start = found;
+          const end = found + needleLower.length;
+
+          const before = start > 0 ? text[start - 1] : "";
+          const after = end < text.length ? text[end] : "";
+
+          // Avoid highlighting inside larger alphanumeric tokens.
+          if ((start > 0 && isAlphaNum(before)) || (end < text.length && isAlphaNum(after))) {
+            idx = end;
+            continue;
+          }
+
+          matches.push({ start, end, entity });
+          idx = end;
+        }
+      }
+
+      if (matches.length === 0) return [text];
+
+      // Sort by earliest match; for ties prefer longer matches.
+      matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+
+      const nodes: (string | React.ReactNode)[] = [];
+      let cursor = 0;
+      let lastEnd = 0;
+
+      for (const m of matches) {
+        if (m.start < lastEnd) continue;
+        if (cursor < m.start) nodes.push(text.slice(cursor, m.start));
+        nodes.push(
+          <EntityHighlight
+            key={`entity-auto-${m.entity.name}-${m.start}`}
+            name={m.entity.name}
+            definition={m.entity.definition}
+          />,
+        );
+        cursor = m.end;
+        lastEnd = m.end;
+      }
+
+      if (cursor < text.length) nodes.push(text.slice(cursor));
+      return nodes;
+    };
+
+    return {
+      p: ({ children }: any) => {
+        const processText = (text: string): (string | React.ReactNode)[] => {
+          let result: (string | React.ReactNode)[] = [text];
+
+          // Charts
+          result = result.flatMap((part) => {
+            if (typeof part !== "string") return part;
+            const chartRegex = /\[CHART:(\d+)\]/g;
+            const parts: (string | React.ReactNode)[] = [];
+            let lastIndex = 0;
+            let match;
+            while ((match = chartRegex.exec(part)) !== null) {
+              parts.push(part.slice(lastIndex, match.index));
+              const chartIdx = parseInt(match[1], 10);
+              const block = dataBlocks[chartIdx];
+              if (block && block.title && Array.isArray(block.data)) {
                 parts.push(
                   <DataVisChart
                     key={`chart-${chartIdx}`}
@@ -60,49 +133,89 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                     xAxisLabel={block.xAxisLabel}
                     yAxisLabel={block.yAxisLabel}
                     data={block.data}
-                  />
+                  />,
                 );
               }
+              lastIndex = chartRegex.lastIndex;
             }
-            lastIndex = chartRegex.lastIndex;
-          }
-          parts.push(part.slice(lastIndex));
-          return parts;
+            parts.push(part.slice(lastIndex));
+            return parts;
+          });
+
+          // Entities
+          result = result.flatMap((part) => {
+            if (typeof part !== "string") return part;
+
+            const entityRegex = /\[\[(.*?)\]\]/g;
+            const parts: (string | React.ReactNode)[] = [];
+            let lastIndex = 0;
+            let match;
+            let foundExplicit = false;
+            let insertedExplicit = false;
+
+            while ((match = entityRegex.exec(part)) !== null) {
+              foundExplicit = true;
+              parts.push(part.slice(lastIndex, match.index));
+              const entityName = match[1];
+              const entityData = entities.find((e) => e?.name?.toLowerCase() === entityName?.toLowerCase());
+              if (entityData?.name && entityData?.definition) {
+                parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
+                insertedExplicit = true;
+              } else {
+                parts.push(entityName);
+              }
+              lastIndex = entityRegex.lastIndex;
+            }
+
+            // Fallback if no explicit [[...]] markers were present in this string chunk.
+            if (!foundExplicit || !insertedExplicit) return autoHighlightEntities(part);
+
+            parts.push(part.slice(lastIndex));
+            return parts;
+          });
+
+          return result;
+        };
+
+        const finalChildren = React.Children.toArray(children).flatMap((node) => {
+          if (typeof node === "string") return processText(node);
+          return node;
         });
 
-        // Entities
-        result = result.flatMap(part => {
-          if (typeof part !== 'string') return part;
-          const entityRegex = /\[\[(.*?)\]\]/g;
-          const parts: (string | React.ReactNode)[] = [];
-          let lastIndex = 0;
-          let match;
-          while ((match = entityRegex.exec(part)) !== null) {
-            parts.push(part.slice(lastIndex, match.index));
-            const entityName = match[1];
-            const entityData = article.entities?.find(e => e?.name?.toLowerCase() === entityName?.toLowerCase());
-            if (entityData?.name && entityData?.definition) {
-              parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
-            } else {
-              parts.push(entityName);
-            }
-            lastIndex = entityRegex.lastIndex;
-          }
-          parts.push(part.slice(lastIndex));
-          return parts;
-        });
+        return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
+      },
 
-        return result;
-      };
+      // If the model omitted [CHART:n] placeholders, still render charts beneath "The Data Insight" heading.
+      h3: ({ children }: any) => {
+        const headingText = React.Children.toArray(children)
+          .map((c) => (typeof c === "string" ? c : ""))
+          .join("");
 
-      const finalChildren = React.Children.toArray(children).flatMap(node => {
-        if (typeof node === 'string') return processText(node);
-        return node;
-      });
+        const normalized = headingText.toLowerCase().replace(/\s+/g, " ").trim();
+        const isDataInsightHeading = normalized.includes("the data insight");
 
-      return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
-    }
-  }), [article]);
+        return (
+          <>
+            <h3>{children}</h3>
+            {isDataInsightHeading && dataBlocks.length > 0 && !chartTokensPresent && (
+              <div className="mt-6">
+                {dataBlocks.map((block, idx) => (
+                  <DataVisChart
+                    key={`auto-chart-${idx}`}
+                    title={block.title}
+                    type={block.type}
+                    xAxisLabel={block.xAxisLabel}
+                    yAxisLabel={block.yAxisLabel}
+                    data={block.data}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        );
+      },
+    };
+  }, [article, content, chartTokensPresent]);
 
   return (
     <motion.div

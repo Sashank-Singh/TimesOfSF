@@ -169,7 +169,7 @@ export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAx
       initial={{ opacity: 0, scale: 0.98 }}
       whileInView={{ opacity: 1, scale: 1 }}
       viewport={{ once: true }}
-      className="my-24 clear-both p-8 md:p-10 border-t-2 border-b-2 border-ink bg-ink/[0.02] not-prose relative"
+      className="my-16 clear-both p-8 md:p-10 border border-accent/25 bg-paper/80 backdrop-blur-sm not-prose relative shadow-[0_18px_60px_rgba(0,0,0,0.10)]"
     >
       <div className="flex flex-col gap-1 mb-10 relative">
         <div className="flex items-center gap-2">
@@ -179,7 +179,7 @@ export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAx
         <h4 className="text-2xl font-black tracking-tighter leading-tight max-w-xl italic serif">{title}</h4>
       </div>
       
-      <div className="h-72 w-full relative">
+      <div className="h-80 md:h-96 w-full relative">
         <ResponsiveContainer width="100%" height="100%">
           {renderChart()}
         </ResponsiveContainer>
