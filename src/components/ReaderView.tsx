@@ -7,6 +7,7 @@ import { formatPublishedTimestamp, cn } from "../lib/utils";
 import { DEFAULT_IMAGE } from "../services/newsService";
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
+import { lookupGlossaryDefinition } from "../lib/glossary";
 
 import { expandArticle } from "../services/newsService";
 
@@ -46,8 +47,12 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     // still highlight entity names if they appear verbatim in the prose.
     const autoHighlightEntities = (text: string): (string | React.ReactNode)[] => {
       const usable: ArticleEntity[] = entities
-        .filter((e): e is ArticleEntity => !!e?.name && !!e?.definition)
-        .filter((e) => e.name.trim().length >= 3);
+        .filter((e): e is ArticleEntity => !!e?.name)
+        .map((e) => {
+          const def = e.definition?.trim() || lookupGlossaryDefinition(e.name);
+          return { name: e.name, definition: def } as ArticleEntity;
+        })
+        .filter((e) => !!e.definition && e.name.trim().length >= 3);
 
       if (usable.length === 0) return [text];
 
@@ -158,8 +163,19 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
               parts.push(part.slice(lastIndex, match.index));
               const entityName = match[1];
               const entityData = entities.find((e) => e?.name?.toLowerCase() === entityName?.toLowerCase());
-              if (entityData?.name && entityData?.definition) {
-                parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
+              const explicitDefinition = entityData?.definition?.trim();
+              const fallbackDefinition = !explicitDefinition ? lookupGlossaryDefinition(entityName) : "";
+              const resolvedDefinition = explicitDefinition || fallbackDefinition;
+              const resolvedName = entityData?.name || entityName;
+
+              if (resolvedDefinition) {
+                parts.push(
+                  <EntityHighlight
+                    key={`entity-${entityName}-${match.index}`}
+                    name={resolvedName}
+                    definition={resolvedDefinition}
+                  />,
+                );
                 insertedExplicit = true;
               } else {
                 parts.push(entityName);

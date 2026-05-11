@@ -7,7 +7,17 @@ interface EntityHighlightProps {
   definition: string;
 }
 
+/** Strip noise (e.g. "?" filler, empty strings) so we don't show meaningless tooltips. */
+function normalizeDefinition(raw: string | undefined | null): string {
+  if (typeof raw !== "string") return "";
+  const cleaned = raw.trim();
+  if (!cleaned) return "";
+  if (/^[?!.\-—–]+$/.test(cleaned)) return "";
+  return cleaned;
+}
+
 export function EntityHighlight({ name, definition }: EntityHighlightProps) {
+  const cleanDefinition = normalizeDefinition(definition);
   const [showTooltip, setShowTooltip] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 320, arrowLeft: 0 });
   const anchorRef = useRef<HTMLSpanElement>(null);
@@ -60,6 +70,11 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
     }, 120); // Grace period to prevent flicker
   };
 
+  // If no real definition, render the word plainly (no fake "?" tooltip).
+  if (!cleanDefinition) {
+    return <>{name}</>;
+  }
+
   return (
     <span className="relative inline">
       <span
@@ -102,7 +117,7 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
                   <span className="opacity-40">What it means</span>
                 </div>
                 <p className="text-[14px] leading-relaxed text-ink/85 font-sans not-italic">
-                  {definition}
+                  {cleanDefinition}
                 </p>
               </div>
               
