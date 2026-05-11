@@ -92,6 +92,21 @@ function jaccard(a: string[], b: string[]) {
   return intersection / union;
 }
 
+/** Matching tokens from the start until the first mismatch (order-sensitive). */
+function longestCommonPrefixTokenLength(a: string[], b: string[]) {
+  let i = 0;
+  const n = Math.min(a.length, b.length);
+  while (i < n && a[i] === b[i]) i += 1;
+  return i;
+}
+
+/** Jaccard on the first `maxTokens` headline tokens (catches wire rewrites that only change the tail). */
+function prefixTokenJaccard(a: string[], b: string[], maxTokens: number) {
+  const pa = a.slice(0, maxTokens);
+  const pb = b.slice(0, maxTokens);
+  return jaccard(pa, pb);
+}
+
 function simhash(tokens: string[]) {
   const vector = Array.from({ length: 64 }, () => 0);
   for (const token of tokens) {
@@ -217,6 +232,11 @@ export function findDuplicateStory(
     const existingSourceUrls = getExistingSourceUrls(post);
     const sharedSourceUrl = candidate.sourceUrls.find((url) => existingSourceUrls.includes(url));
     const titleSimilarity = jaccard(candidateTokens, existingTokens);
+    const prefixSim = prefixTokenJaccard(candidateTokens, existingTokens, 12);
+    const lcpLen = longestCommonPrefixTokenLength(candidateTokens, existingTokens);
+    const minLen = Math.min(candidateTokens.length, existingTokens.length);
+    const longSharedPrefix =
+      minLen >= 6 && lcpLen >= Math.min(6, Math.floor(minLen * 0.65)) && titleSimilarity >= 0.55;
     const entityOverlap = candidateEntities.length && existingEntities.length
       ? candidateEntities.filter((entity) => existingEntities.includes(entity)).length /
         Math.min(candidateEntities.length, existingEntities.length)
@@ -229,8 +249,19 @@ export function findDuplicateStory(
     if ((post.headlineHash ?? post.headline_hash) === candidate.headlineHash) {
       return { post, reason: "same normalized headline hash", fingerprint: candidate };
     }
-    if (titleSimilarity >= 0.72) {
+    // Full-headline Jaccard: 0.63 catches same story with a different last word or two (e.g. wire rewrites).
+    if (titleSimilarity >= 0.63) {
       return { post, reason: `headline similarity ${(titleSimilarity * 100).toFixed(0)}%`, fingerprint: candidate };
+    }
+    if (prefixSim >= 0.78 && minLen >= 5) {
+      return { post, reason: `headline prefix similarity ${(prefixSim * 100).toFixed(0)}%`, fingerprint: candidate };
+    }
+    if (longSharedPrefix) {
+      return {
+        post,
+        reason: `long shared headline prefix (${lcpLen} tokens) with ${(titleSimilarity * 100).toFixed(0)}% token overlap`,
+        fingerprint: candidate,
+      };
     }
     if (distance <= 8 && entityOverlap > 0) {
       return { post, reason: "near-identical story fingerprint", fingerprint: candidate };

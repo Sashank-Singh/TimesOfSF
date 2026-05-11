@@ -311,6 +311,7 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
       failedSources,
       published: true,
       postId: postId?.toString(),
+      publishedHeadline: post.headline,
     };
     await completeRun(published);
     return published;
@@ -489,10 +490,11 @@ export async function runPipeline(options?: RunPipelineOptions) {
         results.push(res);
         if (res.published) {
           processedTopics.push(targetLower);
+          const headlineForDedupe = res.publishedHeadline ?? target.topic;
           existingSnapshots.push({
             id: res.postId,
             topic: target.topic,
-            headline: target.topic,
+            headline: headlineForDedupe,
             category: target.editorialCategory ?? classifyEditorialCategory(target),
             sourceUrls: res.successfulSources.map((source) => source.canonicalUrl || source.articleUrl),
             credits: res.successfulSources.map((source) => ({
