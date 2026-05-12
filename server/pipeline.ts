@@ -82,7 +82,7 @@ function ngrams(text: string, size = 8) {
   return grams;
 }
 
-function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
+export function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
   const generated = ngrams(generatedText);
   if (!generated.size) return null;
 
@@ -100,7 +100,7 @@ function findCopyrightRisk(generatedText: string, sources: SourceExtraction[]) {
 }
 
 /** Hero image only from the quoted / primary story when possible—never a random successful fetch. */
-function pickHeroImageFromSources(
+export function pickHeroImageFromSources(
   sources: SourceExtraction[],
   topic: TrendCandidate,
 ): { url?: string; credit?: string } {

@@ -53,6 +53,22 @@ const llmProvider = readOptionalProvider();
 
 const port = readOptionalInt("PORT", 8787);
 
+function readOwnerAdminUiPath(): string | undefined {
+  const raw = process.env.OWNER_ADMIN_UI_PATH?.trim();
+  if (!raw) return undefined;
+  if (!raw.startsWith("/")) {
+    throw new Error("OWNER_ADMIN_UI_PATH must start with / (e.g. /ingest-secret-abc/article)");
+  }
+  if (raw.includes("..") || raw.includes("?") || raw.includes("#")) {
+    throw new Error("OWNER_ADMIN_UI_PATH must be a simple path without .. ? or #");
+  }
+  const normalized = raw.replace(/\/+$/, "") || "/";
+  if (normalized === "/") {
+    throw new Error("OWNER_ADMIN_UI_PATH cannot be /; use an unguessable path.");
+  }
+  return normalized;
+}
+
 /** Public base URL: set APP_URL explicitly, or use Coolify's COOLIFY_URL / COOLIFY_FQDN (first if comma-separated). */
 function readPublicAppUrl(forPort: number) {
   const explicit = (process.env.APP_URL ?? process.env.COOLIFY_URL)?.split(",")[0]?.trim();
@@ -64,6 +80,13 @@ function readPublicAppUrl(forPort: number) {
     return u.replace(/\/+$/, "");
   }
   return `http://localhost:${forPort}`;
+}
+
+/** Browser origins allowed to call this API (split deploy). Empty = reflect any origin (cors origin: true). */
+function readCorsAllowedOrigins(): string[] {
+  const raw = process.env.CORS_ALLOWED_ORIGINS?.trim();
+  if (!raw) return [];
+  return [...new Set(raw.split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean))];
 }
 
 export const config = {
@@ -96,6 +119,13 @@ export const config = {
   pipelineCoalesceMs: readOptionalInt("PIPELINE_COALESCE_MS", 7 * 60 * 1000),
   /** Optional shared secret for GET /api/cron/pipeline?secret=… (UptimeRobot / Coolify scheduled tasks / GitHub Actions). */
   cronSecret: process.env.CRON_SECRET,
+  /** Same secret as CLI admin; required for POST /api/admin/article-from-url */
+  ownerCliSecret: process.env.OWNER_CLI_SECRET?.trim() || undefined,
+  /**
+   * Secret path for the owner-only HTML form (e.g. `/ingest-7f3a9c2d1e8b/article`).
+   * If unset, no GET UI is registered — use CLI or POST with curl only.
+   */
+  ownerAdminUiPath: readOwnerAdminUiPath(),
   minSuccessfulSources: readOptionalInt("MIN_SUCCESSFUL_SOURCES", 2),
   sourceTimeoutMs: readOptionalInt("SOURCE_TIMEOUT_MS", 15000),
   trendLimit: readOptionalInt("TREND_LIMIT", 20),
@@ -108,6 +138,8 @@ export const config = {
   copyrightOverlapGramThreshold: readOptionalInt("COPYRIGHT_OVERLAP_GRAM_THRESHOLD", 7),
   /** Primary synthesis: overlap count / min(set sizes) threshold. Default 0.12 (was 0.08). */
   copyrightOverlapRatioThreshold: readOptionalFloat("COPYRIGHT_OVERLAP_RATIO_THRESHOLD", 0.12),
+  /** If non-empty, only these origins get CORS headers (use when static site is on another domain). */
+  corsAllowedOrigins: readCorsAllowedOrigins(),
 };
 
 export function isProduction() {
