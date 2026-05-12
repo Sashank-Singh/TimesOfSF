@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from "react";
+import { useState, useRef, useLayoutEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
 
@@ -16,100 +16,105 @@ function normalizeDefinition(raw: string | undefined | null): string {
   return cleaned;
 }
 
+const GUTTER = 16;
+
 export function EntityHighlight({ name, definition }: EntityHighlightProps) {
   const cleanDefinition = normalizeDefinition(definition);
   const [showTooltip, setShowTooltip] = useState(false);
-  const [coords, setCoords] = useState({ top: 0, left: 0, width: 320, arrowLeft: 0 });
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 320, arrowLeft: 0, above: true });
   const anchorRef = useRef<HTMLSpanElement>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const updatePosition = useCallback(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+
+    const rect = anchor.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const tooltipWidth = Math.min(360, viewportWidth - GUTTER * 2);
+
+    // Horizontal — center on anchor, clamped to viewport
+    let left = rect.left + rect.width / 2 - tooltipWidth / 2;
+    if (left < GUTTER) left = GUTTER;
+    else if (left + tooltipWidth > viewportWidth - GUTTER) left = viewportWidth - GUTTER - tooltipWidth;
+    const arrowLeft = rect.left + rect.width / 2 - left;
+
+    // Vertical — prefer above, fall back to below
+    const tooltipHeight = tooltipRef.current?.offsetHeight ?? 180;
+    const above = rect.top - GUTTER >= tooltipHeight || rect.top >= window.innerHeight - rect.bottom;
+
+    setCoords({
+      top: above ? rect.top - GUTTER : rect.bottom + GUTTER,
+      left,
+      width: tooltipWidth,
+      arrowLeft,
+      above,
+    });
+  }, []);
 
   useLayoutEffect(() => {
-    if (showTooltip && anchorRef.current) {
-      const updatePosition = () => {
-        if (!anchorRef.current) return;
-        const rect = anchorRef.current.getBoundingClientRect();
-        const viewportWidth = window.innerWidth;
-        const gutter = 20;
-        const tooltipWidth = Math.min(360, viewportWidth - gutter * 2);
-        
-        let left = rect.left + (rect.width / 2) - (tooltipWidth / 2);
-        if (left < gutter) {
-          left = gutter;
-        } else if (left + tooltipWidth > viewportWidth - gutter) {
-          left = viewportWidth - gutter - tooltipWidth;
-        }
+    if (!showTooltip) return;
+    // Wait one frame so the tooltip DOM node is present for measurement
+    const raf = requestAnimationFrame(() => updatePosition());
+    window.addEventListener("scroll", updatePosition, { capture: true, passive: true });
+    window.addEventListener("resize", updatePosition, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", updatePosition, { capture: true });
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [showTooltip, updatePosition]);
 
-        const arrowLeft = (rect.left + rect.width / 2) - left;
-
-        setCoords({
-          top: Math.max(20, rect.top - 10),
-          left: left,
-          width: tooltipWidth,
-          arrowLeft: arrowLeft
-        });
-      };
-
-      updatePosition();
-      window.addEventListener('scroll', updatePosition, true);
-      window.addEventListener('resize', updatePosition);
-      return () => {
-        window.removeEventListener('scroll', updatePosition, true);
-        window.removeEventListener('resize', updatePosition);
-      };
-    }
-  }, [showTooltip]);
-
-  const handleEnter = () => {
+  const show = useCallback(() => {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setShowTooltip(true);
-  };
+  }, []);
 
-  const handleLeave = () => {
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(false);
-    }, 120); // Grace period to prevent flicker
-  };
+  const hide = useCallback(() => {
+    timeoutRef.current = setTimeout(() => setShowTooltip(false), 120);
+  }, []);
 
-  // If no real definition, render the word plainly (no fake "?" tooltip).
-  if (!cleanDefinition) {
-    return <>{name}</>;
-  }
+  // No real definition — render as plain text with no interaction
+  if (!cleanDefinition) return <>{name}</>;
 
   return (
     <span className="relative inline">
       <span
         ref={anchorRef}
-        onMouseEnter={handleEnter}
-        onMouseLeave={handleLeave}
+        onMouseEnter={show}
+        onMouseLeave={hide}
         onClick={(e) => {
           e.stopPropagation();
-          setShowTooltip(!showTooltip);
+          setShowTooltip((v) => !v);
         }}
         className="cursor-help inline-flex leading-none items-baseline border-b border-accent/60 bg-accent/[0.06] px-1.5 py-0.5 rounded-sm font-semibold text-accent/90 transition-all hover:bg-accent/[0.12] hover:border-accent/90 select-none"
       >
         {name}
       </span>
-      
-      {showTooltip && createPortal(
+
+      {createPortal(
         <AnimatePresence>
-          <motion.div
-            role="tooltip"
-            initial={{ opacity: 0, y: 10, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 5, scale: 0.98 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-            onMouseEnter={handleEnter}
-            onMouseLeave={handleLeave}
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              position: "fixed",
-              top: `${coords.top}px`,
-              left: `${coords.left}px`,
-              width: `${coords.width}px`,
-              transform: "translateY(-100%)",
-            }}
-            className="bg-paper border border-ink/10 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] p-4 pointer-events-auto max-h-[45vh] overflow-auto"
-          >
+          {showTooltip && (
+            <motion.div
+              ref={tooltipRef}
+              role="tooltip"
+              initial={{ opacity: 0, y: coords.above ? -6 : 6, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: coords.above ? -6 : 6, scale: 0.97 }}
+              transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
+              onMouseEnter={show}
+              onMouseLeave={hide}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "fixed",
+                top: coords.above ? `${coords.top}px` : "auto",
+                bottom: coords.above ? "auto" : `${window.innerHeight - coords.top}px`,
+                left: `${coords.left}px`,
+                width: `${coords.width}px`,
+              }}
+              className="z-50 bg-paper border border-ink/10 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] p-4 pointer-events-auto max-h-[45vh] overflow-auto"
+            >
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest font-black text-accent">
                   <span>{name}</span>
@@ -120,18 +125,27 @@ export function EntityHighlight({ name, definition }: EntityHighlightProps) {
                   {cleanDefinition}
                 </p>
               </div>
-              
-              <div 
+
+              <div
                 style={{ left: `${coords.arrowLeft}px` }}
-                className="absolute top-full -translate-x-1/2 w-0 h-0 border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent border-t-ink/10" 
+                className={`absolute ${coords.above ? "top-full" : "bottom-full"} -translate-x-1/2 w-0 h-0
+                  ${coords.above
+                    ? "border-l-[8px] border-r-[8px] border-t-[8px] border-l-transparent border-r-transparent border-t-ink/10"
+                    : "border-l-[8px] border-r-[8px] border-b-[8px] border-l-transparent border-r-transparent border-b-ink/10"
+                  }`}
               />
-              <div 
+              <div
                 style={{ left: `${coords.arrowLeft}px` }}
-                className="absolute top-full -translate-x-1/2 w-0 h-0 border-l-[7px] border-r-[7px] border-t-[7px] border-l-transparent border-r-transparent border-t-paper mt-[-1px]" 
+                className={`absolute ${coords.above ? "top-full" : "bottom-full"} -translate-x-1/2 w-0 h-0
+                  ${coords.above
+                    ? "border-l-[7px] border-r-[7px] border-t-[7px] border-l-transparent border-r-transparent border-t-paper mt-[-1px]"
+                    : "border-l-[7px] border-r-[7px] border-b-[7px] border-l-transparent border-r-transparent border-b-paper mb-[-1px]"
+                  }`}
               />
-          </motion.div>
+            </motion.div>
+          )}
         </AnimatePresence>,
-        document.body
+        document.body,
       )}
     </span>
   );

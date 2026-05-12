@@ -165,51 +165,43 @@ function dbPostToArticle(post: any): Article {
 }
 
 export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
-  try {
-    const res = await fetch(`${getApiBase()}/api/posts`);
-    if (!res.ok) {
-      if (!import.meta.env.DEV && res.status === 404) {
-        console.warn(
-          "[Times of SF] GET /api/posts returned 404. This hostname is probably not your Coolify Node app (static host only). Point www DNS/proxy to the same service that runs Express, or set VITE_API_URL to your API origin and CORS_ALLOWED_ORIGINS on the API.",
-        );
-      }
-      return [];
-    }
-    const posts = await res.json();
-    if (!Array.isArray(posts) || posts.length === 0) return [];
-    
-    const articles = posts.map(dbPostToArticle);
-    
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      return articles.filter(a => 
-        a.title.toLowerCase().includes(q) || 
-        a.content.toLowerCase().includes(q) || 
-        a.excerpt.toLowerCase().includes(q)
+  const res = await fetch(`${getApiBase()}/api/posts`);
+  if (!res.ok) {
+    if (!import.meta.env.DEV && res.status === 404) {
+      console.warn(
+        "[Times of SF] GET /api/posts returned 404. This hostname is probably not your Coolify Node app (static host only). Point www DNS/proxy to the same service that runs Express, or set VITE_API_URL to your API origin and CORS_ALLOWED_ORIGINS on the API.",
       );
     }
-    
-    return articles;
-  } catch {
-    return [];
+    throw new Error(`API returned ${res.status} for /api/posts`);
   }
+  const posts = await res.json();
+  if (!Array.isArray(posts)) return [];
+
+  const articles = posts.map(dbPostToArticle);
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    return articles.filter(a =>
+      a.title.toLowerCase().includes(q) ||
+      a.content.toLowerCase().includes(q) ||
+      a.excerpt.toLowerCase().includes(q),
+    );
+  }
+
+  return articles;
 }
 
 export async function fetchEvents(): Promise<EventInfo[]> {
-  try {
-    const res = await fetch(`${getApiBase()}/api/events`);
-    if (!res.ok) {
-      if (!import.meta.env.DEV && res.status === 404) {
-        console.warn(
-          "[Times of SF] GET /api/events returned 404 — same cause as /api/posts (see fetchArticles warning).",
-        );
-      }
-      return [];
+  const res = await fetch(`${getApiBase()}/api/events`);
+  if (!res.ok) {
+    if (!import.meta.env.DEV && res.status === 404) {
+      console.warn(
+        "[Times of SF] GET /api/events returned 404 — same cause as /api/posts (see fetchArticles warning).",
+      );
     }
-    return await res.json();
-  } catch {
-    return [];
+    throw new Error(`API returned ${res.status} for /api/events`);
   }
+  return await res.json();
 }
 
 export async function expandArticle(id: string): Promise<string | null> {
