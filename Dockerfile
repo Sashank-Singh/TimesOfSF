@@ -8,6 +8,8 @@ ENV SKIP_NEWS_PLEASE_POSTINSTALL=1
 ENV DISABLE_NEWS_PLEASE=true
 
 COPY package.json package-lock.json ./
+# postinstall runs during npm ci; script must exist before COPY . .
+COPY scripts/postinstall-newsplease.mjs scripts/postinstall-newsplease.mjs
 RUN npm ci
 
 COPY . .
