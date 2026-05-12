@@ -290,11 +290,11 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   {article.category}
                   <span className="w-8 md:w-12 h-[1px] bg-accent/20" />
                </div>
-               <h1 className="text-4xl sm:text-5xl md:text-7xl font-black leading-[0.95] tracking-tight mb-8 md:mb-12">
+               <h1 id="article-headline" className="text-4xl sm:text-5xl md:text-7xl font-black leading-[0.95] tracking-tight mb-8 md:mb-12">
                   {article.title}
                </h1>
                <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
-                <span className="italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
+                <span className="article-lead italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
                   <div className="flex flex-col items-center gap-1 font-mono uppercase tracking-[0.1em]">
                     <span className="flex items-center gap-4">
                       <span>By {article.author}</span>
@@ -336,7 +336,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                       </p>
                       
                       {article.tldr && (
-                        <ul className="space-y-4">
+                        <ul className="tldr-answer-engine space-y-4">
                           <li className="flex gap-4">
                             <div className="shrink-0 pt-1">
                               <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest px-2 py-1 bg-accent/5 rounded-sm">The Stakes</span>

@@ -20,7 +20,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
 
   if (featured) {
     return (
-      <motion.div 
+      <motion.article
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         className="group cursor-pointer border-b-2 border-ink pb-12 mb-12"
@@ -80,12 +80,12 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
             </div>
           </div>
         </div>
-      </motion.div>
+      </motion.article>
     );
   }
 
   return (
-    <motion.div 
+    <motion.article 
       initial={{ opacity: 0, y: 15 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
@@ -149,6 +149,6 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           </button>
         </div>
       </div>
-    </motion.div>
+    </motion.article>
   );
 }
