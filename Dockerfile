@@ -2,6 +2,11 @@
 # Skips Python/news-please in the image (RSS/HTML fallback only); set SKIP_NEWS_PLEASE_POSTINSTALL=0 only if you extend the image with Python yourself.
 FROM node:22-bookworm-slim
 
+# Coolify expects curl or wget in the image for Docker-based health checks.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 ENV SKIP_NEWS_PLEASE_POSTINSTALL=1
@@ -21,6 +26,6 @@ ENV PORT=8787
 EXPOSE 8787
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD sh -c 'curl -fsS "http://127.0.0.1:${PORT:-8787}/health" >/dev/null || exit 1'
 
 CMD ["npm", "run", "server:start"]
