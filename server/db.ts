@@ -110,7 +110,7 @@ export async function fetchLatestPipelineRunCreatedAt(): Promise<Date | null> {
   return Number.isFinite(d.getTime()) ? d : null;
 }
 
-/** Lightweight snapshot for /health (debugging automations on Render). */
+/** Lightweight snapshot for /health (debugging automations). */
 export async function fetchPipelineActivitySummary() {
   const runRows = await sql`
     SELECT created_at, status, published_at, reason

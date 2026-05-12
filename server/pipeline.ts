@@ -208,7 +208,7 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     .filter(s => s !== topic?.primarySource?.sourceName);
   const attempts: SourceAttempt[] = [];
   
-  // Process sources sequentially to minimize memory spikes on Render
+  // Process sources sequentially to minimize memory spikes on constrained hosts
   for (const sourceName of sourcesToTry) {
     attempts.push(await attemptSource(topic, sourceName));
   }

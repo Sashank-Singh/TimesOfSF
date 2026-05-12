@@ -2,7 +2,9 @@ import { Article, EventInfo } from "../types";
 
 export const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1501594907352-04cda38ebc29?q=80&w=2070&auto=format&fit=crop";
 
-const API_BASE = import.meta.env.VITE_API_URL || "https://timesofsf.onrender.com";
+const API_BASE =
+  import.meta.env.VITE_API_URL ??
+  (import.meta.env.DEV ? "http://localhost:8787" : "");
 
 function normalizeCredits(post: any): Article["credits"] {
   if (!Array.isArray(post.credits)) return [];
@@ -137,8 +139,8 @@ function dbPostToArticle(post: any): Article {
     credits: normalizeCredits(post),
     citations: normalizeCitations(post),
     sourceUrls: Array.isArray(post.sourceUrls) ? post.sourceUrls : [],
-    entities: post.entities || [],
-    dataBlocks: post.dataBlocks || [],
+    entities: Array.isArray(post.entities) ? post.entities : [],
+    dataBlocks: Array.isArray(post.dataBlocks) ? post.dataBlocks : [],
   };
 }
 

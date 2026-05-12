@@ -28,7 +28,7 @@ function toArray<T>(value: T | T[] | undefined): T[] {
 async function fetchFeedXml(url: string) {
   const response = await fetch(url, {
     signal: AbortSignal.timeout(config.sourceTimeoutMs),
-    headers: { "user-agent": "TimesOfSFBot/1.1 (+https://timesofsf.onrender.com)" },
+    headers: { "user-agent": `TimesOfSFBot/1.1 (+${config.appUrl})` },
   });
   if (!response.ok) throw new Error(`RSS fetch failed ${response.status}`);
   return response.text();
