@@ -1,11 +1,11 @@
-# Production image: Express API + Vite static (Coolify / Docker)
+# Production image: Express API + Vite static (Coolify / Docker).
+# Skips Python/news-please in the image (RSS/HTML fallback only); set SKIP_NEWS_PLEASE_POSTINSTALL=0 only if you extend the image with Python yourself.
 FROM node:22-bookworm-slim
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 python3-venv python3-pip \
-  && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
+
+ENV SKIP_NEWS_PLEASE_POSTINSTALL=1
+ENV DISABLE_NEWS_PLEASE=true
 
 COPY package.json package-lock.json ./
 RUN npm ci
