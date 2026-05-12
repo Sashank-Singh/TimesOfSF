@@ -20,9 +20,19 @@ function readOptionalInt(name: string, fallback: number) {
 }
 
 function readOptionalProvider(): LlmProvider {
-  const raw = process.env.LLM_PROVIDER?.toLowerCase();
+  const raw = process.env.LLM_PROVIDER?.toLowerCase().trim();
   if (raw === "gemini") return "gemini";
-  return "fireworks";
+  if (raw === "fireworks") return "fireworks";
+
+  const hasFw = Boolean(process.env.FIREWORKS_API_KEY?.trim());
+  const hasGem = Boolean(process.env.GEMINI_API_KEY?.trim());
+  if (hasFw && !hasGem) return "fireworks";
+  if (hasGem && !hasFw) return "gemini";
+  if (hasFw && hasGem) return "fireworks";
+
+  throw new Error(
+    "Configure the LLM: set FIREWORKS_API_KEY and/or GEMINI_API_KEY, or set LLM_PROVIDER=gemini|fireworks with the matching key.",
+  );
 }
 
 function readProviderApiKey(provider: LlmProvider) {
