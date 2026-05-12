@@ -2,12 +2,29 @@ import { Article, EventInfo } from "../types";
 
 export const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1501594907352-04cda38ebc29?q=80&w=2070&auto=format&fit=crop";
 
-/** Same-origin in production when unset (Coolify: one container serves `/` + `/api`). */
-const API_BASE = (() => {
-  const fromEnv = import.meta.env.VITE_API_URL?.trim();
-  if (fromEnv) return fromEnv.replace(/\/+$/, "");
-  return import.meta.env.DEV ? "http://localhost:8787" : "";
-})();
+/** Vite build-time API origin (may be stale or same as the page). Resolved at fetch time via getApiBase(). */
+const VITE_API_URL_RAW = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "") ?? "";
+
+/**
+ * Base URL for `/api/*` calls. Prefer same-origin relative URLs when the page and API share a host
+ * (Coolify single service) so CORS and mis-set VITE_API_URL cannot break the site.
+ */
+export function getApiBase(): string {
+  if (import.meta.env.DEV) {
+    return VITE_API_URL_RAW || "http://localhost:8787";
+  }
+  const raw = VITE_API_URL_RAW;
+  if (!raw) return "";
+  if (/onrender\.com/i.test(raw)) return "";
+  if (typeof window !== "undefined" && window.location?.origin) {
+    try {
+      if (new URL(raw).origin === window.location.origin) return "";
+    } catch {
+      return "";
+    }
+  }
+  return raw;
+}
 
 function normalizeCredits(post: any): Article["credits"] {
   if (!Array.isArray(post.credits)) return [];
@@ -149,7 +166,7 @@ function dbPostToArticle(post: any): Article {
 
 export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/posts`);
+    const res = await fetch(`${getApiBase()}/api/posts`);
     if (!res.ok) return [];
     const posts = await res.json();
     if (!Array.isArray(posts) || posts.length === 0) return [];
@@ -173,7 +190,7 @@ export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
 
 export async function fetchEvents(): Promise<EventInfo[]> {
   try {
-    const res = await fetch(`${API_BASE}/api/events`);
+    const res = await fetch(`${getApiBase()}/api/events`);
     if (!res.ok) return [];
     return await res.json();
   } catch {
@@ -183,7 +200,7 @@ export async function fetchEvents(): Promise<EventInfo[]> {
 
 export async function expandArticle(id: string): Promise<string | null> {
   try {
-    const res = await fetch(`${API_BASE}/api/posts/${id}/expand`, { method: "POST" });
+    const res = await fetch(`${getApiBase()}/api/posts/${id}/expand`, { method: "POST" });
     if (!res.ok) return null;
     const data = await res.json();
     return data.content;
