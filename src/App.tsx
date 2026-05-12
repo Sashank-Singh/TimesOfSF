@@ -127,15 +127,16 @@ export default function App() {
 
   useEffect(() => {
     const TODAY = new Date();
-    const SEVEN_DAYS_AGO = new Date(TODAY);
-    SEVEN_DAYS_AGO.setDate(TODAY.getDate() - 8); // 8 days for buffer
+    const RECENT_CUTOFF = new Date(TODAY);
+    // Show posts from the last 90 days (API already returns newest first, limit 50).
+    // A tight 8-day window hid everything when the pipeline had not run recently.
+    RECENT_CUTOFF.setDate(TODAY.getDate() - 90);
 
     let result = articles;
-    
-    // Filter by timestamp (within ~8 days)
-    result = result.filter(a => {
+
+    result = result.filter((a) => {
       const articleDate = new Date(a.date);
-      return articleDate >= SEVEN_DAYS_AGO;
+      return articleDate >= RECENT_CUTOFF;
     });
 
     // Sort by date (newest first)
