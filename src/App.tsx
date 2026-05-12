@@ -27,6 +27,7 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [apiError, setApiError] = useState(false);
 
   useEffect(() => {
     const p = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -51,6 +52,7 @@ export default function App() {
         setArticles(data);
         setFilteredArticles(data);
         setEvents(eventsData);
+        setApiError(false);
 
         // Deep linking: check URL for articleId (slug or id)
         const params = new URLSearchParams(window.location.search);
@@ -69,7 +71,10 @@ export default function App() {
           }
         }
       } catch (err) {
-        if (active) toast.error("Could not reach live news wire.");
+        if (active) {
+          setApiError(true);
+          toast.error("Could not reach live news wire.");
+        }
       } finally {
         clearTimeout(safetyTimeout);
         if (active) setLoading(false);
@@ -500,7 +505,14 @@ export default function App() {
             <div className="flex-grow">
               {filteredArticles.length === 0 ? (
                 <div className="py-32 text-center">
-                  <p className="text-xl italic font-serif text-ink/40">No stories available. The agent pipeline is currently fetching real data.</p>
+                  {apiError ? (
+                    <>
+                      <p className="text-xl italic font-serif text-ink/40">Could not reach the news wire. The server may be restarting.</p>
+                      <p className="mt-2 text-sm font-mono text-ink/30">If this persists, check that the API service is running and VITE_API_URL is correctly configured.</p>
+                    </>
+                  ) : !loading ? (
+                    <p className="text-xl italic font-serif text-ink/40">No stories yet. The agent pipeline generates new articles every few minutes.</p>
+                  ) : null}
                   <button 
                     onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
                     className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
