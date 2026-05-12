@@ -91,8 +91,8 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     ? "TARGET LENGTH: ~850–1,100 words total. Keep paragraphs tight so JSON stays valid."
     : "TARGET LENGTH: ~1,200–1,700 words. This is a magazine-style feature, not a bullet recap.";
   const entityGuide = compact
-    ? "Use [[Bracketed Terms]] for 8–12 entities drawn verbatim from sources; entities array must define each bracketed term."
-    : "Use [[Bracketed Terms]] for 12–18 entities drawn from sources; entities array must define each bracketed term.";
+    ? "MANDATORY: Use [[Bracketed Terms]] for at least 8 entities. The entities array must define each bracketed term."
+    : "MANDATORY: Use [[Bracketed Terms]] for at least 12 entities. The entities array must define each bracketed term.";
   const citationGuide = compact
     ? "citations: at most 4 objects—only for claims you explicitly support in the prose. quoteOrFact = ONE short line (≤ 160 chars)."
     : "citations: at most 6 objects—only for claims grounded in the narrative. Skip outlets you did not rely on.";
@@ -106,7 +106,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     "AUDIENCE PRIORITY: When sources include Bay Area or Silicon Valley specifics, foreground them for SF readers. When the story is major national or global breaking news with no Bay Area material in the packets, report it clearly for impact—do not invent local color.",
     "Avoid flowery filler, clickbait, fake certainty, and hype phrases like 'shocking' or 'you won't believe'.",
     "Do not say the story is based on '200+ sources'; cite only the sources actually provided.",
-    "Copyright safety: extract facts, not prose. Do not mimic source wording, sentence cadence, headline structure, or distinctive framing.",
+    "COPYRIGHT SAFETY — EXTREME PARAPHRASING REQUIRED: You must rewrite every fact from scratch in your own words. Read a sentence from the source, then look away and write it from memory using completely different sentence structure and vocabulary. NEVER reuse a sequence of 5+ consecutive words that appears in any source. Change the grammatical subject, restructure clauses, use synonyms, and vary sentence openings. If our automated copyright check finds any 8-word phrase matching a source, the article is REJECTED and discarded permanently. This is the single most important rule — it overrides style, length, and formatting goals.",
     "Every factual claim must map to a source credit. Use inline citations like (Reuters) after specific factual claims.",
     "Separate confirmed facts from analysis. Label uncertainty plainly.",
     "Prefer primary documents, official statements, filings, and public data when present in the source packets.",
@@ -116,6 +116,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     "### The Data Insight: A Rigorous Analysis of the Underlying Numbers",
     "### The Horizon: Long-Term Implications and the Future Outlook",
     "### Source Notes",
+    "CRITICAL: entities and dataBlocks arrays MUST NOT be empty. If you return empty arrays the article will be rejected.",
     "The Dispatch leads with what happened and why readers should care now. The Context widens to history and industry dynamics. The Data Insight focuses on quantitative interpretation—ONLY when the sources supply at least TWO comparable numeric facts worth plotting. If there is nothing meaningful to chart, write analytic prose only: set dataBlocks to [] and do NOT insert any [CHART:N] tokens anywhere. When you do chart, insert [CHART:0] exactly once inside The Data Insight and ensure dataBlocks[0] matches those numbers.",
     "Use rich paragraphs; bullet lists only where density demands it.",
     "Entity definitions must be plain-English, jargon-free, and written for non-experts; for each entity, add a short sentence explaining how the term functions in this article (not just a dictionary definition).",
@@ -134,7 +135,7 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     citationGuide,
     entityGuide,
     "entities must be {name, definition} entries aligned with your bracketed terms.",
-    "dataBlocks must reflect statistics cited in the Data Insight section (or be an empty array if none).",
+    "dataBlocks must reflect statistics cited in the Data Insight section. When the source packets contain at least 2 comparable numeric facts, you MUST create a dataBlock with a chart. Only set dataBlocks to [] when there are truly no usable numeric facts across all sources.",
     "Include tldr with keys whyItMatters, whoIsAffected, whatIsNext.",
     `Source packets (sanitized JSON): ${JSON.stringify(sanitizeSourcesForPrompt(sources, compact))}`,
   ].join("\n");
@@ -491,15 +492,267 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
   return normalizePost(topic, parsed);
 }
 
+/**
+ * Extract entities from an article body using a focused, cheap LLM call.
+ * Returns entities array or empty array on failure.
+ */
+async function extractEntitiesFromBody(bodyMarkdown: string): Promise<GeneratedPost["entities"]> {
+  if (!config.fireworksApiKey) return [];
+
+  const prompt = [
+    "Extract notable entities (companies, people, products, organizations, acronyms, technical terms, named locations) from the article below.",
+    "Return a JSON array of {name, definition} objects.",
+    "Each definition must be a short plain-English sentence explaining what the entity IS in context of this article.",
+    "Include at least 8 entities. Do not include generic words like 'company', 'industry', 'data'.",
+    "",
+    "Article:",
+    bodyMarkdown.slice(0, 6000),
+  ].join("\n");
+
+  try {
+    const response = await fetch(`${config.fireworksBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.fireworksApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.fireworksModel,
+        messages: [
+          { role: "system", content: "Return only a valid JSON array of {name, definition} objects. Minimum 8 entries." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn("Entity extraction LLM call failed:", response.status);
+      return [];
+    }
+
+    const data = (await response.json()) as any;
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) return [];
+
+    const parsed = parseModelJson(content, "Entity extraction") as Record<string, unknown>;
+    const raw = parsed.entities ?? parsed;
+    if (Array.isArray(raw)) {
+      const valid = raw.filter(
+        (e: unknown): e is { name: string; definition: string } =>
+          typeof e === "object" && e !== null && typeof (e as any).name === "string" && typeof (e as any).definition === "string",
+      );
+      return valid.length >= 3 ? valid : [];
+    }
+    return [];
+  } catch (err) {
+    console.warn("Entity extraction failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+/**
+ * Extract chart-worthy numeric data from an article body and source packets.
+ * Returns dataBlocks array or empty array on failure.
+ */
+async function extractChartsFromBody(
+  bodyMarkdown: string,
+  sources: SourceExtraction[],
+): Promise<GeneratedPost["dataBlocks"]> {
+  if (!config.fireworksApiKey) return [];
+
+  const sourceNumbers = sources
+    .flatMap((s) => s.facts ?? [])
+    .filter((f) => /\d/.test(f))
+    .slice(0, 10);
+
+  // Also extract number-containing lines from the Data Insight section of the body
+  const insightSection = bodyMarkdown.match(/### The Data Insight[\s\S]*?(?=###|$)/)?.[0] ?? "";
+  const bodyNumbers = insightSection
+    .split("\n")
+    .filter((line) => /\d/.test(line) && line.trim().length > 10)
+    .slice(0, 8);
+
+  if (sourceNumbers.length < 2 && bodyNumbers.length < 2) return [];
+
+  const numericContext = [
+    sourceNumbers.length > 0 ? "Numeric facts from source material:" : "",
+    ...sourceNumbers.map((f, i) => `${i + 1}. ${f}`),
+    "",
+    bodyNumbers.length > 0 ? "Number-containing lines from the Data Insight section:" : "",
+    ...bodyNumbers.map((l, i) => `${i + 1}. ${l}`),
+  ].filter(Boolean).join("\n");
+
+  const prompt = [
+    "The article below has a Data Insight section. The following numeric data was extracted:",
+    numericContext,
+    "",
+    "If at least 2 of these facts can be meaningfully compared or plotted together, return a JSON object with a single key 'dataBlocks' containing an array of chart objects.",
+    "Each chart: {type: 'bar'|'line'|'histogram'|'scatter', title, xAxisLabel, yAxisLabel, data: [{label, value}]}",
+    "If no meaningful chart is possible, return {dataBlocks: []}.",
+    "",
+    "Article body:",
+    bodyMarkdown.slice(0, 5000),
+  ].join("\n");
+
+  try {
+    const response = await fetch(`${config.fireworksBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.fireworksApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.fireworksModel,
+        messages: [
+          { role: "system", content: "Return only valid JSON with a dataBlocks array." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn("Chart extraction LLM call failed:", response.status);
+      return [];
+    }
+
+    const data = (await response.json()) as any;
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) return [];
+
+    const parsed = parseModelJson(content, "Chart extraction") as Record<string, unknown>;
+    const raw = parsed.dataBlocks ?? parsed;
+    if (Array.isArray(raw)) {
+      return raw.filter((b: unknown) => isUsableDataBlock(b)) as GeneratedPost["dataBlocks"];
+    }
+    return [];
+  } catch (err) {
+    console.warn("Chart extraction failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
+/**
+ * Insert [[Bracketed Terms]] around entity names in body text for explicit entity highlighting.
+ * Only wraps occurrences that are not already bracketed and are on word boundaries.
+ * Sorts entities longest-first to avoid partial overlaps (e.g., "OpenAI" vs "OpenAI LP").
+ */
+function insertEntityBrackets(body: string, entities: GeneratedPost["entities"]): string {
+  const sorted = [...(entities ?? [])]
+    .filter((e) => e?.name?.trim().length >= 3)
+    .sort((a, b) => b.name.length - a.name.length);
+
+  if (sorted.length === 0) return body;
+
+  // Build a pattern that matches any entity name, but skip positions inside [[...]]
+  const alreadyBracketed = /\[\[([^\]]+)\]\]/g;
+  const bracketedRanges: Array<[number, number]> = [];
+  let m: RegExpExecArray | null;
+  while ((m = alreadyBracketed.exec(body)) !== null) {
+    bracketedRanges.push([m.index, m.index + m[0].length]);
+  }
+
+  const isInsideBrackets = (pos: number) =>
+    bracketedRanges.some(([start, end]) => pos >= start && pos < end);
+
+  const isWordBoundary = (text: string, pos: number) => {
+    const before = pos > 0 ? text[pos - 1] : " ";
+    const after = pos < text.length ? text[pos] : " ";
+    const alphaNum = /[A-Za-z0-9_]/;
+    return !alphaNum.test(before) && !alphaNum.test(after);
+  };
+
+  // Replace each entity occurrence, working from longest to shortest,
+  // and track already-replaced ranges to avoid double-wrapping.
+  const replacedRanges: Array<[number, number]> = [];
+  const isAlreadyReplaced = (pos: number, end: number) =>
+    replacedRanges.some(([rs, re]) => pos < re && end > rs);
+
+  let result = body;
+  for (const entity of sorted) {
+    const needle = entity.name.trim();
+    if (!needle) continue;
+
+    const needleLower = needle.toLowerCase();
+    const resultLower = result.toLowerCase();
+    let idx = 0;
+
+    while (idx < result.length) {
+      const found = resultLower.indexOf(needleLower, idx);
+      if (found < 0) break;
+
+      const end = found + needle.length;
+
+      // Skip if inside existing [[...]], or already replaced by a longer entity
+      if (!isInsideBrackets(found) && !isAlreadyReplaced(found, end) && isWordBoundary(result, found) && isWordBoundary(result, end)) {
+        const before = result.slice(0, found);
+        const after = result.slice(end);
+        result = `${before}[[${result.slice(found, end)}]]${after}`;
+        replacedRanges.push([found, end + needle.length + 4]); // account for added [[ ]]
+        idx = end + 4; // skip past the inserted brackets
+      } else {
+        idx = end;
+      }
+    }
+  }
+
+  return result;
+}
+
 export async function synthesizePost(topic: TrendCandidate, sources: SourceExtraction[]): Promise<GeneratedPost> {
   const modes: PromptMode[] = ["full", "compact"];
   let lastErr: unknown;
   for (const mode of modes) {
     try {
+      let post: GeneratedPost;
       if (config.llmProvider === "fireworks") {
-        return finalizePostForPublish(await synthesizeWithFireworks(topic, sources, mode));
+        post = await synthesizeWithFireworks(topic, sources, mode);
+      } else {
+        post = await synthesizeWithGemini(topic, sources, mode);
       }
-      return finalizePostForPublish(await synthesizeWithGemini(topic, sources, mode));
+
+      const entityCount = (post.entities ?? []).length;
+      const chartCount = (post.dataBlocks ?? []).length;
+
+      // If entities are too few, do a focused entity extraction pass
+      if (entityCount < 3) {
+        console.log(`[synthesizePost] Entities low (${entityCount}), attempting entity enrichment...`);
+        const extraEntities = await extractEntitiesFromBody(post.bodyMarkdown ?? "");
+        if (extraEntities.length > 0) {
+          // Merge: keep existing entities, add new ones that don't overlap
+          const existingNames = new Set((post.entities ?? []).map((e) => e.name.toLowerCase()));
+          const merged = [...(post.entities ?? [])];
+          for (const e of extraEntities) {
+            if (!existingNames.has(e.name.toLowerCase())) {
+              merged.push(e);
+              existingNames.add(e.name.toLowerCase());
+            }
+          }
+          post = { ...post, entities: merged };
+          console.log(`[synthesizePost] Entities enriched: ${entityCount} → ${merged.length}`);
+        }
+      }
+
+      // If body has no [[Bracketed Terms]] but entities exist, insert them server-side
+      if (post.bodyMarkdown && (post.entities ?? []).length >= 3 && !post.bodyMarkdown.includes("[[")) {
+        post = { ...post, bodyMarkdown: insertEntityBrackets(post.bodyMarkdown, post.entities ?? []) };
+        console.log(`[synthesizePost] Inserted [[bracketed terms]] into body from ${(post.entities ?? []).length} entities`);
+      }
+
+      // If charts are missing but we have a Data Insight section, attempt extraction
+      if (chartCount === 0 && (post.bodyMarkdown ?? "").includes("### The Data Insight")) {
+        console.log(`[synthesizePost] No charts but Data Insight section exists, attempting chart enrichment...`);
+        const extraCharts = await extractChartsFromBody(post.bodyMarkdown ?? "", sources);
+        if (extraCharts.length > 0) {
+          post = { ...post, dataBlocks: extraCharts };
+          console.log(`[synthesizePost] Charts enriched: 0 → ${extraCharts.length}`);
+        }
+      }
+
+      return finalizePostForPublish(post);
     } catch (err) {
       lastErr = err;
       console.warn(`synthesizePost (${mode}) failed:`, err instanceof Error ? err.message : err);

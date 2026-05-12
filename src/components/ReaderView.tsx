@@ -184,7 +184,10 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             }
 
             // Fallback if no explicit [[...]] markers were present in this string chunk.
-            if (!foundExplicit || !insertedExplicit) return autoHighlightEntities(part);
+            // When markers ARE present, the while loop already handled them
+            // (pushing EntityHighlight for known entities or plain text for unknown ones).
+            // Don't fall back — autoHighlightEntities doesn't strip [[ brackets ]].
+            if (!foundExplicit) return autoHighlightEntities(part);
 
             parts.push(part.slice(lastIndex));
             return parts;
