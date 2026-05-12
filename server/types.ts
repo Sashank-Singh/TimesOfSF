@@ -17,7 +17,9 @@ export type PreferredSourceName =
   | "Engadget"
   | "Official Document"
   | "Company Statement"
-  | "Public Data";
+  | "Public Data"
+  /** Owner-submitted article URL (not from RSS pipeline). */
+  | "Submitted Link";
 
 export type SourceType =
   | "reporting"

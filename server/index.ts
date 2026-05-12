@@ -3,6 +3,7 @@ import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
 import { config, isProduction } from "./config";
 import { ensureSchema, fetchPipelineActivitySummary, fetchRecentPosts, fetchRun } from "./db";
 import { loadInngestState } from "./inngest";
@@ -20,8 +21,83 @@ async function start() {
   const inngestState = await loadInngestState();
 
   const app = express();
-  app.use(cors());
+  const corsOrigins = config.corsAllowedOrigins;
+  app.use(
+    cors(
+      corsOrigins.length > 0
+        ? {
+            origin(origin, callback) {
+              if (!origin) {
+                callback(null, true);
+                return;
+              }
+              if (corsOrigins.includes(origin)) {
+                callback(null, true);
+                return;
+              }
+              callback(null, false);
+            },
+            methods: ["GET", "HEAD", "POST", "OPTIONS"],
+            allowedHeaders: ["Content-Type", "Authorization"],
+            maxAge: 86_400,
+          }
+        : { origin: true },
+    ),
+  );
   app.use(express.json());
+
+  app.post("/api/admin/article-from-url", async (req, res) => {
+    if (!config.ownerCliSecret) {
+      res.status(503).json({
+        ok: false,
+        error: "Set OWNER_CLI_SECRET in server environment to enable this endpoint.",
+      });
+      return;
+    }
+    const { assertArticleFromUrlAuthorized, publishArticleFromSubmittedUrl } = await import("./articleFromUrl");
+    const secret = typeof req.body?.secret === "string" ? req.body.secret : "";
+    if (!assertArticleFromUrlAuthorized(secret)) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!url) {
+      res.status(400).json({ ok: false, error: "Missing url" });
+      return;
+    }
+    const rawCat = typeof req.body?.editorialCategory === "string" ? req.body.editorialCategory.trim() : "";
+    const { ALL_EDITORIAL_CATEGORIES } = await import("./types");
+    type Cat = (typeof ALL_EDITORIAL_CATEGORIES)[number];
+    const editorialCategory = ALL_EDITORIAL_CATEGORIES.includes(rawCat as Cat) ? (rawCat as Cat) : undefined;
+    try {
+      const result = await publishArticleFromSubmittedUrl(url, { editorialCategory });
+      let slug: string | undefined;
+      if (result.published && result.postId) {
+        const { fetchPostById } = await import("./db");
+        const row = await fetchPostById(result.postId);
+        slug = row?.slug as string | undefined;
+      }
+      res.status(result.published ? 201 : 422).json({ ok: result.published, result, slug });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed";
+      if (message.includes("Invalid URL")) {
+        res.status(400).json({ ok: false, error: message });
+        return;
+      }
+      console.error("article-from-url:", error);
+      res.status(500).json({ ok: false, error: message });
+    }
+  });
+
+  if (config.ownerAdminUiPath && config.ownerCliSecret) {
+    app.get(config.ownerAdminUiPath, (_req, res) => {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+      res.setHeader("Cache-Control", "no-store, private");
+      res.type("html").send(buildOwnerArticleIngestPageHtml());
+    });
+  } else if (config.ownerAdminUiPath && !config.ownerCliSecret) {
+    console.warn("OWNER_ADMIN_UI_PATH is set but OWNER_CLI_SECRET is missing — owner ingest HTML page is disabled.");
+  }
 
   app.get("/health", async (_req, res) => {
     try {
@@ -228,6 +304,9 @@ async function start() {
 
   app.listen(config.port, "0.0.0.0", () => {
     console.log(`Server listening on http://0.0.0.0:${config.port}`);
+    if (config.ownerAdminUiPath && config.ownerCliSecret) {
+      console.log(`Owner article ingest UI: GET ${config.ownerAdminUiPath} (same origin as this server)`);
+    }
     if (!inngestState.enabled && inngestState.reason) {
       console.log(`Inngest inactive: ${inngestState.reason}`);
     }

@@ -187,6 +187,16 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
     reliabilityTier: "known_publisher",
     allowedUse: "headline_summary_link",
   },
+  {
+    id: "submitted-link",
+    name: "Submitted Link",
+    aliases: [],
+    feeds: [],
+    type: "reporting",
+    reliabilityTier: "unverified",
+    allowedUse: "headline_summary_link",
+    trendEligible: false,
+  },
 ];
 
 export const TREND_FEEDS = SOURCE_REGISTRY.flatMap((source) =>

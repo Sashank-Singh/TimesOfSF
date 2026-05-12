@@ -28,6 +28,13 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   useEffect(() => {
+    const p = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (p === "/admin/from-link") {
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
+
+  useEffect(() => {
     let active = true;
     
     async function init() {
