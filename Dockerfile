@@ -18,6 +18,7 @@ COPY scripts/postinstall-newsplease.mjs scripts/postinstall-newsplease.mjs
 RUN npm ci
 
 COPY . .
+# Same-origin: do not pass VITE_API_URL at image build (Coolify build args); Express serves /api + dist on one host.
 RUN npm run build
 
 ENV NODE_ENV=production

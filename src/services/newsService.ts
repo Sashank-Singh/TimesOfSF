@@ -2,9 +2,12 @@ import { Article, EventInfo } from "../types";
 
 export const DEFAULT_IMAGE = "https://images.unsplash.com/photo-1501594907352-04cda38ebc29?q=80&w=2070&auto=format&fit=crop";
 
-const API_BASE =
-  import.meta.env.VITE_API_URL ??
-  (import.meta.env.DEV ? "http://localhost:8787" : "");
+/** Same-origin in production when unset (Coolify: one container serves `/` + `/api`). */
+const API_BASE = (() => {
+  const fromEnv = import.meta.env.VITE_API_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  return import.meta.env.DEV ? "http://localhost:8787" : "";
+})();
 
 function normalizeCredits(post: any): Article["credits"] {
   if (!Array.isArray(post.credits)) return [];

@@ -12,6 +12,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "lint:server": "tsc -p tsconfig.server.json --noEmit",
+    "admin:articles": "tsx scripts/admin-articles.ts",
     "postinstall": "node scripts/postinstall-newsplease.mjs"
   },
   "dependencies": {
