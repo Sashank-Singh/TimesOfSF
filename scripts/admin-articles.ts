@@ -7,7 +7,7 @@
  *
  * Usage: npm run admin:articles
  *
- * Commands: number = open article in $EDITOR, r = refresh list, q = quit
+ * Commands: number = open article in nano, r = refresh list, q = quit
  * After editing: preview + optional diff, then y saves to Neon (live site reads this DB).
  */
 import * as readline from "node:readline/promises";
@@ -109,8 +109,7 @@ function previewMarkdown(body: string, maxLines = 45) {
 }
 
 function openEditor(filePath: string) {
-  const editor = process.env.VISUAL || process.env.EDITOR || "nano";
-  const r = spawnSync(editor, [filePath], { stdio: "inherit" });
+  const r = spawnSync("nano", [filePath], { stdio: "inherit" });
   if (r.error) throw r.error;
   if (r.status !== 0 && r.status !== null) {
     console.error("Editor exited with code " + r.status + " — not saving.");
@@ -197,7 +196,7 @@ async function main() {
       const line = (i + 1).toString().padStart(2, " ") + "  id=" + p.id + "  " + d + "  " + p.headline.slice(0, 72);
       console.log(line.length > 120 ? line.slice(0, 117) + "…" : line);
     });
-    console.log("\nCommands: 1–" + posts.length + " = edit in " + (process.env.EDITOR || "nano") + "  |  d3 = delete #3  |  r = refresh  |  q = quit\n");
+    console.log("\nCommands: 1–" + posts.length + " = edit in nano  |  d3 = delete #3  |  r = refresh  |  q = quit\n");
   };
 
   printList();
