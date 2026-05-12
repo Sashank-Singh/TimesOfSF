@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
+import { SeoHead } from './components/SeoHead';
 
 export default function App() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -182,7 +183,7 @@ export default function App() {
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const shareUrl = `${window.location.origin}${window.location.pathname}?id=${article.id}`;
+    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${encodeURIComponent(article.slug)}`;
     if (navigator.share) {
       navigator.share({
         title: article.title,
@@ -198,6 +199,15 @@ export default function App() {
   };
 
   const categories = ['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'];
+
+  const seoMode =
+    selectedArticle != null
+      ? "article"
+      : selectedCategory === "Events"
+        ? "events"
+        : selectedCategory && selectedCategory !== "Bookmarks"
+          ? "category"
+          : "home";
 
   if (loading) {
     return (
@@ -243,6 +253,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-paper text-ink selection:bg-black selection:text-white overflow-x-hidden">
+      <SeoHead
+        article={selectedArticle}
+        articles={articles}
+        mode={seoMode}
+        categoryLabel={selectedCategory}
+      />
+      <a
+        href="#main-stream"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[300] focus:rounded focus:bg-ink focus:px-4 focus:py-2 focus:text-paper focus:outline-none"
+      >
+        Skip to main content
+      </a>
       <Toaster position="top-center" richColors />
       
       {/* Live Dispatch Ticker */}
@@ -466,10 +488,10 @@ export default function App() {
       </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12 lg:py-16">
+      <main id="main-stream" tabIndex={-1} className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12 lg:py-16 outline-none">
         {selectedCategory === 'Events' ? (
           <div className="max-w-3xl mx-auto">
-            <h1 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h1>
+            <h2 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h2>
             <EventsPanel events={events} />
           </div>
         ) : (
@@ -520,6 +542,50 @@ export default function App() {
           </div>
         )}
 
+        <section
+          className="mt-24 max-w-3xl mx-auto border-t border-ink/10 pt-16 px-1"
+          aria-labelledby="faq-heading"
+        >
+          <h2 id="faq-heading" className="text-lg font-black uppercase tracking-tight mb-8">
+            About this publication
+          </h2>
+          <dl className="space-y-8 text-sm text-ink/75 leading-relaxed">
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                What is Times of San Francisco?
+              </dt>
+              <dd>
+                {`Times of San Francisco (Times of SF) is a San Francisco–focused news reader. Stories combine RSS and web sources with editorial synthesis so readers get context, citations, and clear limits on what is confirmed versus inferred.`}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                How are articles produced?
+              </dt>
+              <dd>
+                An automated pipeline ingests public sources (feeds and pages), deduplicates overlapping coverage, and
+                uses an LLM only after source text is available. Published pieces include credits and links back to
+                originals where possible.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                Which topics does Times of SF cover?
+              </dt>
+              <dd>
+                Regular sections include civics, culture, tech, funding, transit, food, and local events—centered on
+                San Francisco and immediate civic relevance.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                Where is Times of SF based?
+              </dt>
+              <dd>Editorial focus and datelines are San Francisco, California, United States.</dd>
+            </div>
+          </dl>
+        </section>
+
         {/* Footer */}
         <footer className="mt-32 pt-16 border-t-2 border-ink pb-24 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
           <div className="lg:col-span-2">
@@ -566,10 +632,10 @@ export default function App() {
         article={selectedArticle} 
         onClose={() => {
           setSelectedArticle(null);
-          // Clear URL parameter on close
           const url = new URL(window.location.href);
-          url.searchParams.delete('id');
-          window.history.replaceState({}, '', url);
+          url.searchParams.delete("id");
+          url.searchParams.delete("articleId");
+          window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
         }} 
         isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
         onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}

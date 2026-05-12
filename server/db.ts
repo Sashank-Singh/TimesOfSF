@@ -206,6 +206,16 @@ export async function completeRun(result: PipelineRunResult) {
   `;
 }
 
+export async function fetchPostSlugDatesForSitemap(limit = 2000) {
+  return sql`
+    SELECT slug, created_at AS "publishedAt"
+    FROM generated_posts
+    WHERE slug IS NOT NULL AND TRIM(slug) <> ''
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+}
+
 export async function fetchRecentPosts(limit = 1000) {
   return sql`
     SELECT

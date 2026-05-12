@@ -5,7 +5,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
 import { config, isProduction } from "./config";
-import { ensureSchema, fetchPipelineActivitySummary, fetchRecentPosts, fetchRun } from "./db";
+import {
+  ensureSchema,
+  fetchPipelineActivitySummary,
+  fetchPostSlugDatesForSitemap,
+  fetchRecentPosts,
+  fetchRun,
+} from "./db";
 import { loadInngestState } from "./inngest";
 import { getPipelineCronHealth } from "./pipelineSchedule";
 import { runPipeline } from "./pipeline";
@@ -14,6 +20,22 @@ function shouldRunInternalPipelineTimer(inngestEnabled: boolean): boolean {
   if (config.disableInternalPipelineCron) return false;
   if (inngestEnabled && !config.allowInternalCronWithInngest) return false;
   return true;
+}
+
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function sitemapLastmod(value: unknown): string {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const s = typeof value === "string" ? value : "";
+  if (!s) return new Date().toISOString().slice(0, 10);
+  return s.slice(0, 10);
 }
 
 async function start() {
@@ -173,6 +195,50 @@ async function start() {
         ok: false,
         error: error instanceof Error ? error.message : "health failed",
       });
+    }
+  });
+
+  app.get("/robots.txt", (_req, res) => {
+    const base = config.appUrl.replace(/\/+$/, "");
+    res
+      .type("text/plain")
+      .send(
+        [
+          "User-agent: *",
+          "Allow: /",
+          "Disallow: /api/",
+          "",
+          `Sitemap: ${base}/sitemap.xml`,
+          "",
+        ].join("\n"),
+      );
+  });
+
+  app.get("/sitemap.xml", async (_req, res) => {
+    try {
+      const rows = (await fetchPostSlugDatesForSitemap(2000)) as {
+        slug: string;
+        publishedAt: string | Date | null;
+      }[];
+      const base = config.appUrl.replace(/\/+$/, "");
+      const home = `  <url><loc>${escapeXml(`${base}/`)}</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>`;
+      const articleUrls = rows
+        .filter((r) => r.slug && String(r.slug).trim())
+        .map((r) => {
+          const loc = `${base}/?articleId=${encodeURIComponent(String(r.slug).trim())}`;
+          const lastmod = sitemapLastmod(r.publishedAt);
+          return `  <url><loc>${escapeXml(loc)}</loc><lastmod>${escapeXml(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`;
+        })
+        .join("\n");
+      const body = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${home}
+${articleUrls}
+</urlset>`;
+      res.type("application/xml").send(body);
+    } catch (error) {
+      console.error("sitemap.xml:", error);
+      res.status(500).type("text/plain").send("sitemap failed");
     }
   });
 
