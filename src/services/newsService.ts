@@ -167,7 +167,14 @@ function dbPostToArticle(post: any): Article {
 export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
   try {
     const res = await fetch(`${getApiBase()}/api/posts`);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      if (!import.meta.env.DEV && res.status === 404) {
+        console.warn(
+          "[Times of SF] GET /api/posts returned 404. This hostname is probably not your Coolify Node app (static host only). Point www DNS/proxy to the same service that runs Express, or set VITE_API_URL to your API origin and CORS_ALLOWED_ORIGINS on the API.",
+        );
+      }
+      return [];
+    }
     const posts = await res.json();
     if (!Array.isArray(posts) || posts.length === 0) return [];
     
@@ -191,7 +198,14 @@ export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
 export async function fetchEvents(): Promise<EventInfo[]> {
   try {
     const res = await fetch(`${getApiBase()}/api/events`);
-    if (!res.ok) return [];
+    if (!res.ok) {
+      if (!import.meta.env.DEV && res.status === 404) {
+        console.warn(
+          "[Times of SF] GET /api/events returned 404 — same cause as /api/posts (see fetchArticles warning).",
+        );
+      }
+      return [];
+    }
     return await res.json();
   } catch {
     return [];
