@@ -391,7 +391,7 @@ async function publishEventsDigestArticle(
 export type RunPipelineOptions = {
   /**
    * When set (>0), skip if `pipeline_runs` shows an attempt newer than this window.
-   * Used by the internal timer and cron pings—not by manual `/api/pipeline/run` or Inngest.
+   * Used by scheduled automation and cron pings—not by manual `/api/pipeline/run`.
    */
   coalesceWithinMs?: number | null;
 };

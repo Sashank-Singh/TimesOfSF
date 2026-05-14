@@ -2,7 +2,7 @@
 // Computed in UTC to align with typical Inngest Cloud cron behavior.
 //
 // Supported cron shapes:
-// - Star-slash-N five-field cron (every N minutes within the hour), e.g. every 10 minutes at :00, :10, … UTC.
+// - Star-slash-N five-field cron (every N minutes within the hour), e.g. every 30 minutes at :00, :30 UTC.
 // - "0 * * * *" — start of every UTC hour.
 //
 // Other expressions return null (health still shows raw pipelineCron).

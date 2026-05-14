@@ -104,7 +104,7 @@ Full examples and comments live in `**[.env.example](.env.example)**`. Summary:
 
 ### Pipeline & scheduling
 
-Optional: `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `CRON_SECRET` (for `GET /api/cron/pipeline?secret=…`), `PIPELINE_CRON`, `DISABLE_INTERNAL_PIPELINE_CRON`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults.
+Optional: `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `CRON_SECRET` (for `GET /api/cron/pipeline?secret=…`), `PIPELINE_CRON`, `INTERNAL_PIPELINE_INTERVAL_MS`, `PIPELINE_COALESCE_MS`, `DISABLE_INTERNAL_PIPELINE_CRON`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults. Automatic article runs default to an hourly cadence, and scheduled/cron automation coalesces recent attempts so a stale 10-minute cron does not publish every tick.
 
 ### Owner-only tools
 

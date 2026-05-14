@@ -52,6 +52,8 @@ function readOptionalFloat(name: string, fallback: number) {
 const llmProvider = readOptionalProvider();
 
 const port = readOptionalInt("PORT", 8787);
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const PIPELINE_COALESCE_MS = 55 * 60 * 1000;
 
 function readOwnerAdminUiPath(): string | undefined {
   const raw = process.env.OWNER_ADMIN_UI_PATH?.trim();
@@ -103,9 +105,9 @@ export const config = {
   databaseUrl: readEnv("DATABASE_URL"),
   inngestEventKey: process.env.INNGEST_EVENT_KEY,
   inngestSigningKey: process.env.INNGEST_SIGNING_KEY,
-  pipelineCron: process.env.PIPELINE_CRON ?? "*/10 * * * *",
+  pipelineCron: process.env.PIPELINE_CRON ?? "0 * * * *",
   /** When Inngest is disabled, still tick the pipeline on this interval (external cron substitute). */
-  internalPipelineIntervalMs: readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", 10 * 60 * 1000),
+  internalPipelineIntervalMs: readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", ONE_HOUR_MS),
   disableInternalPipelineCron: process.env.DISABLE_INTERNAL_PIPELINE_CRON === "true",
   /**
    * When Inngest is enabled, the in-process `setInterval` pipeline timer is OFF by default so only Inngest cron + manual triggers run `runPipeline`.
@@ -113,10 +115,10 @@ export const config = {
    */
   allowInternalCronWithInngest: process.env.ALLOW_INTERNAL_CRON_WITH_INNGEST === "true",
   /**
-   * Internal timer + /api/cron/pipeline skip starting work if a pipeline row was created within this window.
-   * Prevents duplicate overlapping runs when both Inngest and the internal timer fire. HTTP /api/pipeline/run ignores this.
+   * Scheduled automation + /api/cron/pipeline skip starting work if a pipeline row was created within this window.
+   * Prevents duplicate or overly frequent automatic publishing attempts. Manual HTTP /api/pipeline/run ignores this.
    */
-  pipelineCoalesceMs: readOptionalInt("PIPELINE_COALESCE_MS", 7 * 60 * 1000),
+  pipelineCoalesceMs: readOptionalInt("PIPELINE_COALESCE_MS", PIPELINE_COALESCE_MS),
   /** Optional shared secret for GET /api/cron/pipeline?secret=… (UptimeRobot / Coolify scheduled tasks / GitHub Actions). */
   cronSecret: process.env.CRON_SECRET,
   /** Same secret as CLI admin; required for POST /api/admin/article-from-url */

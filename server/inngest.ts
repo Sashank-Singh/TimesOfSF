@@ -53,7 +53,8 @@ export async function loadInngestState(): Promise<InngestModuleState> {
         cron: config.pipelineCron,
       },
       async ({ step }: { step: StepTools }) => {
-        return step.run("run-news-pipeline", async () => runPipeline());
+        const coalesce = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
+        return step.run("run-news-pipeline", async () => runPipeline({ coalesceWithinMs: coalesce }));
       },
     );
 
