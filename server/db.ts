@@ -112,7 +112,7 @@ export async function saveEvents(events: Array<{title: string, url: string, date
 }
 
 export async function fetchStoredEvents() {
-  return sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 10`;
+  return sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 16`;
 }
 
 /** Latest pipeline attempt (includes rejected / empty ticks). */
