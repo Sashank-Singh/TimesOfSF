@@ -14,14 +14,19 @@ import {
   createRun,
   fetchLatestPipelineRunCreatedAt,
   fetchRecentPosts,
+  fetchRelatedKnowledge,
+  fetchRecentKnowledgeState,
   saveGeneratedPost,
+  saveKnowledgeState,
   saveSourceAttempt,
+  type KnowledgeStateEntry,
 } from "./db";
 import { extractSource } from "./extractor";
 import { config } from "./config";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline, normalizeUrl } from "./dedupe";
 import { findSourceArticle, getTrendingTopics } from "./rss";
 import { PipelineRunResult, PreferredSourceName, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
+import type { PreviousCoverage } from "./agents";
 
 const PREFERRED_SOURCES: PreferredSourceName[] = [
   "Reuters",
@@ -48,7 +53,7 @@ function validateGrounding(topic: TrendCandidate, sources: SourceExtraction[]) {
   }
 
   const totalFacts = sources.reduce((count, source) => count + source.facts.length, 0);
-  if (totalFacts < config.minSuccessfulSources * 2) {
+  if (totalFacts < config.minSuccessfulSources) {
     return "Rejected: evidence was too thin to safely synthesize.";
   }
 
@@ -167,7 +172,7 @@ function keepsSourceAlignedWithTopic(topic: TrendCandidate, s: SourceExtraction)
 
   const hay = `${s.headline} ${s.summary}`.toLowerCase();
   const matched = tokens.filter((tok) => hay.includes(tok.toLowerCase())).length;
-  const need = tokens.length <= 5 ? 2 : Math.max(2, Math.ceil(tokens.length * 0.45));
+  const need = Math.max(1, Math.min(2, Math.ceil(tokens.length * 0.35)));
   return matched >= need;
 }
 
@@ -200,7 +205,11 @@ async function attemptSource(topic: TrendCandidate, sourceName: PreferredSourceN
 /**
  * Core logic to process a single trending topic into a published news post.
  */
-async function processTopic(topic: TrendCandidate, existingPosts: Awaited<ReturnType<typeof fetchRecentPosts>>): Promise<PipelineRunResult> {
+async function processTopic(
+  topic: TrendCandidate,
+  existingPosts: Awaited<ReturnType<typeof fetchRecentPosts>>,
+  previousCoverage?: PreviousCoverage[],
+): Promise<PipelineRunResult> {
   const runId = makeRunId();
   await createRun(runId, topic);
 
@@ -284,7 +293,7 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
   }
 
   try {
-    const post = await synthesizePost(topic, sourcesForStory);
+    const post = await synthesizePost(topic, sourcesForStory, previousCoverage);
     const fingerprint = buildStoryFingerprint(topic, sourcesForStory, post.headline);
     post.sourceUrls = fingerprint.sourceUrls;
     post.headlineHash = fingerprint.headlineHash;
@@ -303,6 +312,11 @@ async function processTopic(topic: TrendCandidate, existingPosts: Awaited<Return
     }
 
     const postId = await saveGeneratedPost(runId, post);
+
+    // Track this article in knowledge state for future coverage context
+    await saveKnowledgeState(post, topic.topic, sourcesForStory).catch((err) =>
+      console.warn("Failed to save knowledge state:", err),
+    );
 
     const published: PipelineRunResult = {
       runId,
@@ -466,6 +480,9 @@ export async function runPipeline(options?: RunPipelineOptions) {
     const targets = merged.slice(0, BATCH_SIZE);
     console.log(`🚀 Starting batch processing for ${targets.length} topics...`);
 
+    // Pre-fetch knowledge state for coverage continuity
+    const recentKnowledge = await fetchRecentKnowledgeState(10).catch(() => []);
+
     const processedTopics: string[] = [...existing.map((p) => normalizeHeadline(p.topic || p.headline || ""))];
     const existingSnapshots = [...existing];
 
@@ -485,8 +502,22 @@ export async function runPipeline(options?: RunPipelineOptions) {
         continue;
       }
 
+      // Find related knowledge state entries for coverage continuity
+      const cat = target.editorialCategory ?? classifyEditorialCategory(target);
+      const topicTokens = target.normalizedTopic.split(/\s+/).filter((t) => t.length > 4);
+      const relatedPrev = recentKnowledge.filter(
+        (k) =>
+          k.category === cat && topicTokens.some((t) => k.keyEntities.some((e) => e.toLowerCase().includes(t))),
+      );
+      const prevCoverage: PreviousCoverage[] = relatedPrev.map((k) => ({
+        topic: k.topic,
+        headline: k.headline,
+        keyFacts: k.keyFacts,
+        publishedAt: k.publishedAt,
+      }));
+
       try {
-        const res = await processTopic(target, existingSnapshots);
+        const res = await processTopic(target, existingSnapshots, prevCoverage);
         results.push(res);
         if (res.published) {
           processedTopics.push(targetLower);

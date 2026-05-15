@@ -1,6 +1,6 @@
 import { neon } from "@neondatabase/serverless";
 import { config } from "./config";
-import { GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
+import { EditorialCategory, GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
 const sql = neon(config.databaseUrl);
 
@@ -78,7 +78,23 @@ export async function ensureSchema() {
         source TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
-    `
+    `,
+    sql`
+      CREATE TABLE IF NOT EXISTS knowledge_state (
+        id BIGSERIAL PRIMARY KEY,
+        category TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        headline TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        key_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        key_facts JSONB NOT NULL DEFAULT '[]'::jsonb,
+        source_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+        published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `,
+    sql`CREATE INDEX IF NOT EXISTS knowledge_state_category_idx ON knowledge_state (category, published_at DESC)`,
+    sql`CREATE INDEX IF NOT EXISTS knowledge_state_entities_gin ON knowledge_state USING GIN (key_entities)`,
   ]);
 }
 
@@ -285,8 +301,112 @@ export async function fetchPostById(id: string) {
 export async function updatePostContent(id: string, content: string) {
   const numericId = id.replace("db-", "");
   await sql`
-    UPDATE generated_posts 
+    UPDATE generated_posts
     SET body_markdown = ${content}
     WHERE id = ${numericId}
   `;
+}
+
+export type KnowledgeStateEntry = {
+  category: string;
+  topic: string;
+  headline: string;
+  slug: string;
+  keyEntities: string[];
+  keyFacts: string[];
+  sourceUrls: string[];
+  publishedAt: Date;
+};
+
+export async function saveKnowledgeState(post: GeneratedPost, topic: string, sources: SourceExtraction[]) {
+  const keyEntities = (post.entities ?? []).map((e) => e.name).slice(0, 12);
+  const keyFacts = sources
+    .flatMap((s) => s.facts ?? [])
+    .filter((f) => f.length > 20)
+    .slice(0, 8);
+  const sourceUrls = sources.map((s) => s.articleUrl).filter(Boolean);
+
+  await sql`
+    INSERT INTO knowledge_state (category, topic, headline, slug, key_entities, key_facts, source_urls)
+    VALUES (
+      ${post.editorialCategory ?? "Tech"},
+      ${topic},
+      ${post.headline},
+      ${post.slug},
+      ${JSON.stringify(keyEntities)},
+      ${JSON.stringify(keyFacts)},
+      ${JSON.stringify(sourceUrls)}
+    )
+  `;
+}
+
+export async function fetchRecentKnowledgeState(limit = 10): Promise<KnowledgeStateEntry[]> {
+  const rows = await sql`
+    SELECT category, topic, headline, slug,
+           key_entities::text as "keyEntitiesRaw",
+           key_facts::text as "keyFactsRaw",
+           source_urls::text as "sourceUrlsRaw",
+           published_at as "publishedAt"
+    FROM knowledge_state
+    ORDER BY published_at DESC
+    LIMIT ${limit}
+  `;
+
+  return rows.map((r: any) => ({
+    category: r.category,
+    topic: r.topic,
+    headline: r.headline,
+    slug: r.slug,
+    keyEntities: safeParseJson(r.keyEntitiesRaw, []),
+    keyFacts: safeParseJson(r.keyFactsRaw, []),
+    sourceUrls: safeParseJson(r.sourceUrlsRaw, []),
+    publishedAt: new Date(r.publishedAt),
+  }));
+}
+
+export async function fetchRelatedKnowledge(
+  category: EditorialCategory,
+  entityNames: string[],
+  windowDays = 7,
+): Promise<KnowledgeStateEntry[]> {
+  if (entityNames.length === 0) return [];
+
+  // Match by category + any overlapping entity name
+  const rows = await sql`
+    SELECT category, topic, headline, slug,
+           key_entities::text as "keyEntitiesRaw",
+           key_facts::text as "keyFactsRaw",
+           source_urls::text as "sourceUrlsRaw",
+           published_at as "publishedAt"
+    FROM knowledge_state
+    WHERE category = ${category}
+      AND published_at >= NOW() - INTERVAL '1 day' * ${windowDays}
+    ORDER BY published_at DESC
+    LIMIT 5
+  `;
+
+  const entries: KnowledgeStateEntry[] = rows.map((r: any) => ({
+    category: r.category,
+    topic: r.topic,
+    headline: r.headline,
+    slug: r.slug,
+    keyEntities: safeParseJson(r.keyEntitiesRaw, []),
+    keyFacts: safeParseJson(r.keyFactsRaw, []),
+    sourceUrls: safeParseJson(r.sourceUrlsRaw, []),
+    publishedAt: new Date(r.publishedAt),
+  }));
+
+  // Filter to only entries that share at least one entity with the new topic
+  const entityLower = entityNames.map((n) => n.toLowerCase());
+  return entries.filter((e) =>
+    e.keyEntities.some((ke) => entityLower.includes(ke.toLowerCase())),
+  );
+}
+
+function safeParseJson(raw: string, fallback: any): any {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }

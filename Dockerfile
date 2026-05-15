@@ -1,5 +1,5 @@
 # Production image: Express API + Vite static (Coolify / Docker).
-# Skips Python/news-please in the image (RSS/HTML fallback only); set SKIP_NEWS_PLEASE_POSTINSTALL=0 only if you extend the image with Python yourself.
+# Uses Mozilla Readability (pure JS) for full-article extraction — no Python dependency.
 FROM node:22-bookworm-slim
 
 # Coolify expects curl or wget in the image for Docker-based health checks.
@@ -9,12 +9,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-ENV SKIP_NEWS_PLEASE_POSTINSTALL=1
-ENV DISABLE_NEWS_PLEASE=true
-
 COPY package.json package-lock.json ./
-# postinstall runs during npm ci; script must exist before COPY . .
-COPY scripts/postinstall-newsplease.mjs scripts/postinstall-newsplease.mjs
 RUN npm ci
 
 COPY . .

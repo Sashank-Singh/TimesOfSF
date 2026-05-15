@@ -71,7 +71,19 @@ function parseModelJson(raw: string, context: string): unknown {
   throw new Error(`${context} — ${lastMessage}`);
 }
 
-function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: PromptMode): string {
+export interface PreviousCoverage {
+  topic: string;
+  headline: string;
+  keyFacts: string[];
+  publishedAt: Date;
+}
+
+function buildPrompt(
+  topic: TrendCandidate,
+  sources: SourceExtraction[],
+  mode: PromptMode,
+  previousCoverage?: PreviousCoverage[],
+): string {
   const desk: EditorialCategory = topic.editorialCategory ?? classifyEditorialCategory(topic);
   const deskNotes =
     desk === "Food"
@@ -137,8 +149,36 @@ function buildPrompt(topic: TrendCandidate, sources: SourceExtraction[], mode: P
     "entities must be {name, definition} entries aligned with your bracketed terms.",
     "dataBlocks must reflect statistics cited in the Data Insight section. When the source packets contain at least 2 comparable numeric facts, you MUST create a dataBlock with a chart. Only set dataBlocks to [] when there are truly no usable numeric facts across all sources.",
     "Include tldr with keys whyItMatters, whoIsAffected, whatIsNext.",
+    ...buildPreviousCoverageSection(previousCoverage),
     `Source packets (sanitized JSON): ${JSON.stringify(sanitizeSourcesForPrompt(sources, compact))}`,
   ].join("\n");
+}
+
+function buildPreviousCoverageSection(previous?: PreviousCoverage[]): string[] {
+  if (!previous || previous.length === 0) return [];
+
+  const lines: string[] = [
+    "",
+    "--- PREVIOUS COVERAGE CONTEXT ---",
+    "We recently published these related stories. Reference them naturally where relevant:",
+  ];
+
+  for (const cov of previous) {
+    const date = cov.publishedAt.toISOString().slice(0, 10);
+    lines.push(`- [${date}] ${cov.headline}`);
+    if (cov.keyFacts.length > 0) {
+      lines.push(`  Key facts: ${cov.keyFacts.slice(0, 3).join(" | ")}`);
+    }
+  }
+
+  lines.push(
+    "If this new article continues a story we've covered, open with a brief nod to our previous reporting.",
+    "Do NOT repeat entire paragraphs from prior coverage — assume readers have seen it and want an update.",
+    "--- END PREVIOUS COVERAGE ---",
+    "",
+  );
+
+  return lines;
 }
 
 function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
@@ -326,7 +366,12 @@ export function buildEventsDigestPost(events: EventInfo[]): GeneratedPost {
   };
 }
 
-async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtraction[], mode: PromptMode) {
+async function synthesizeWithGemini(
+  topic: TrendCandidate,
+  sources: SourceExtraction[],
+  mode: PromptMode,
+  previousCoverage?: PreviousCoverage[],
+) {
   if (!geminiAi) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
@@ -338,7 +383,7 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
         role: "user",
         parts: [
           {
-            text: buildPrompt(topic, sources, mode),
+            text: buildPrompt(topic, sources, mode, previousCoverage),
           },
         ],
       },
@@ -440,7 +485,12 @@ async function synthesizeWithGemini(topic: TrendCandidate, sources: SourceExtrac
   return normalizePost(topic, parsed);
 }
 
-async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExtraction[], mode: PromptMode) {
+async function synthesizeWithFireworks(
+  topic: TrendCandidate,
+  sources: SourceExtraction[],
+  mode: PromptMode,
+  previousCoverage?: PreviousCoverage[],
+) {
   if (!config.fireworksApiKey) {
     throw new Error("FIREWORKS_API_KEY is not configured.");
   }
@@ -461,7 +511,7 @@ async function synthesizeWithFireworks(topic: TrendCandidate, sources: SourceExt
         },
         {
           role: "user",
-          content: buildPrompt(topic, sources, mode),
+          content: buildPrompt(topic, sources, mode, previousCoverage),
         },
       ],
       temperature: mode === "compact" ? 0.12 : 0.2,
@@ -702,16 +752,20 @@ function insertEntityBrackets(body: string, entities: GeneratedPost["entities"])
   return result;
 }
 
-export async function synthesizePost(topic: TrendCandidate, sources: SourceExtraction[]): Promise<GeneratedPost> {
+export async function synthesizePost(
+  topic: TrendCandidate,
+  sources: SourceExtraction[],
+  previousCoverage?: PreviousCoverage[],
+): Promise<GeneratedPost> {
   const modes: PromptMode[] = ["full", "compact"];
   let lastErr: unknown;
   for (const mode of modes) {
     try {
       let post: GeneratedPost;
       if (config.llmProvider === "fireworks") {
-        post = await synthesizeWithFireworks(topic, sources, mode);
+        post = await synthesizeWithFireworks(topic, sources, mode, previousCoverage);
       } else {
-        post = await synthesizeWithGemini(topic, sources, mode);
+        post = await synthesizeWithGemini(topic, sources, mode, previousCoverage);
       }
 
       const entityCount = (post.entities ?? []).length;

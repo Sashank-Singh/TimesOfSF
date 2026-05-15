@@ -177,10 +177,10 @@ async function start() {
         pipelineActivity: activity,
         cronPingConfigured: Boolean(config.cronSecret),
         extraction: {
-          newsPleaseEnabled: !config.disableNewsPlease,
+          readabilityEnabled: !config.disableNewsPlease,
           note: config.disableNewsPlease
-            ? "DISABLE_NEWS_PLEASE=true: skipping Python extractor (typical in slim containers)."
-            : "Uses Python news-please when available; otherwise falls back to RSS headline/summary metadata.",
+            ? "DISABLE_NEWS_PLEASE=true: skipping Readability, using RSS fallback only."
+            : "Mozilla Readability (JS) for full-article extraction; RSS fallback when fetch fails.",
         },
         synthesis: {
           mode: "full_feature_only",
