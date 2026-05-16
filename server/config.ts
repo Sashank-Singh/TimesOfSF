@@ -99,7 +99,7 @@ export const config = {
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
   fireworksApiKey: process.env.FIREWORKS_API_KEY,
   fireworksBaseUrl: process.env.FIREWORKS_BASE_URL ?? "https://api.fireworks.ai/inference/v1",
-  fireworksModel: process.env.FIREWORKS_MODEL ?? "accounts/fireworks/models/llama-v3p1-8b-instruct",
+  fireworksModel: process.env.FIREWORKS_MODEL ?? "accounts/fireworks/models/deepseek-v4-pro",
   databaseUrl: readEnv("DATABASE_URL"),
   inngestEventKey: process.env.INNGEST_EVENT_KEY,
   inngestSigningKey: process.env.INNGEST_SIGNING_KEY,
