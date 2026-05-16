@@ -40,7 +40,23 @@ const PREFERRED_SOURCES: PreferredSourceName[] = [
   "Mission Local",
   "Fox News",
   "Engadget",
-  "San Francisco Chronicle"
+  "San Francisco Chronicle",
+  "VentureBeat",
+  "Wired",
+  "CNBC",
+  "Axios",
+  "GeekWire",
+  "Product Hunt",
+  "Hacker News",
+  "Y Combinator",
+  "Hugging Face",
+  "Crunchbase News",
+  "CB Insights",
+  "The Information",
+  "PitchBook News",
+  "Sifted",
+  "Fast Company",
+  "Business Insider",
 ];
 
 function makeRunId() {
