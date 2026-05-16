@@ -116,6 +116,7 @@ function buildPrompt(
     "Write with analytical authority, but stay strictly grounded in the provided source facts.",
     "CRITICAL: Do NOT invent or 'tailor' details to specific San Francisco neighborhoods unless they appear in the source packets.",
     "AUDIENCE PRIORITY: When sources include Bay Area or Silicon Valley specifics, foreground them for SF readers. When the story is major national or global breaking news with no Bay Area material in the packets, report it clearly for impact—do not invent local color.",
+    "CRITICAL: SINGLE-TOPIC DISCIPLINE — Cover ONLY the specific company, person, product, or event named in the headline topic. The source packets may contain unrelated stories about other companies, funding rounds, or people. You MUST IGNORE those unrelated entries. Do NOT mention, compare to, or list other companies or events that are not directly part of this one story. A reader should never see an article titled about Topic A that also discusses Topic B, C, and D.",
     "Avoid flowery filler, clickbait, fake certainty, and hype phrases like 'shocking' or 'you won't believe'.",
     "Do not say the story is based on '200+ sources'; cite only the sources actually provided.",
     "COPYRIGHT SAFETY — EXTREME PARAPHRASING REQUIRED: You must rewrite every fact from scratch in your own words. Read a sentence from the source, then look away and write it from memory using completely different sentence structure and vocabulary. NEVER reuse a sequence of 5+ consecutive words that appears in any source. Change the grammatical subject, restructure clauses, use synonyms, and vary sentence openings. If our automated copyright check finds any 8-word phrase matching a source, the article is REJECTED and discarded permanently. This is the single most important rule — it overrides style, length, and formatting goals.",
@@ -129,7 +130,7 @@ function buildPrompt(
     "### The Horizon: Long-Term Implications and the Future Outlook",
     "### Source Notes",
     "CRITICAL: entities and dataBlocks arrays MUST NOT be empty. If you return empty arrays the article will be rejected.",
-    "The Dispatch leads with what happened and why readers should care now. The Context widens to history and industry dynamics. The Data Insight focuses on quantitative interpretation—ONLY when the sources supply at least TWO comparable numeric facts worth plotting. If there is nothing meaningful to chart, write analytic prose only: set dataBlocks to [] and do NOT insert any [CHART:N] tokens anywhere. When you do chart, insert [CHART:0] exactly once inside The Data Insight and ensure dataBlocks[0] matches those numbers.",
+    "The Dispatch leads with what happened and why readers should care now. The Context focuses ONLY on the same specific company, person, product, or event from The Dispatch — do NOT expand into unrelated companies, sectors, or funding rounds that are not directly part of this story. The Data Insight focuses on quantitative interpretation—ONLY when the sources supply at least TWO comparable numeric facts worth plotting. If there is nothing meaningful to chart, write analytic prose only: set dataBlocks to [] and do NOT insert any [CHART:N] tokens anywhere. When you do chart, insert [CHART:0] exactly once inside The Data Insight and ensure dataBlocks[0] matches those numbers.",
     "Use rich paragraphs; bullet lists only where density demands it.",
     "Entity definitions must be plain-English, jargon-free, and written for non-experts; for each entity, add a short sentence explaining how the term functions in this article (not just a dictionary definition).",
     "NEVER emit a [[Bracketed Term]] in bodyMarkdown without a matching {name, definition} object in entities[]. Every bracketed term must have a real, non-empty definition (no placeholders, no '?', no 'TBD'). If you do not have a real definition, do NOT bracket the term.",
@@ -150,6 +151,7 @@ function buildPrompt(
     "dataBlocks must reflect statistics cited in the Data Insight section. When the source packets contain at least 2 comparable numeric facts, you MUST create a dataBlock with a chart. Only set dataBlocks to [] when there are truly no usable numeric facts across all sources.",
     "Include tldr with keys whyItMatters, whoIsAffected, whatIsNext.",
     ...buildPreviousCoverageSection(previousCoverage),
+    "WARNING: The source packets below may include entries about UNRELATED companies or events. Only use packets that directly relate to the headline topic. If a packet is about a completely different company, person, or event, IGNORE it and do not reference it in the story. One article = one topic.",
     `Source packets (sanitized JSON): ${JSON.stringify(sanitizeSourcesForPrompt(sources, compact))}`,
   ].join("\n");
 }

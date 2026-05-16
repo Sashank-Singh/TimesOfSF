@@ -24,7 +24,7 @@ import {
 import { extractSource } from "./extractor";
 import { config } from "./config";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline, normalizeUrl } from "./dedupe";
-import { findSourceArticle, getTrendingTopics } from "./rss";
+import { findSourceArticle, getTrendingTopics, scanUnprocessedFeedItems } from "./rss";
 import { PipelineRunResult, PreferredSourceName, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 import type { PreviousCoverage } from "./agents";
 
@@ -188,7 +188,8 @@ function keepsSourceAlignedWithTopic(topic: TrendCandidate, s: SourceExtraction)
 
   const hay = `${s.headline} ${s.summary}`.toLowerCase();
   const matched = tokens.filter((tok) => hay.includes(tok.toLowerCase())).length;
-  const need = Math.max(1, Math.min(2, Math.ceil(tokens.length * 0.35)));
+  // Require at least 2 significant token matches to confirm topical relevance
+  const need = Math.max(2, Math.ceil(tokens.length * 0.35));
   return matched >= need;
 }
 
@@ -488,19 +489,18 @@ export async function runPipeline(options?: RunPipelineOptions) {
   );
 
   const results: PipelineRunResult[] = [];
+  const BATCH_SIZE = 10;
+
+  // Hoisted state for both main batch and residue scan
+  const recentKnowledge = await fetchRecentKnowledgeState(10).catch(() => []);
+  const processedTopics: string[] = [...existing.map((p) => normalizeHeadline(p.topic || p.headline || ""))];
+  const existingSnapshots = [...existing];
 
   if (merged.length === 0) {
     console.log("📭 No fresh trending buckets after quotas + dedupe.");
   } else {
-    const BATCH_SIZE = 3;
     const targets = merged.slice(0, BATCH_SIZE);
     console.log(`🚀 Starting batch processing for ${targets.length} topics...`);
-
-    // Pre-fetch knowledge state for coverage continuity
-    const recentKnowledge = await fetchRecentKnowledgeState(10).catch(() => []);
-
-    const processedTopics: string[] = [...existing.map((p) => normalizeHeadline(p.topic || p.headline || ""))];
-    const existingSnapshots = [...existing];
 
     for (const target of targets) {
       const targetLower = normalizeHeadline(target.topic);
@@ -553,6 +553,59 @@ export async function runPipeline(options?: RunPipelineOptions) {
       } catch (err) {
         console.error(`Failed to process topic ${target.topic}:`, err);
       }
+    }
+  }
+
+  // --- Residue scan: after the main batch, find strong stories we missed ---
+  if (merged.length > BATCH_SIZE) {
+    const remainingCount = merged.length - BATCH_SIZE;
+    console.log(`🔍 ${remainingCount} topics didn't make the batch — scanning feeds for missed stories...`);
+    const scanned = await scanUnprocessedFeedItems(processedTopics, 6).catch(() => []);
+    const freshCandidates = scanned.filter(
+      (c) =>
+        !topicAlreadyPublished(
+          { ...c, editorialCategory: c.editorialCategory ?? classifyEditorialCategory(c) },
+          existingSummary,
+        ),
+    );
+    if (freshCandidates.length > 0) {
+      const bonusLimit = Math.min(freshCandidates.length, 5);
+      console.log(`💡 Residue scan found ${freshCandidates.length} strong candidates; processing ${bonusLimit} more...`);
+      for (const candidate of freshCandidates.slice(0, bonusLimit)) {
+        const cat = candidate.editorialCategory ?? classifyEditorialCategory(candidate);
+        const topicTokens = candidate.normalizedTopic.split(/\s+/).filter((t) => t.length > 4);
+        const relatedPrev = recentKnowledge.filter(
+          (k) => k.category === cat && topicTokens.some((t) => k.keyEntities.some((e) => e.toLowerCase().includes(t))),
+        );
+        const prevCoverage: PreviousCoverage[] = relatedPrev.map((k) => ({
+          topic: k.topic,
+          headline: k.headline,
+          keyFacts: k.keyFacts,
+          publishedAt: k.publishedAt,
+        }));
+        try {
+          const res = await processTopic(candidate, existingSnapshots, prevCoverage);
+          results.push(res);
+          if (res.published) {
+            processedTopics.push(normalizeHeadline(candidate.topic));
+            existingSnapshots.push({
+              id: res.postId,
+              topic: candidate.topic,
+              headline: res.publishedHeadline ?? candidate.topic,
+              category: cat,
+              sourceUrls: res.successfulSources.map((source) => source.canonicalUrl || source.articleUrl),
+              credits: res.successfulSources.map((source) => ({
+                sourceName: source.sourceName,
+                articleUrl: source.articleUrl,
+              })),
+            } as Awaited<ReturnType<typeof fetchRecentPosts>>[number]);
+          }
+        } catch (err) {
+          console.error(`Failed to process residue topic ${candidate.topic}:`, err);
+        }
+      }
+    } else {
+      console.log(`📭 No strong missed stories found in residue scan.`);
     }
   }
 
