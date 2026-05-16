@@ -120,37 +120,43 @@ export function findCopyrightRisk(generatedText: string, sources: SourceExtracti
   return null;
 }
 
-/** Hero image only from the quoted / primary story when possible—never a random successful fetch. */
+/** Hero image from the primary / most relevant story source — never a random licensed image. */
 export function pickHeroImageFromSources(
   sources: SourceExtraction[],
   topic: TrendCandidate,
 ): { url?: string; credit?: string } {
+  // 1. Always try the primary source URL first — this is the main article being summarized
+  const primaryUrl = topic.primarySource?.articleUrl;
+  if (primaryUrl) {
+    const target = normalizeUrl(primaryUrl);
+    for (const s of sources) {
+      const srcUrl = normalizeUrl(s.articleUrl);
+      const canonUrl = normalizeUrl(s.canonicalUrl || s.articleUrl);
+      if ((srcUrl === target || canonUrl === target) && s.imageUrl?.startsWith("http")) {
+        return { url: s.imageUrl, credit: `${s.sourceName}` };
+      }
+    }
+  }
+
+  // 2. Try signal sources (the feeds that reported this topic first)
+  for (const name of topic.signalSources ?? []) {
+    const hit = sources.find((s) => s.sourceName === name && s.imageUrl?.startsWith("http"));
+    if (hit) {
+      return { url: hit.imageUrl!, credit: `${hit.sourceName}` };
+    }
+  }
+
+  // 3. Licensed / public domain from any source as last resort
   const licensed = sources.find(
     (s) =>
       s.imageUrl?.startsWith("http") &&
       (s.allowedUse === "licensed" || s.allowedUse === "public_domain"),
   );
   if (licensed?.imageUrl) {
-    return { url: licensed.imageUrl, credit: `${licensed.sourceName} — licensed reference` };
+    return { url: licensed.imageUrl, credit: `${licensed.sourceName}` };
   }
 
-  const primaryUrl = topic.primarySource?.articleUrl;
-  if (primaryUrl) {
-    const target = normalizeUrl(primaryUrl);
-    const match = sources.find((s) => normalizeUrl(s.articleUrl) === target || normalizeUrl(s.canonicalUrl || s.articleUrl) === target);
-    if (match?.imageUrl?.startsWith("http")) {
-      return { url: match.imageUrl, credit: `${match.sourceName} article preview` };
-    }
-    return {};
-  }
-
-  for (const name of topic.signalSources ?? []) {
-    const hit = sources.find((s) => s.sourceName === name && s.imageUrl?.startsWith("http"));
-    if (hit) {
-      return { url: hit.imageUrl!, credit: `${hit.sourceName} article preview` };
-    }
-  }
-
+  // 4. Token-match against topic to find the most relevant image
   const tokens = topic.normalizedTopic.split(/\s+/).filter((t) => t.length > 4);
   let best: SourceExtraction | undefined;
   let bestScore = 0;
@@ -164,7 +170,7 @@ export function pickHeroImageFromSources(
     }
   }
   if (best && bestScore >= 2) {
-    return { url: best.imageUrl!, credit: `${best.sourceName} article preview` };
+    return { url: best.imageUrl!, credit: `${best.sourceName}` };
   }
 
   return {};
