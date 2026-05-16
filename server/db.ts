@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { config } from "./config";
 import { EditorialCategory, GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
@@ -179,35 +180,48 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
 }
 
 export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
-  const inserted = (await sql`
-    INSERT INTO generated_posts (
-      run_id, topic, headline, slug, dek, image_url, image_credit, body_markdown, short_post, credits, citations,
-      source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks, category
-    )
-    VALUES (
-      ${runId},
-      ${post.topic},
-      ${post.headline},
-      ${post.slug},
-      ${post.dek},
-      ${post.imageUrl ?? null},
-      ${post.imageCredit ?? null},
-      ${post.bodyMarkdown},
-      ${post.shortPost},
-      ${JSON.stringify(post.credits)},
-      ${JSON.stringify(post.citations ?? [])},
-      ${JSON.stringify(post.sourceUrls ?? [])},
-      ${post.headlineHash ?? null},
-      ${post.canonicalKey ?? null},
-      ${post.storyFingerprint ? JSON.stringify(post.storyFingerprint) : null},
-      ${post.tldr ? JSON.stringify(post.tldr) : null},
-      ${post.entities ? JSON.stringify(post.entities) : null},
-      ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null},
-      ${post.editorialCategory ?? null}
-    )
-    RETURNING id
-  `) as Array<{ id: number }>;
-  return inserted[0]?.id;
+  // Retry with a unique slug if the original collides with an existing one
+  const trySlug = async (slug: string): Promise<number | undefined> => {
+    try {
+      const inserted = (await sql`
+        INSERT INTO generated_posts (
+          run_id, topic, headline, slug, dek, image_url, image_credit, body_markdown, short_post, credits, citations,
+          source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks, category
+        )
+        VALUES (
+          ${runId},
+          ${post.topic},
+          ${post.headline},
+          ${slug},
+          ${post.dek},
+          ${post.imageUrl ?? null},
+          ${post.imageCredit ?? null},
+          ${post.bodyMarkdown},
+          ${post.shortPost},
+          ${JSON.stringify(post.credits)},
+          ${JSON.stringify(post.citations ?? [])},
+          ${JSON.stringify(post.sourceUrls ?? [])},
+          ${post.headlineHash ?? null},
+          ${post.canonicalKey ?? null},
+          ${post.storyFingerprint ? JSON.stringify(post.storyFingerprint) : null},
+          ${post.tldr ? JSON.stringify(post.tldr) : null},
+          ${post.entities ? JSON.stringify(post.entities) : null},
+          ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null},
+          ${post.editorialCategory ?? null}
+        )
+        RETURNING id
+      `) as Array<{ id: number }>;
+      return inserted[0]?.id;
+    } catch (err: any) {
+      // If unique constraint violation on slug, retry with random suffix
+      if (err?.code === "23505" && err?.detail?.includes("slug")) {
+        return trySlug(`${slug}-${crypto.randomUUID().slice(0, 8)}`);
+      }
+      throw err;
+    }
+  };
+
+  return trySlug(post.slug);
 }
 
 export async function completeRun(result: PipelineRunResult) {
