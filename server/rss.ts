@@ -231,6 +231,74 @@ export async function getTrendingTopics(): Promise<TrendCandidate[]> {
     .slice(0, config.trendLimit);
 }
 
+/**
+ * After the main batch is processed, scan all feeds for articles about entities/companies
+ * NOT covered by any processed topic. Returns strong candidates (2+ source mentions).
+ */
+export async function scanUnprocessedFeedItems(
+  processedHeadlines: string[],
+  maxCandidates = 6,
+): Promise<TrendCandidate[]> {
+  const buckets: TrendCandidate[] = [];
+
+  for (const feed of TREND_FEEDS) {
+    try {
+      const items = await fetchFeedItems(feed.url);
+      for (const item of items.slice(0, 10)) {
+        const title = item.title?.trim();
+        if (!title) continue;
+        const normalizedTopic = deriveTopicFromHeadline(title);
+        if (!normalizedTopic || normalizedTopic.length < 8) continue;
+
+        // Skip if already processed in this batch
+        if (processedHeadlines.some(h => normalizedTopic.includes(h) || h.includes(normalizedTopic))) continue;
+
+        const currentTokens = normalizedTopic.split(" ").filter(t => t.length > 3);
+        let existing = buckets.find(b => {
+          const bTokens = b.normalizedTopic.split(" ").filter(t => t.length > 3);
+          const overlap = currentTokens.filter(t => bTokens.includes(t));
+          const overlapRatio = overlap.length / Math.min(currentTokens.length, bTokens.length);
+          return overlap.length >= 2 && overlapRatio >= 0.5;
+        });
+
+        if (existing) {
+          if (!existing.signalSources?.includes(feed.source.name)) {
+            existing.signalCount += 1;
+            existing.signalSources = [...(existing.signalSources ?? []), feed.source.name];
+          }
+          if (existing.sampleHeadlines.length < 4) {
+            existing.sampleHeadlines.push(title);
+          }
+        } else {
+          buckets.push({
+            topic: title.replace(/\s*-\s*[^-]+$/, "").trim(),
+            normalizedTopic,
+            signalCount: 1,
+            signalSources: [feed.source.name],
+            sampleHeadlines: [title],
+            primarySource: item.link ? withSourceMetadata({
+              sourceName: feed.source.name,
+              articleUrl: item.link,
+              headline: title,
+              publishedAt: item.pubDate,
+              summary: item.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+            }, feed.source) : undefined,
+            quotaSeed: false,
+          });
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // Only return candidates appearing in 2+ different feeds (strong trending signal)
+  return buckets
+    .filter(b => b.signalCount >= 2)
+    .sort((a, b) => b.signalCount - a.signalCount)
+    .slice(0, maxCandidates);
+}
+
 export async function findSourceArticle(topic: TrendCandidate, sourceName: PreferredSourceName): Promise<SourceSearchResult | null> {
   const feeds = SOURCE_FEEDS[sourceName];
   if (!feeds) return null;
