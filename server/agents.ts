@@ -686,6 +686,195 @@ async function extractChartsFromBody(
 }
 
 /**
+ * Automatically extract important proper nouns and capitalized terms from body text
+ * that aren't already in the entities list. Generates simple contextual definitions.
+ */
+function extractProperNounsAuto(body: string, existingNames: Set<string>): GeneratedPost["entities"] {
+  // Skip these common capitalized words (sentence starts, months, days, common terms)
+  const SKIP_WORDS = new Set([
+    "the", "this", "that", "these", "those", "it", "its", "they", "them", "their",
+    "we", "our", "you", "your", "he", "she", "his", "her", "him",
+    "but", "and", "for", "nor", "yet", "so", "are", "was", "were", "been",
+    "not", "all", "any", "each", "every", "both", "few", "more", "most", "much",
+    "some", "such", "than", "then", "now", "here", "there", "when", "where",
+    "why", "how", "what", "who", "whom", "which", "while", "after", "before",
+    "between", "through", "during", "without", "within", "along", "among",
+    "about", "above", "across", "against", "around", "behind", "below", "beneath",
+    "beside", "beyond", "down", "inside", "into", "near", "off", "onto",
+    "outside", "over", "under", "up", "upon", "with", "just", "also", "very",
+    "too", "already", "still", "yet", "again", "ever", "never", "quite", "rather",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december", "today", "yesterday", "tomorrow",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "american", "british", "european", "asian", "african", "global", "international",
+    "ceo", "cto", "cfo", "chief", "president", "chairman", "director", "manager",
+    "however", "therefore", "meanwhile", "furthermore", "nevertheless", "nonetheless",
+    "according", "including", "regarding", "despite", "although", "because",
+  ]);
+
+  const MIN_WORD_LENGTH = 3;
+  const MAX_WORD_LENGTH = 50;
+
+  const found = new Map<string, number>(); // name -> count
+  const textLower = body.toLowerCase();
+
+  // 1. Find multi-word capitalized phrases (e.g. "Sam Altman", "Series D")
+  const multiWordRegex = /([A-Z][a-z]+(?:\s+[A-Z][a-z0-9]+)+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = multiWordRegex.exec(body)) !== null) {
+    const phrase = m[1].trim();
+    if (phrase.length < MIN_WORD_LENGTH || phrase.length > MAX_WORD_LENGTH) continue;
+    if (existingNames.has(phrase.toLowerCase())) continue;
+    if (SKIP_WORDS.has(phrase.toLowerCase())) continue;
+    // Skip if any word in the phrase is a skip word (unless it's a short connector like "and")
+    const words = phrase.split(/\s+/);
+    const significantWords = words.filter(w => w.length > 2 && !SKIP_WORDS.has(w.toLowerCase()));
+    if (significantWords.length < 1) continue;
+    found.set(phrase, (found.get(phrase) ?? 0) + 1);
+  }
+
+  // 2. Find single capitalized words that are NOT at the start of a sentence
+  const singleWordRegex = /[.?!]\s+([A-Z][a-z0-9]{2,})/g;
+  while ((m = singleWordRegex.exec(body)) !== null) {
+    const word = m[1].trim();
+    if (word.length < MIN_WORD_LENGTH || word.length > MAX_WORD_LENGTH) continue;
+    const lower = word.toLowerCase();
+    if (existingNames.has(lower)) continue;
+    if (SKIP_WORDS.has(lower)) continue;
+    // Also skip if it's preceded by common title words that suggest it's a sentence start in a heading
+    // Filter out common English words that happen to be capitalized mid-sentence
+    if (/^\d/.test(word)) continue;
+    found.set(word, (found.get(word) ?? 0) + 1);
+  }
+
+  // 3. Also find capitalized words mid-sentence (after comma, semicolon, dash, or parenthesis)
+  const midSentenceRegex = /[,;:({\[]\s+([A-Z][a-z0-9]{2,})/g;
+  while ((m = midSentenceRegex.exec(body)) !== null) {
+    const word = m[1].trim();
+    if (word.length < MIN_WORD_LENGTH || word.length > MAX_WORD_LENGTH) continue;
+    const lower = word.toLowerCase();
+    if (existingNames.has(lower)) continue;
+    if (SKIP_WORDS.has(lower)) continue;
+    if (/^\d/.test(word)) continue;
+    found.set(word, (found.get(word) ?? 0) + 1);
+  }
+
+  // Filter: only keep terms that appear at least twice (more likely to be significant)
+  // But keep single mentions for longer/more specific terms (>7 chars)
+  const results: GeneratedPost["entities"] = [];
+  for (const [name, count] of found) {
+    if (count < 2 && name.length <= 7) continue;
+    if (results.length >= 30) break;
+
+    const lower = name.toLowerCase();
+
+    // Generate a definition based on context
+    let definition = generateAutoDefinition(name, body);
+
+    // Skip if definition is too generic
+    if (!definition || definition.length < 5) continue;
+
+    existingNames.add(lower);
+    results.push({ name, definition });
+  }
+
+  // Sort by length descending (longer names first so they get matched before shorter substrings)
+  results.sort((a, b) => b.name.length - a.name.length);
+  return results;
+}
+
+/** Generate a simple contextual definition for an auto-detected proper noun. */
+function generateAutoDefinition(name: string, body: string): string {
+  const lower = name.toLowerCase();
+
+  // Common patterns for definitions
+  if (lower.endsWith(" inc") || lower.endsWith(" corp") || lower.endsWith(" ltd")) {
+    return `${name} is a company referenced in this article.`;
+  }
+  if (lower.includes(" fund") || lower.includes(" ventures") || lower.includes(" capital")) {
+    return `${name} is an investment firm or venture capital fund.`;
+  }
+  if (lower.includes(" round") || lower.includes(" series ")) {
+    return `${name} is a funding round stage.`;
+  }
+  if (lower.includes(" university") || lower.includes(" college") || lower.includes(" institute")) {
+    return `${name} is an academic or research institution.`;
+  }
+  if (lower.includes(" report") || lower.includes(" survey")) {
+    return `${name} is a research report or publication.`;
+  }
+  if (lower.includes(" act") || lower.includes(" bill") || lower.includes(" regulation")) {
+    return `${name} is a legislative act, bill, or regulation.`;
+  }
+
+  // Try to find context in the body text around the first occurrence
+  const idx = body.toLowerCase().indexOf(lower);
+  if (idx >= 0) {
+    const start = Math.max(0, idx - 80);
+    const end = Math.min(body.length, idx + name.length + 80);
+    const snippet = body.slice(start, end);
+
+    // Try to extract a descriptive clause
+    const descMatch = snippet.match(new RegExp(
+      `${escapeRegExp(name)}\\s+[,(]\\s*([^,.;)]{10,80})`,
+      "i",
+    ));
+    if (descMatch) {
+      const desc = descMatch[1].trim();
+      if (desc.length > 10 && desc.length < 100) {
+        return desc;
+      }
+    }
+
+    // Try "is a" / "is an" pattern
+    const isMatch = snippet.match(new RegExp(
+      `${escapeRegExp(name)}\\s+is\\s+(?:a|an)\\s+([^,.;]{5,60})`,
+      "i",
+    ));
+    if (isMatch) {
+      return `${name} is a ${isMatch[1].trim()}.`;
+    }
+  }
+
+  // Generic fallback based on capitalization patterns
+  if (name === name.toUpperCase() && name.length <= 8) {
+    return `${name} is an acronym or abbreviation in the context of this article.`;
+  }
+  if (/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(name)) {
+    return `${name} is a named entity (person, organization, or term) in this article.`;
+  }
+
+  return "";
+}
+
+/**
+ * Merges manually-defined entities with auto-extracted ones and brackets all of them in the body.
+ * Also ensures definitions exist for all bracketed terms.
+ */
+function enrichEntities(
+  body: string,
+  entities: GeneratedPost["entities"],
+): { body: string; entities: GeneratedPost["entities"] } {
+  const existingNames = new Set((entities ?? []).map((e) => e.name.toLowerCase().trim()).filter(Boolean));
+
+  // Auto-extract additional proper nouns from the body
+  const autoEntities = extractProperNounsAuto(body, existingNames);
+
+  if (autoEntities.length === 0) {
+    // Still bracket existing entities in the body
+    return { body: insertEntityBrackets(body, entities ?? []), entities: entities ?? [] };
+  }
+
+  const merged = [...(entities ?? []), ...autoEntities];
+
+  // Now bracket ALL entities (existing + auto) in the body
+  const bracketedBody = insertEntityBrackets(body, merged);
+
+  return { body: bracketedBody, entities: merged };
+}
+
+/**
  * Insert [[Bracketed Terms]] around entity names in body text for explicit entity highlighting.
  * Only wraps occurrences that are not already bracketed and are on word boundaries.
  * Sorts entities longest-first to avoid partial overlaps (e.g., "OpenAI" vs "OpenAI LP").
@@ -790,10 +979,14 @@ export async function synthesizePost(
         }
       }
 
-      // If body has no [[Bracketed Terms]] but entities exist, insert them server-side
-      if (post.bodyMarkdown && (post.entities ?? []).length >= 3 && !post.bodyMarkdown.includes("[[")) {
-        post = { ...post, bodyMarkdown: insertEntityBrackets(post.bodyMarkdown, post.entities ?? []) };
-        console.log(`[synthesizePost] Inserted [[bracketed terms]] into body from ${(post.entities ?? []).length} entities`);
+      // Auto-enrich entities: extract proper nouns from body, generate definitions, bracket them
+      if (post.bodyMarkdown) {
+        const enriched = enrichEntities(post.bodyMarkdown, post.entities ?? []);
+        if (enriched.entities.length !== (post.entities ?? []).length) {
+          const added = enriched.entities.length - (post.entities ?? []).length;
+          console.log(`[synthesizePost] Auto-extracted ${added} additional entities from body; ${enriched.entities.length} total bracketed terms`);
+        }
+        post = { ...post, bodyMarkdown: enriched.body, entities: enriched.entities };
       }
 
       // If charts are missing but we have a Data Insight section, attempt extraction

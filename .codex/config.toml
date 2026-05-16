@@ -1,0 +1,7 @@
+[mcp_servers.coolify]
+args = ["@masonator/coolify-mcp@latest"]
+command = "npx"
+
+[mcp_servers.coolify.env]
+COOLIFY_ACCESS_TOKEN = "8|qNIsJjXWjZVlWDbzAqXHYEtj40VmJ6XVd7QMatvaab9823f5"
+COOLIFY_BASE_URL = "https://coolify.alphasphere.trade"
