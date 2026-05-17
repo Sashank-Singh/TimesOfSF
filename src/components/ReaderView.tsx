@@ -9,6 +9,16 @@ import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
 import { lookupGlossaryDefinition } from "../lib/glossary";
 
+const categoryGradients: Record<string, string> = {
+  Tech: "from-indigo-900/80 via-indigo-800/60 to-transparent",
+  Funding: "from-emerald-900/80 via-emerald-800/60 to-transparent",
+  Civics: "from-slate-800/80 via-slate-700/60 to-transparent",
+  Culture: "from-violet-900/80 via-violet-800/60 to-transparent",
+  Transit: "from-sky-900/80 via-sky-800/60 to-transparent",
+  Food: "from-amber-900/80 via-amber-800/60 to-transparent",
+  Events: "from-rose-900/80 via-rose-800/60 to-transparent",
+};
+
 import { expandArticle } from "../services/newsService";
 
 interface ReaderViewProps {
@@ -369,24 +379,30 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             {/* Main content area */}
 
             <div className="relative aspect-video md:aspect-[21/9] mb-12 md:mb-24 overflow-hidden rounded-2xl shadow-2xl transition-all duration-1000 ease-out group/hero">
-               <img 
-                 src={article.imageUrl}
-                 alt={article.title}
-                 className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
-                 referrerPolicy="no-referrer"
-                 onError={(e) => {
-                   (e.target as HTMLImageElement).style.display = "none";
-                 }}
-               />
-               <div className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex flex-col items-end gap-1">
-                 <div className="flex items-center gap-2 bg-paper/90 backdrop-blur-md px-3 md:px-4 py-1.5 md:py-2 rounded-sm border border-ink/10 shadow-lg">
-                   <span className="text-[8px] md:text-[9px] font-mono font-bold tracking-widest uppercase text-ink/60">
-                     {article.imageCredit || "Field Photography / SF Archive"}
-                   </span>
-                   <sup className="text-[8px] font-mono text-accent font-bold">(2)</sup>
+               {article.imageUrl ? (
+                 <img
+                   src={article.imageUrl}
+                   alt={article.title}
+                   className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
+                   referrerPolicy="no-referrer"
+                   onError={(e) => {
+                     (e.target as HTMLImageElement).style.display = "none";
+                   }}
+                 />
+               ) : (
+                 <div className={`w-full h-full bg-gradient-to-br ${categoryGradients[article.category] || categoryGradients.Tech}`} />
+               )}
+               {article.imageCredit && (
+                 <div className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex flex-col items-end gap-1">
+                   <div className="flex items-center gap-2 bg-paper/90 backdrop-blur-md px-3 md:px-4 py-1.5 md:py-2 rounded-sm border border-ink/10 shadow-lg">
+                     <span className="text-[8px] md:text-[9px] font-mono font-bold tracking-widest uppercase text-ink/60">
+                       {article.imageCredit}
+                     </span>
+                     <sup className="text-[8px] font-mono text-accent font-bold">(2)</sup>
+                   </div>
+                   <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Source-linked dispatch</span>
                  </div>
-                 <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Source-linked dispatch</span>
-               </div>
+               )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
