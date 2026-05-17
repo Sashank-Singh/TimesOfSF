@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { formatPublishedTimestamp, cn } from "../lib/utils";
-import { DEFAULT_IMAGE } from "../services/newsService";
+
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
 import { lookupGlossaryDefinition } from "../lib/glossary";
@@ -375,7 +375,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                  className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
                  referrerPolicy="no-referrer"
                  onError={(e) => {
-                   (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+                   (e.target as HTMLImageElement).style.display = "none";
                  }}
                />
                <div className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex flex-col items-end gap-1">
@@ -404,7 +404,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                                 className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" 
                                 referrerPolicy="no-referrer" 
                                 onError={(e) => {
-                                  (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+                                  (e.target as HTMLImageElement).style.display = "none";
                                 }}
                               />
                             </div>
@@ -500,7 +500,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                           className="w-full h-full object-cover grayscale brightness-90 transition-all duration-500" 
                           referrerPolicy="no-referrer" 
                           onError={(e) => {
-                            (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+                            (e.target as HTMLImageElement).style.display = "none";
                           }}
                         />
                       </div>
