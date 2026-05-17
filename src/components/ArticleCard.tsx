@@ -3,6 +3,36 @@ import { cn, formatPublishedTimestamp } from "../lib/utils";
 import { motion } from "motion/react";
 import { Bookmark, Share2 } from "lucide-react";
 
+const categoryGradients: Record<string, string> = {
+  Tech: "from-indigo-900/80 via-indigo-800/60 to-transparent",
+  Funding: "from-emerald-900/80 via-emerald-800/60 to-transparent",
+  Civics: "from-slate-800/80 via-slate-700/60 to-transparent",
+  Culture: "from-violet-900/80 via-violet-800/60 to-transparent",
+  Transit: "from-sky-900/80 via-sky-800/60 to-transparent",
+  Food: "from-amber-900/80 via-amber-800/60 to-transparent",
+  Events: "from-rose-900/80 via-rose-800/60 to-transparent",
+};
+
+function ArticleImage({ imageUrl, title, category }: { imageUrl?: string; title: string; category: string }) {
+  if (!imageUrl) {
+    return (
+      <div className="w-full h-full bg-ink/5">
+        <div className={`w-full h-full bg-gradient-to-br ${categoryGradients[category] || categoryGradients.Tech}`} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={imageUrl}
+      alt={title}
+      className="w-full h-full object-cover transition-all duration-1000 group-hover:scale-[1.02]"
+      referrerPolicy="no-referrer"
+      onError={(e) => {
+        (e.target as HTMLImageElement).style.display = "none";
+      }}
+    />
+  );
+}
 
 interface ArticleCardProps {
   article: Article;
@@ -28,15 +58,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
           <div className="lg:col-span-6 overflow-hidden relative rounded-xl shadow-lg aspect-[16/9] max-h-[400px]">
-            <img 
-              src={article.imageUrl}
-              alt={article.title}
-              className="w-full h-full object-cover transition-all duration-1000 group-hover:scale-[1.02]"
-              referrerPolicy="no-referrer"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.display = "none";
-              }}
-            />
+            <ArticleImage imageUrl={article.imageUrl} title={article.title} category={article.category} />
             {isToday && (
               <div className="absolute top-6 left-6 bg-accent text-white px-4 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest shadow-2xl">
                 Today's Feature
@@ -55,14 +77,14 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
               {article.excerpt}
             </p>
             <div className="flex items-center gap-4 mb-6">
-               <button 
+               <button
                 onClick={onBookmark}
                 className={cn("flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest", isBookmarked && "bg-ink text-paper")}
                >
                  <Bookmark size={14} className={cn(isBookmarked && "fill-paper")} />
                  {isBookmarked ? "Saved" : "Save Story"}
                </button>
-               <button 
+               <button
                 onClick={onShare}
                 className="flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest"
                >
@@ -85,7 +107,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
   }
 
   return (
-    <motion.article 
+    <motion.article
       initial={{ opacity: 0, y: 15 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true }}
@@ -93,15 +115,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
       onClick={() => onClick(article)}
     >
       <div className="overflow-hidden aspect-[16/10] mb-6 rounded-xl shadow-md relative bg-ink/5">
-        <img 
-          src={article.imageUrl}
-          alt={article.title}
-          className="w-full h-full object-cover transition-all duration-700 group-hover:scale-105"
-          referrerPolicy="no-referrer"
-          onError={(e) => {
-            (e.target as HTMLImageElement).style.display = "none";
-          }}
-        />
+        <ArticleImage imageUrl={article.imageUrl} title={article.title} category={article.category} />
         {isToday && (
           <div className="absolute top-3 left-3 bg-accent text-white px-2 py-0.5 text-[8px] font-mono font-bold uppercase tracking-widest shadow-lg rounded-sm">
             Today
@@ -133,14 +147,14 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           <span>{article.readTime}</span>
         </div>
         <div className="flex items-center gap-4">
-          <button 
+          <button
             className={cn("hover:text-accent transition-colors p-1", isBookmarked && "text-accent fill-accent")}
             onClick={onBookmark}
             title="Bookmark"
           >
             <Bookmark size={12} />
           </button>
-          <button 
+          <button
             className="hover:text-accent transition-colors p-1"
             onClick={onShare}
             title="Share"
