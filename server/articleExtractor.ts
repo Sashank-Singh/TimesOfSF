@@ -36,25 +36,103 @@ async function fetchHtml(url: string): Promise<string> {
   return response.text();
 }
 
-function extractLeadImage(dom: JSDOM): string | undefined {
+/** Aggressively find the best image from the page — meta tags, JSON-LD, article body. */
+function extractLeadImage(dom: JSDOM, articleContent?: string): string | undefined {
   const doc = dom.window.document;
+  const urls = new Set<string>();
 
-  const ogImage = doc.querySelector('meta[property="og:image"]')?.getAttribute("content");
-  if (ogImage?.startsWith("http")) return ogImage;
+  // 1. Open Graph secure & standard
+  for (const sel of ['meta[property="og:image:secure_url"]', 'meta[property="og:image"]']) {
+    const url = doc.querySelector(sel)?.getAttribute("content");
+    if (url?.startsWith("http")) urls.add(url);
+  }
 
-  const twitterImage = doc.querySelector('meta[name="twitter:image"]')?.getAttribute("content");
-  if (twitterImage?.startsWith("http")) return twitterImage;
+  // 2. Twitter / social image
+  for (const sel of ['meta[name="twitter:image"]', 'meta[property="twitter:image"]']) {
+    const url = doc.querySelector(sel)?.getAttribute("content");
+    if (url?.startsWith("http")) urls.add(url);
+  }
 
-  const imageSrc = doc.querySelector('link[rel="image_src"]')?.getAttribute("href");
-  if (imageSrc?.startsWith("http")) return imageSrc;
+  // 3. Link rel
+  const linkImage = doc.querySelector('link[rel="image_src"]')?.getAttribute("href");
+  if (linkImage?.startsWith("http")) urls.add(linkImage);
 
-  return undefined;
+  // 4. Schema.org JSON-LD
+  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+  for (const script of scripts) {
+    try {
+      const parsed = JSON.parse(script.textContent || "");
+      const walk = (obj: unknown): string | undefined => {
+        if (!obj || typeof obj === "string") return undefined;
+        if (Array.isArray(obj)) {
+          for (const item of obj) {
+            const found = walk(item);
+            if (found) return found;
+          }
+          return undefined;
+        }
+        const o = obj as Record<string, unknown>;
+        const img = o.image ?? o.thumbnailUrl ?? o.logo;
+        if (typeof img === "string" && img.startsWith("http")) return img;
+        if (typeof img === "object" && img) {
+          const imgObj = img as Record<string, unknown>;
+          if (typeof imgObj.url === "string" && imgObj.url.startsWith("http")) return imgObj.url;
+          if (Array.isArray(img) && typeof img[0] === "string") return img[0];
+        }
+        for (const val of Object.values(o)) {
+          const found = walk(val);
+          if (found) return found;
+        }
+        return undefined;
+      };
+      const found = walk(parsed);
+      if (found) urls.add(found);
+    } catch {
+      // invalid JSON — skip
+    }
+  }
+
+  // 5. First <img> in Readability's parsed article content (the real article body)
+  if (articleContent) {
+    const imgMatch = articleContent.match(/<img[^>]+src=["']([^"']+)["']/i);
+    const fromArticle = imgMatch?.[1]?.trim();
+    if (fromArticle?.startsWith("http") && !fromArticle.includes("1x1") && !fromArticle.includes("pixel")) {
+      urls.add(fromArticle);
+    }
+  }
+
+  // 6. First meaningful <img> from the raw page (skip icons, trackers, tiny images)
+  const imgs = doc.querySelectorAll("img[src]");
+  for (const img of imgs) {
+    const src = img.getAttribute("src") || "";
+    if (!src.startsWith("http") && !src.startsWith("//")) continue;
+    const fullSrc = src.startsWith("//") ? `https:${src}` : src;
+    const w = img.getAttribute("width");
+    const h = img.getAttribute("height");
+    // Skip tiny images (icons, trackers)
+    if (w && parseInt(w) < 200 && h && parseInt(h) < 200) continue;
+    // Skip obvious junk
+    if (/pixel|tracker|icon|spacer|blank|1x1|beacon|analytics|transparent/i.test(fullSrc)) continue;
+    const lowerSrc = fullSrc.toLowerCase();
+    if (/\.(jpg|jpeg|png|webp)(\?|$)/.test(lowerSrc)) {
+      urls.add(fullSrc);
+    }
+  }
+
+  // 7. Prefer larger / more canonical URL patterns (hero, featured, main, lead)
+  const candidates = [...urls];
+  const heroPattern = /hero|featured|main|lead|top|primary|cover|header/i;
+  const heroMatch = candidates.find((c) => heroPattern.test(c));
+  if (heroMatch) return heroMatch;
+  // Prefer secure URLs
+  const https = candidates.find((c) => c.startsWith("https://"));
+  if (https) return https;
+  return candidates[0];
 }
 
 async function extractWithReadability(url: string): Promise<ReadabilityResult> {
   const html = await fetchHtml(url);
   const dom = new JSDOM(html, { url });
-  const imageUrl = extractLeadImage(dom);
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
 
@@ -66,6 +144,8 @@ async function extractWithReadability(url: string): Promise<ReadabilityResult> {
   if (text.length < 200) {
     throw new Error(`Readability extracted only ${text.length} chars — too thin to use.`);
   }
+
+  const imageUrl = extractLeadImage(dom, article.content);
 
   return {
     title: article.title ?? "",
