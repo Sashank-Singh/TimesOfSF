@@ -2,7 +2,7 @@ import { Article } from "../types";
 import { cn, formatPublishedTimestamp } from "../lib/utils";
 import { motion } from "motion/react";
 import { Bookmark, Share2 } from "lucide-react";
-import { DEFAULT_IMAGE } from "../services/newsService";
+
 
 interface ArticleCardProps {
   article: Article;
@@ -34,7 +34,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
               className="w-full h-full object-cover transition-all duration-1000 group-hover:scale-[1.02]"
               referrerPolicy="no-referrer"
               onError={(e) => {
-                (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+                (e.target as HTMLImageElement).style.display = "none";
               }}
             />
             {isToday && (
@@ -99,7 +99,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           className="w-full h-full object-cover transition-all duration-700 group-hover:scale-105"
           referrerPolicy="no-referrer"
           onError={(e) => {
-            (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+            (e.target as HTMLImageElement).style.display = "none";
           }}
         />
         {isToday && (

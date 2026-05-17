@@ -8,8 +8,6 @@ import {
   getPublicOrigin,
   truncateForMeta,
 } from "../lib/site";
-import { DEFAULT_IMAGE } from "../services/newsService";
-
 type SeoMode = "article" | "events" | "category" | "home";
 
 export type SeoHeadProps = {
@@ -254,9 +252,6 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
       const ogImg = absoluteUrl(article.imageUrl);
       upsertMeta("property", "og:image", ogImg);
       upsertMeta("name", "twitter:image", ogImg);
-    } else {
-      upsertMeta("property", "og:image", DEFAULT_IMAGE);
-      upsertMeta("name", "twitter:image", DEFAULT_IMAGE);
     }
 
     if (jsonLd) injectJsonLd(jsonLd);

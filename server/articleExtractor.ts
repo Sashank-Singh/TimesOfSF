@@ -11,6 +11,7 @@ export type ReadabilityResult = {
   siteName?: string;
   publishedTime?: string;
   content: string;
+  imageUrl?: string;
 };
 
 async function fetchHtml(url: string): Promise<string> {
@@ -35,9 +36,25 @@ async function fetchHtml(url: string): Promise<string> {
   return response.text();
 }
 
+function extractLeadImage(dom: JSDOM): string | undefined {
+  const doc = dom.window.document;
+
+  const ogImage = doc.querySelector('meta[property="og:image"]')?.getAttribute("content");
+  if (ogImage?.startsWith("http")) return ogImage;
+
+  const twitterImage = doc.querySelector('meta[name="twitter:image"]')?.getAttribute("content");
+  if (twitterImage?.startsWith("http")) return twitterImage;
+
+  const imageSrc = doc.querySelector('link[rel="image_src"]')?.getAttribute("href");
+  if (imageSrc?.startsWith("http")) return imageSrc;
+
+  return undefined;
+}
+
 async function extractWithReadability(url: string): Promise<ReadabilityResult> {
   const html = await fetchHtml(url);
   const dom = new JSDOM(html, { url });
+  const imageUrl = extractLeadImage(dom);
   const reader = new Readability(dom.window.document);
   const article = reader.parse();
 
@@ -58,6 +75,7 @@ async function extractWithReadability(url: string): Promise<ReadabilityResult> {
     siteName: article.siteName,
     publishedTime: article.publishedTime,
     content: article.content ?? "",
+    imageUrl,
   };
 }
 
@@ -124,7 +142,7 @@ export async function extractWithReadabilityFallback(
       summary: article.excerpt || article.title || searchResult.headline,
       textExcerpt: article.textContent.slice(0, 4000),
       facts: [...facts, ...numericFacts],
-      imageUrl: searchResult.imageUrl,
+      imageUrl: searchResult.imageUrl || article.imageUrl,
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

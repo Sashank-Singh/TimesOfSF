@@ -21,7 +21,7 @@ import {
   saveSourceAttempt,
   type KnowledgeStateEntry,
 } from "./db";
-import { extractSource } from "./extractor";
+import { extractSource, searchGoogleImage } from "./extractor";
 import { config } from "./config";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline, normalizeUrl } from "./dedupe";
 import { findSourceArticle, getTrendingTopics, scanUnprocessedFeedItems } from "./rss";
@@ -121,10 +121,10 @@ export function findCopyrightRisk(generatedText: string, sources: SourceExtracti
 }
 
 /** Hero image from the primary / most relevant story source — never a random licensed image. */
-export function pickHeroImageFromSources(
+export async function pickHeroImageFromSources(
   sources: SourceExtraction[],
   topic: TrendCandidate,
-): { url?: string; credit?: string } {
+): Promise<{ url?: string; credit?: string }> {
   // 1. Always try the primary source URL first — this is the main article being summarized
   const primaryUrl = topic.primarySource?.articleUrl;
   if (primaryUrl) {
@@ -171,6 +171,14 @@ export function pickHeroImageFromSources(
   }
   if (best && bestScore >= 2) {
     return { url: best.imageUrl!, credit: `${best.sourceName}` };
+  }
+
+  // 5. Google Image Search as final fallback — real image related to the topic
+  if (config.serperApiKey) {
+    const imageUrl = await searchGoogleImage(topic.normalizedTopic);
+    if (imageUrl) {
+      return { url: imageUrl, credit: "Google Images" };
+    }
   }
 
   return {};
@@ -328,7 +336,7 @@ async function processTopic(
       throw new Error(`Copyright safety check failed: ${copyrightRisk}`);
     }
     
-    const hero = pickHeroImageFromSources(sourcesForStory, topic);
+    const hero = await pickHeroImageFromSources(sourcesForStory, topic);
     if (hero.url) {
       post.imageUrl = hero.url;
       post.imageCredit = hero.credit;

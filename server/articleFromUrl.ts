@@ -170,7 +170,7 @@ export async function publishArticleFromSubmittedUrl(
       throw new Error(copyrightRisk);
     }
 
-    const hero = pickHeroImageFromSources([extraction], topic);
+    const hero = await pickHeroImageFromSources([extraction], topic);
     if (hero.url) {
       post.imageUrl = hero.url;
       post.imageCredit = hero.credit;
