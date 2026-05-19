@@ -5,6 +5,7 @@ import {
   SITE_NAME,
   SITE_SHORT_NAME,
   absoluteUrl,
+  articlePath,
   getPublicOrigin,
   truncateForMeta,
 } from "../lib/site";
@@ -99,7 +100,7 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
 
   const { title, description, canonicalPath, robots } = useMemo(() => {
     if (article) {
-      const path = `/?articleId=${encodeURIComponent(article.slug)}`;
+      const path = articlePath(article.slug);
       return {
         title: `${article.title} | ${SITE_SHORT_NAME}`,
         description: truncateForMeta(article.excerpt || SITE_DEFAULT_DESCRIPTION),
@@ -155,7 +156,7 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
     };
 
     if (article) {
-      const pageUrl = absoluteUrl(`/?articleId=${encodeURIComponent(article.slug)}`);
+      const pageUrl = absoluteUrl(articlePath(article.slug));
       const imageUrl = article.imageUrl?.startsWith("http") ? article.imageUrl : absoluteUrl(article.imageUrl || "/");
       const graph: Record<string, unknown>[] = [
         publisher,
@@ -196,7 +197,7 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
       item: {
         "@type": "NewsArticle",
         headline: a.title,
-        url: absoluteUrl(`/?articleId=${encodeURIComponent(a.slug)}`),
+        url: absoluteUrl(articlePath(a.slug)),
         datePublished: a.publishedAt,
         articleSection: a.category,
       },
