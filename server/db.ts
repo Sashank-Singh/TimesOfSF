@@ -1,6 +1,7 @@
+import crypto from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { config } from "./config";
-import { GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
+import { EditorialCategory, GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
 const sql = neon(config.databaseUrl);
 
@@ -27,6 +28,7 @@ export async function ensureSchema() {
         article_url TEXT,
         canonical_url TEXT,
         headline TEXT,
+        image_url TEXT,
         published_at TIMESTAMPTZ,
         summary TEXT,
         text_excerpt TEXT,
@@ -43,13 +45,107 @@ export async function ensureSchema() {
         headline TEXT NOT NULL,
         slug TEXT NOT NULL UNIQUE,
         dek TEXT NOT NULL,
+        image_url TEXT,
         body_markdown TEXT NOT NULL,
         short_post TEXT NOT NULL,
         credits JSONB NOT NULL,
+        citations JSONB NOT NULL DEFAULT '[]'::jsonb,
+        source_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+        headline_hash TEXT,
+        canonical_key TEXT,
+        story_fingerprint JSONB,
+        tldr JSONB,
+        entities JSONB,
+        data_blocks JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS citations JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS source_urls JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS headline_hash TEXT`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS canonical_key TEXT`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS story_fingerprint JSONB`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS category TEXT`,
+    sql`CREATE INDEX IF NOT EXISTS generated_posts_headline_hash_idx ON generated_posts (headline_hash)`,
+    sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`,
+    sql`CREATE INDEX IF NOT EXISTS generated_posts_category_created_idx ON generated_posts (category, created_at DESC)`,
+    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS image_credit TEXT`,
+    sql`
+      CREATE TABLE IF NOT EXISTS events (
+        id BIGSERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        event_date TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `,
+    sql`
+      CREATE TABLE IF NOT EXISTS knowledge_state (
+        id BIGSERIAL PRIMARY KEY,
+        category TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        headline TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        key_entities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        key_facts JSONB NOT NULL DEFAULT '[]'::jsonb,
+        source_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+        published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `,
+    sql`CREATE INDEX IF NOT EXISTS knowledge_state_category_idx ON knowledge_state (category, published_at DESC)`,
+    sql`CREATE INDEX IF NOT EXISTS knowledge_state_entities_gin ON knowledge_state USING GIN (key_entities)`,
   ]);
+}
+
+export async function saveEvents(events: Array<{title: string, url: string, date: string, source: string}>) {
+  if (!events.length) return;
+  await sql.transaction([
+    sql`TRUNCATE TABLE events`,
+    ...events.map(
+      (e) => sql`
+        INSERT INTO events (title, url, event_date, source)
+        VALUES (${e.title}, ${e.url}, ${e.date}, ${e.source})
+      `
+    ),
+  ]);
+}
+
+export async function fetchStoredEvents() {
+  return sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 16`;
+}
+
+/** Latest pipeline attempt (includes rejected / empty ticks). */
+export async function fetchLatestPipelineRunCreatedAt(): Promise<Date | null> {
+  const rows = await sql`
+    SELECT created_at FROM pipeline_runs ORDER BY created_at DESC LIMIT 1
+  `;
+  const raw = rows[0]?.created_at as string | Date | undefined;
+  if (!raw) return null;
+  const d = typeof raw === "string" ? new Date(raw) : raw;
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/** Lightweight snapshot for /health (debugging automations). */
+export async function fetchPipelineActivitySummary() {
+  const runRows = await sql`
+    SELECT created_at, status, published_at, reason
+    FROM pipeline_runs
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const postRows = await sql`
+    SELECT created_at FROM generated_posts ORDER BY created_at DESC LIMIT 1
+  `;
+  const r = runRows[0] as { created_at?: string | Date; status?: string; published_at?: string | Date | null; reason?: string | null } | undefined;
+  const p = postRows[0] as { created_at?: string | Date } | undefined;
+  return {
+    lastRunAt: r?.created_at ?? null,
+    lastRunStatus: r?.status ?? null,
+    lastRunReason: r?.reason ?? null,
+    lastPublishedPostAt: p?.created_at ?? null,
+  };
 }
 
 export async function createRun(runId: string, topic: TrendCandidate | null) {
@@ -63,7 +159,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
   const result = attempt.result;
   await sql`
     INSERT INTO source_attempts (
-      run_id, source_name, status, article_url, canonical_url, headline, published_at,
+      run_id, source_name, status, article_url, canonical_url, headline, image_url, published_at,
       summary, text_excerpt, facts, failure_reason
     )
     VALUES (
@@ -73,6 +169,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
       ${result?.articleUrl ?? null},
       ${result?.canonicalUrl ?? null},
       ${result?.headline ?? null},
+      ${result?.imageUrl ?? null},
       ${result?.publishedAt ?? null},
       ${result?.summary ?? null},
       ${result?.textExcerpt ?? null},
@@ -83,21 +180,48 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
 }
 
 export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
-  const inserted = (await sql`
-    INSERT INTO generated_posts (run_id, topic, headline, slug, dek, body_markdown, short_post, credits)
-    VALUES (
-      ${runId},
-      ${post.topic},
-      ${post.headline},
-      ${post.slug},
-      ${post.dek},
-      ${post.bodyMarkdown},
-      ${post.shortPost},
-      ${JSON.stringify(post.credits)}
-    )
-    RETURNING id
-  `) as Array<{ id: number }>;
-  return inserted[0]?.id;
+  // Retry with a unique slug if the original collides with an existing one
+  const trySlug = async (slug: string): Promise<number | undefined> => {
+    try {
+      const inserted = (await sql`
+        INSERT INTO generated_posts (
+          run_id, topic, headline, slug, dek, image_url, image_credit, body_markdown, short_post, credits, citations,
+          source_urls, headline_hash, canonical_key, story_fingerprint, tldr, entities, data_blocks, category
+        )
+        VALUES (
+          ${runId},
+          ${post.topic},
+          ${post.headline},
+          ${slug},
+          ${post.dek},
+          ${post.imageUrl ?? null},
+          ${post.imageCredit ?? null},
+          ${post.bodyMarkdown},
+          ${post.shortPost},
+          ${JSON.stringify(post.credits)},
+          ${JSON.stringify(post.citations ?? [])},
+          ${JSON.stringify(post.sourceUrls ?? [])},
+          ${post.headlineHash ?? null},
+          ${post.canonicalKey ?? null},
+          ${post.storyFingerprint ? JSON.stringify(post.storyFingerprint) : null},
+          ${post.tldr ? JSON.stringify(post.tldr) : null},
+          ${post.entities ? JSON.stringify(post.entities) : null},
+          ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null},
+          ${post.editorialCategory ?? null}
+        )
+        RETURNING id
+      `) as Array<{ id: number }>;
+      return inserted[0]?.id;
+    } catch (err: any) {
+      // If unique constraint violation on slug, retry with random suffix
+      if (err?.code === "23505" && err?.detail?.includes("slug")) {
+        return trySlug(`${slug}-${crypto.randomUUID().slice(0, 8)}`);
+      }
+      throw err;
+    }
+  };
+
+  return trySlug(post.slug);
 }
 
 export async function completeRun(result: PipelineRunResult) {
@@ -112,9 +236,40 @@ export async function completeRun(result: PipelineRunResult) {
   `;
 }
 
-export async function fetchRecentPosts(limit = 10) {
+export async function fetchPostSlugDatesForSitemap(limit = 2000) {
   return sql`
-    SELECT id, run_id, topic, headline, slug, dek, body_markdown, short_post, credits, created_at
+    SELECT slug, created_at AS "publishedAt"
+    FROM generated_posts
+    WHERE slug IS NOT NULL AND TRIM(slug) <> ''
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+}
+
+export async function fetchRecentPosts(limit = 1000) {
+  return sql`
+    SELECT
+      id,
+      topic,
+      headline,
+      slug,
+      dek,
+      image_url as "imageUrl",
+      image_credit as "imageCredit",
+      body_markdown,
+      short_post,
+      credits,
+      citations,
+      source_urls as "sourceUrls",
+      headline_hash as "headlineHash",
+      canonical_key as "canonicalKey",
+      story_fingerprint as "storyFingerprint",
+      tldr,
+      entities,
+      data_blocks as "dataBlocks",
+      category,
+      created_at as "publishedAt",
+      created_at
     FROM generated_posts
     ORDER BY created_at DESC
     LIMIT ${limit}
@@ -140,4 +295,132 @@ export async function fetchRun(runId: string) {
     run: runs[0] ?? null,
     attempts,
   };
+}
+export async function fetchPostById(id: string) {
+  const numericId = id.replace("db-", "");
+  const result = await sql`
+    SELECT
+      *,
+      source_urls as "sourceUrls",
+      headline_hash as "headlineHash",
+      canonical_key as "canonicalKey",
+      story_fingerprint as "storyFingerprint",
+      data_blocks as "dataBlocks"
+    FROM generated_posts
+    WHERE id = ${numericId}
+  `;
+  return result[0];
+}
+
+export async function updatePostContent(id: string, content: string) {
+  const numericId = id.replace("db-", "");
+  await sql`
+    UPDATE generated_posts
+    SET body_markdown = ${content}
+    WHERE id = ${numericId}
+  `;
+}
+
+export type KnowledgeStateEntry = {
+  category: string;
+  topic: string;
+  headline: string;
+  slug: string;
+  keyEntities: string[];
+  keyFacts: string[];
+  sourceUrls: string[];
+  publishedAt: Date;
+};
+
+export async function saveKnowledgeState(post: GeneratedPost, topic: string, sources: SourceExtraction[]) {
+  const keyEntities = (post.entities ?? []).map((e) => e.name).slice(0, 12);
+  const keyFacts = sources
+    .flatMap((s) => s.facts ?? [])
+    .filter((f) => f.length > 20)
+    .slice(0, 8);
+  const sourceUrls = sources.map((s) => s.articleUrl).filter(Boolean);
+
+  await sql`
+    INSERT INTO knowledge_state (category, topic, headline, slug, key_entities, key_facts, source_urls)
+    VALUES (
+      ${post.editorialCategory ?? "Tech"},
+      ${topic},
+      ${post.headline},
+      ${post.slug},
+      ${JSON.stringify(keyEntities)},
+      ${JSON.stringify(keyFacts)},
+      ${JSON.stringify(sourceUrls)}
+    )
+  `;
+}
+
+export async function fetchRecentKnowledgeState(limit = 10): Promise<KnowledgeStateEntry[]> {
+  const rows = await sql`
+    SELECT category, topic, headline, slug,
+           key_entities::text as "keyEntitiesRaw",
+           key_facts::text as "keyFactsRaw",
+           source_urls::text as "sourceUrlsRaw",
+           published_at as "publishedAt"
+    FROM knowledge_state
+    ORDER BY published_at DESC
+    LIMIT ${limit}
+  `;
+
+  return rows.map((r: any) => ({
+    category: r.category,
+    topic: r.topic,
+    headline: r.headline,
+    slug: r.slug,
+    keyEntities: safeParseJson(r.keyEntitiesRaw, []),
+    keyFacts: safeParseJson(r.keyFactsRaw, []),
+    sourceUrls: safeParseJson(r.sourceUrlsRaw, []),
+    publishedAt: new Date(r.publishedAt),
+  }));
+}
+
+export async function fetchRelatedKnowledge(
+  category: EditorialCategory,
+  entityNames: string[],
+  windowDays = 7,
+): Promise<KnowledgeStateEntry[]> {
+  if (entityNames.length === 0) return [];
+
+  // Match by category + any overlapping entity name
+  const rows = await sql`
+    SELECT category, topic, headline, slug,
+           key_entities::text as "keyEntitiesRaw",
+           key_facts::text as "keyFactsRaw",
+           source_urls::text as "sourceUrlsRaw",
+           published_at as "publishedAt"
+    FROM knowledge_state
+    WHERE category = ${category}
+      AND published_at >= NOW() - INTERVAL '1 day' * ${windowDays}
+    ORDER BY published_at DESC
+    LIMIT 5
+  `;
+
+  const entries: KnowledgeStateEntry[] = rows.map((r: any) => ({
+    category: r.category,
+    topic: r.topic,
+    headline: r.headline,
+    slug: r.slug,
+    keyEntities: safeParseJson(r.keyEntitiesRaw, []),
+    keyFacts: safeParseJson(r.keyFactsRaw, []),
+    sourceUrls: safeParseJson(r.sourceUrlsRaw, []),
+    publishedAt: new Date(r.publishedAt),
+  }));
+
+  // Filter to only entries that share at least one entity with the new topic
+  const entityLower = entityNames.map((n) => n.toLowerCase());
+  return entries.filter((e) =>
+    e.keyEntities.some((ke) => entityLower.includes(ke.toLowerCase())),
+  );
+}
+
+function safeParseJson(raw: string, fallback: any): any {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
 }

@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Article } from './types';
-import { fetchArticles, FALLBACK_ARTICLES } from './services/newsService';
+import { Article, EventInfo } from './types';
+import { fetchArticles, fetchEvents } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
+import { EventsPanel } from './components/EventsPanel';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
+import { SeoHead } from './components/SeoHead';
 
 export default function App() {
-  const [articles, setArticles] = useState<Article[]>(FALLBACK_ARTICLES);
-  const [filteredArticles, setFilteredArticles] = useState<Article[]>(FALLBACK_ARTICLES);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
+  const [events, setEvents] = useState<EventInfo[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -24,6 +27,14 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [apiError, setApiError] = useState(false);
+
+  useEffect(() => {
+    const p = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (p === "/admin/from-link") {
+      window.history.replaceState({}, "", "/");
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -35,16 +46,35 @@ export default function App() {
       }, 10000);
 
       try {
-        const data = await fetchArticles();
+        const [data, eventsData] = await Promise.all([fetchArticles(), fetchEvents()]);
         if (!active) return;
         
-        if (data.length === FALLBACK_ARTICLES.length && data[0].id === FALLBACK_ARTICLES[0].id) {
-           toast.info("Showing news archive.");
-        }
         setArticles(data);
         setFilteredArticles(data);
+        setEvents(eventsData);
+        setApiError(false);
+
+        // Deep linking: check URL for articleId (slug or id)
+        const params = new URLSearchParams(window.location.search);
+        const articleParam = params.get('articleId')?.toLowerCase();
+        
+        if (articleParam) {
+          const article = data.find(a => 
+            a.slug?.toLowerCase() === articleParam || 
+            a.id?.toLowerCase() === articleParam
+          );
+          if (article) {
+            console.log("Deep link success: Opening", article.title);
+            setSelectedArticle(article);
+          } else {
+            console.warn("Deep link failed: Could not find article with slug", articleParam);
+          }
+        }
       } catch (err) {
-        if (active) toast.error("Could not reach live news wire. Showing latest archive.");
+        if (active) {
+          setApiError(true);
+          toast.error("Could not reach live news wire.");
+        }
       } finally {
         clearTimeout(safetyTimeout);
         if (active) setLoading(false);
@@ -58,6 +88,17 @@ export default function App() {
       clearInterval(timer);
     };
   }, []);
+  
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (selectedArticle) {
+      params.set('articleId', selectedArticle.slug);
+    } else {
+      params.delete('articleId');
+    }
+    const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
+    window.history.replaceState({}, '', newUrl);
+  }, [selectedArticle]);
 
   const [searchLoading, setSearchLoading] = useState(false);
 
@@ -90,16 +131,17 @@ export default function App() {
   }, [searchQuery]);
 
   useEffect(() => {
-    const TODAY = new Date("2026-04-28T23:59:59Z"); 
-    const SEVEN_DAYS_AGO = new Date(TODAY);
-    SEVEN_DAYS_AGO.setDate(TODAY.getDate() - 8); // 8 days for buffer
+    const TODAY = new Date();
+    const RECENT_CUTOFF = new Date(TODAY);
+    // Show posts from the last 90 days (API already returns newest first, limit 50).
+    // A tight 8-day window hid everything when the pipeline had not run recently.
+    RECENT_CUTOFF.setDate(TODAY.getDate() - 90);
 
     let result = articles;
-    
-    // Filter by timestamp (within ~8 days)
-    result = result.filter(a => {
+
+    result = result.filter((a) => {
       const articleDate = new Date(a.date);
-      return articleDate >= SEVEN_DAYS_AGO && articleDate <= TODAY;
+      return articleDate >= RECENT_CUTOFF;
     });
 
     // Sort by date (newest first)
@@ -125,6 +167,18 @@ export default function App() {
     localStorage.setItem('sf-bookmarks', JSON.stringify(bookmarkedIds));
   }, [bookmarkedIds]);
 
+  useEffect(() => {
+    // Sync with URL parameters for deep-linking
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('id');
+    const articleId = params.get('articleId');
+    
+    if ((id || articleId) && articles.length > 0) {
+      const found = articles.find(a => a.id === id || a.slug === articleId);
+      if (found) setSelectedArticle(found);
+    }
+  }, [articles]);
+
   const handleBookmark = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     setBookmarkedIds(prev => 
@@ -135,21 +189,31 @@ export default function App() {
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${encodeURIComponent(article.slug)}`;
     if (navigator.share) {
       navigator.share({
         title: article.title,
         text: article.excerpt,
-        url: window.location.href,
+        url: shareUrl,
       }).catch((err) => {
         // user clicked cancel, squash the error
       });
     } else {
-      navigator.clipboard.writeText(window.location.href);
+      navigator.clipboard.writeText(shareUrl);
       toast.success('Link copied to clipboard');
     }
   };
 
-  const categories = ['Civics', 'Culture', 'Tech', 'Transit', 'Food'];
+  const categories = ['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'];
+
+  const seoMode =
+    selectedArticle != null
+      ? "article"
+      : selectedCategory === "Events"
+        ? "events"
+        : selectedCategory && selectedCategory !== "Bookmarks"
+          ? "category"
+          : "home";
 
   if (loading) {
     return (
@@ -195,6 +259,18 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-paper text-ink selection:bg-black selection:text-white overflow-x-hidden">
+      <SeoHead
+        article={selectedArticle}
+        articles={articles}
+        mode={seoMode}
+        categoryLabel={selectedCategory}
+      />
+      <a
+        href="#main-stream"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[300] focus:rounded focus:bg-ink focus:px-4 focus:py-2 focus:text-paper focus:outline-none"
+      >
+        Skip to main content
+      </a>
       <Toaster position="top-center" richColors />
       
       {/* Live Dispatch Ticker */}
@@ -297,7 +373,7 @@ export default function App() {
               >
                 Front Page
               </button>
-              {categories.map(cat => (
+              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food'].map(cat => (
                 <button 
                   key={cat}
                   onClick={() => { setSelectedCategory(cat); setIsMenuOpen(false); }}
@@ -326,7 +402,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Editorial Header */}
-      <div className="border-b-[4px] border-ink bg-paper pt-2 md:pt-4 px-4 md:px-6">
+      <div className="border-b-[4px] border-ink bg-paper pt-2 md:pt-4 px-4 md:px-6 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto">
           <div className="flex flex-col gap-2 md:gap-4 mb-2 md:mb-4 border-b border-ink pb-2 md:pb-4">
              {/* Top Meta Bar */}
@@ -370,92 +446,158 @@ export default function App() {
 
              {/* Big Title on its own line */}
              <h1 
-              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-              className="text-[clamp(1.5rem,7.8vw,120px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-none pt-1 md:pt-2 pb-0 block whitespace-nowrap"
+              onClick={() => { setSelectedCategory(null); setSearchQuery(""); window.scrollTo(0,0); }}
+              className="text-[clamp(1rem,6vw,95px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
             >
                 Times of San Francisco
              </h1>
 
-             <div className="text-center mt-[-4px] md:mt-[-8px] mb-1">
-               <span className="inline-block text-[10px] md:text-[11px] font-mono font-medium uppercase tracking-[0.4em] text-ink opacity-60">
+             <div className="text-center mt-1 md:mt-2">
+               <span className="inline-block text-[9px] md:text-[11px] font-mono font-medium uppercase tracking-[0.3em] md:tracking-[0.4em] text-ink opacity-60">
                  {currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                </span>
              </div>
           </div>
           
-          <nav className="flex items-center justify-center py-1 md:py-2 text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
-            <div className="flex items-center gap-4 md:gap-8 flex-wrap justify-center">
-              {categories.map(cat => (
+          <nav className="relative">
+            <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
+              <div className="flex items-center gap-6 md:gap-10 flex-nowrap min-w-max md:min-w-0">
+                {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
+                  <button 
+                    key={cat}
+                    onClick={() => { setSelectedCategory(cat); window.scrollTo(0,0); }}
+                    className={cn(
+                      "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
+                      selectedCategory === cat ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                    )}
+                  >
+                    {cat}
+                  </button>
+                ))}
+                <div className="w-px h-4 bg-ink/10 mx-2" />
                 <button 
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
+                  onClick={() => { setSelectedCategory('Bookmarks'); window.scrollTo(0,0); }}
                   className={cn(
-                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
-                    selectedCategory === cat ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
+                    selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
                   )}
                 >
-                  {cat}
+                  <BookmarkIcon size={12} />
+                  <span>Reading List</span>
                 </button>
-              ))}
-              <div className="w-px h-4 bg-ink/10 hidden sm:block mx-2" />
-              <button 
-                onClick={() => setSelectedCategory('Bookmarks')}
-                className={cn(
-                  "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
-                  selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
-                )}
-              >
-                <BookmarkIcon size={12} />
-                <span className="hidden sm:inline">Reading List</span>
-              </button>
+              </div>
             </div>
+            {/* Fade effect for scroll indicators on mobile */}
+            <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-paper to-transparent pointer-events-none md:hidden" />
           </nav>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-20 lg:py-24">
-        {filteredArticles.length === 0 ? (
-          <div className="py-32 text-center">
-            <p className="text-xl italic font-serif text-ink/40">No stories found matches your criteria.</p>
-            <button 
-              onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
-              className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
-            >
-              Reset Filters
-            </button>
+      <main id="main-stream" tabIndex={-1} className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12 lg:py-16 outline-none">
+        {selectedCategory === 'Events' ? (
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h2>
+            <EventsPanel events={events} />
           </div>
         ) : (
-          <>
-            <AnimatePresence mode="popLayout">
-              {filteredArticles.length > 0 && !selectedCategory && !searchQuery && (
-                <div key="featured" className="mb-16">
-                  <ArticleCard 
-                    article={filteredArticles[0]} 
-                    onClick={setSelectedArticle} 
-                    featured 
-                    isBookmarked={bookmarkedIds.includes(filteredArticles[0].id)}
-                    onBookmark={(e) => handleBookmark(filteredArticles[0].id, e)}
-                    onShare={(e) => handleShare(filteredArticles[0], e)}
-                  />
+          <div className="flex flex-col lg:flex-row gap-12">
+            <div className="flex-grow">
+              {filteredArticles.length === 0 ? (
+                <div className="py-32 text-center">
+                  {apiError ? (
+                    <>
+                      <p className="text-xl italic font-serif text-ink/40">Could not reach the news wire. The server may be restarting.</p>
+                      <p className="mt-2 text-sm font-mono text-ink/30">If this persists, check that the API service is running and VITE_API_URL is correctly configured.</p>
+                    </>
+                  ) : !loading ? (
+                    <p className="text-xl italic font-serif text-ink/40">No stories yet. The agent pipeline generates new articles every few minutes.</p>
+                  ) : null}
+                  <button 
+                    onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+                    className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
+                  >
+                    Reset Filters
+                  </button>
                 </div>
-              )}
-            </AnimatePresence>
+              ) : (
+                <>
+                  <AnimatePresence mode="popLayout">
+                    {filteredArticles.length > 0 && !selectedCategory && !searchQuery && (
+                      <div key="featured" className="mb-16">
+                        <ArticleCard 
+                          article={filteredArticles[0]} 
+                          onClick={setSelectedArticle} 
+                          featured 
+                          isBookmarked={bookmarkedIds.includes(filteredArticles[0].id)}
+                          onBookmark={(e) => handleBookmark(filteredArticles[0].id, e)}
+                          onShare={(e) => handleShare(filteredArticles[0], e)}
+                        />
+                      </div>
+                    )}
+                  </AnimatePresence>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-12 gap-y-16">
-              {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
-                <ArticleCard 
-                  key={article.id} 
-                  article={article} 
-                  onClick={setSelectedArticle}
-                  isBookmarked={bookmarkedIds.includes(article.id)}
-                  onBookmark={(e) => handleBookmark(article.id, e)}
-                  onShare={(e) => handleShare(article, e)}
-                />
-              ))}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 md:gap-x-8 gap-y-10 md:gap-y-12">
+                    {( (!selectedCategory && !searchQuery) ? filteredArticles.slice(1) : filteredArticles ).map((article) => (
+                      <ArticleCard 
+                        key={article.id} 
+                        article={article} 
+                        onClick={setSelectedArticle}
+                        isBookmarked={bookmarkedIds.includes(article.id)}
+                        onBookmark={(e) => handleBookmark(article.id, e)}
+                        onShare={(e) => handleShare(article, e)}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-          </>
+          </div>
         )}
+
+        <section
+          className="mt-24 max-w-3xl mx-auto border-t border-ink/10 pt-16 px-1"
+          aria-labelledby="faq-heading"
+        >
+          <h2 id="faq-heading" className="text-lg font-black uppercase tracking-tight mb-8">
+            About this publication
+          </h2>
+          <dl className="space-y-8 text-sm text-ink/75 leading-relaxed">
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                What is Times of San Francisco?
+              </dt>
+              <dd>
+                {`Times of San Francisco (Times of SF) is a San Francisco–focused news reader. Stories combine RSS and web sources with editorial synthesis so readers get context, citations, and clear limits on what is confirmed versus inferred.`}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                How are articles produced?
+              </dt>
+              <dd>
+                An automated pipeline ingests public sources (feeds and pages), deduplicates overlapping coverage, and
+                uses an LLM only after source text is available. Published pieces include credits and links back to
+                originals where possible.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                Which topics does Times of SF cover?
+              </dt>
+              <dd>
+                Regular sections include civics, culture, tech, funding, transit, food, and local events—centered on
+                San Francisco and immediate civic relevance.
+              </dd>
+            </div>
+            <div>
+              <dt className="font-mono text-[10px] uppercase tracking-widest text-accent mb-2">
+                Where is Times of SF based?
+              </dt>
+              <dd>Editorial focus and datelines are San Francisco, California, United States.</dd>
+            </div>
+          </dl>
+        </section>
 
         {/* Footer */}
         <footer className="mt-32 pt-16 border-t-2 border-ink pb-24 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
@@ -501,7 +643,13 @@ export default function App() {
 
       <ReaderView 
         article={selectedArticle} 
-        onClose={() => setSelectedArticle(null)} 
+        onClose={() => {
+          setSelectedArticle(null);
+          const url = new URL(window.location.href);
+          url.searchParams.delete("id");
+          url.searchParams.delete("articleId");
+          window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+        }} 
         isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
         onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}
         onShare={() => selectedArticle && handleShare(selectedArticle)}

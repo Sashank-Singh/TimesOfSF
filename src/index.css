@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @theme {
   --font-serif: "Playfair Display", serif;
@@ -26,6 +25,28 @@
 }
 
 @layer utilities {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+  .not-sr-only {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: inherit;
+    margin: inherit;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
@@ -71,20 +92,63 @@
 }
 
 /* Drop Cap Styling */
-.markdown-body p:first-of-type::first-letter {
-  @apply float-left text-7xl font-serif font-black mr-4 mt-2 leading-[0.8] text-ink;
+.markdown-body > p:first-of-type::first-letter {
+  @apply float-left text-5xl md:text-7xl font-serif font-black mr-3 md:mr-4 mt-1 md:mt-2 leading-[0.8] text-accent;
 }
 
 .markdown-body h2 {
-  @apply text-3xl font-bold mt-12 mb-6 font-serif border-b border-ink/5 pb-2;
+  @apply text-3xl md:text-4xl font-black mt-16 mb-8 font-serif border-b-2 border-ink/10 pb-4 tracking-tighter leading-none;
+}
+
+.markdown-body h3 {
+  @apply text-xl md:text-2xl font-bold mt-12 mb-6 font-serif text-ink/80 tracking-tight;
 }
 
 .markdown-body p {
-  @apply mb-6;
+  @apply mb-8;
+}
+
+.markdown-body strong {
+  @apply font-black text-ink;
+}
+
+.markdown-body em {
+  @apply italic text-ink/80;
 }
 
 .markdown-body blockquote {
-  @apply border-l-2 border-accent pl-8 py-2 italic my-12 text-2xl font-serif text-ink/80 leading-relaxed;
+  @apply border-l-4 border-accent pl-10 py-6 italic my-16 text-2xl md:text-3xl font-serif text-ink/90 leading-tight bg-accent/[0.02] pr-8 relative;
+}
+
+.markdown-body blockquote::before {
+  content: '“';
+  @apply absolute -left-4 -top-8 text-7xl text-accent/10 font-serif;
+}
+
+.markdown-body ul {
+  @apply space-y-4 mb-10 pl-6;
+}
+
+.markdown-body ul li {
+  @apply relative pl-6 text-lg text-ink/70 leading-relaxed;
+}
+
+.markdown-body ul li::before {
+  content: '■';
+  @apply absolute left-0 top-2.5 text-[8px] text-accent;
+}
+
+.markdown-body ol {
+  @apply space-y-4 mb-10 pl-6 list-decimal marker:font-mono marker:text-xs marker:text-accent marker:font-bold;
+}
+
+.markdown-body hr {
+  @apply border-0 border-t border-ink/10 my-16 relative overflow-visible;
+}
+
+.markdown-body hr::after {
+  content: '❧';
+  @apply absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-paper px-4 text-accent/40 text-xl;
 }
 
 .news-grid-item {

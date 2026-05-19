@@ -23,13 +23,18 @@ export async function loadInngestState(): Promise<InngestModuleState> {
   if (cachedState) return cachedState;
 
   if (!config.inngestEventKey || !config.inngestSigningKey) {
+    console.warn(
+      "⚠️ INNGEST NOT ENABLED: Missing INNGEST_EVENT_KEY or INNGEST_SIGNING_KEY. Inngest-managed cron will not call this app. The server still starts its own interval scheduler unless DISABLE_INTERNAL_PIPELINE_CRON=true (see /health).",
+    );
     cachedState = {
       enabled: false,
-      reason: "Inngest env vars are not configured. Manual pipeline mode is still available.",
+      reason:
+        "Inngest env vars are not configured. The server uses an internal interval scheduler unless DISABLE_INTERNAL_PIPELINE_CRON=true.",
     };
     return cachedState;
   }
 
+  console.log("🚀 INITIALIZING INNGEST: Automation mode active.");
   try {
     const [{ Inngest }, { serve }] = await Promise.all([import("inngest"), import("inngest/express")]);
 
