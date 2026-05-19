@@ -9,6 +9,22 @@ import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'luc
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 import { SeoHead } from './components/SeoHead';
+import { articlePath } from './lib/site';
+
+function readArticleSlugFromLocation(location: Location): string | null {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  const articleMatch = path.match(/^\/articles\/([^/]+)$/);
+  if (articleMatch) {
+    try {
+      return decodeURIComponent(articleMatch[1]).toLowerCase();
+    } catch {
+      return articleMatch[1].toLowerCase();
+    }
+  }
+
+  const params = new URLSearchParams(location.search);
+  return params.get('articleId')?.toLowerCase() ?? params.get('id')?.toLowerCase() ?? null;
+}
 
 export default function App() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -54,9 +70,8 @@ export default function App() {
         setEvents(eventsData);
         setApiError(false);
 
-        // Deep linking: check URL for articleId (slug or id)
-        const params = new URLSearchParams(window.location.search);
-        const articleParam = params.get('articleId')?.toLowerCase();
+        // Deep linking: check URL path or legacy query params for article slug/id
+        const articleParam = readArticleSlugFromLocation(window.location);
         
         if (articleParam) {
           const article = data.find(a => 
@@ -68,6 +83,11 @@ export default function App() {
             setSelectedArticle(article);
           } else {
             console.warn("Deep link failed: Could not find article with slug", articleParam);
+            const attemptedArticleRoute = window.location.pathname.startsWith('/articles/');
+            if (attemptedArticleRoute) {
+              window.history.replaceState({}, '', '/');
+              toast.error('That article link is no longer available.');
+            }
           }
         }
       } catch (err) {
@@ -90,14 +110,11 @@ export default function App() {
   }, []);
   
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
     if (selectedArticle) {
-      params.set('articleId', selectedArticle.slug);
+      window.history.replaceState({}, '', articlePath(selectedArticle.slug));
     } else {
-      params.delete('articleId');
+      window.history.replaceState({}, '', '/');
     }
-    const newUrl = `${window.location.pathname}${params.toString() ? '?' + params.toString() : ''}`;
-    window.history.replaceState({}, '', newUrl);
   }, [selectedArticle]);
 
   const [searchLoading, setSearchLoading] = useState(false);
@@ -168,14 +185,16 @@ export default function App() {
   }, [bookmarkedIds]);
 
   useEffect(() => {
-    // Sync with URL parameters for deep-linking
-    const params = new URLSearchParams(window.location.search);
-    const id = params.get('id');
-    const articleId = params.get('articleId');
+    // Sync with URL path / legacy URL parameters for deep-linking
+    const articleId = readArticleSlugFromLocation(window.location);
     
-    if ((id || articleId) && articles.length > 0) {
-      const found = articles.find(a => a.id === id || a.slug === articleId);
-      if (found) setSelectedArticle(found);
+    if (articleId && articles.length > 0) {
+      const found = articles.find(a => a.id === articleId || a.slug === articleId);
+      if (found) {
+        setSelectedArticle(found);
+      } else if (window.location.pathname.startsWith('/articles/')) {
+        window.history.replaceState({}, '', '/');
+      }
     }
   }, [articles]);
 
@@ -189,7 +208,7 @@ export default function App() {
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const shareUrl = `${window.location.origin}${window.location.pathname}?articleId=${encodeURIComponent(article.slug)}`;
+    const shareUrl = `${window.location.origin}${articlePath(article.slug)}`;
     if (navigator.share) {
       navigator.share({
         title: article.title,

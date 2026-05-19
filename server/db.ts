@@ -312,6 +312,22 @@ export async function fetchPostById(id: string) {
   return result[0];
 }
 
+export async function fetchPostBySlug(slug: string) {
+  const result = await sql`
+    SELECT
+      *,
+      source_urls as "sourceUrls",
+      headline_hash as "headlineHash",
+      canonical_key as "canonicalKey",
+      story_fingerprint as "storyFingerprint",
+      data_blocks as "dataBlocks"
+    FROM generated_posts
+    WHERE slug = ${slug}
+    LIMIT 1
+  `;
+  return result[0];
+}
+
 export async function updatePostContent(id: string, content: string) {
   const numericId = id.replace("db-", "");
   await sql`
