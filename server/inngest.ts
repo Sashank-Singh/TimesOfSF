@@ -35,7 +35,6 @@ export async function loadInngestState(): Promise<InngestModuleState> {
   }
 
   console.log("🚀 INITIALIZING INNGEST: Automation mode active.");
-
   try {
     const [{ Inngest }, { serve }] = await Promise.all([import("inngest"), import("inngest/express")]);
 
