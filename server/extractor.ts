@@ -1,5 +1,7 @@
-import { config } from "./config";
+import { JSDOM } from "jsdom";
 import { SourceExtraction, SourceSearchResult } from "./types";
+import { config } from "./config";
+import { extractWithReadabilityFallback } from "./articleExtractor";
 
 function decodeEntities(input: string) {
   return input
@@ -10,6 +12,7 @@ function decodeEntities(input: string) {
     .replace(/&#39;/g, "'");
 }
 
+/** Minimal HTML-to-text stripping for RSS descriptions only */
 function stripTags(html: string) {
   return decodeEntities(
     html
@@ -22,77 +25,102 @@ function stripTags(html: string) {
   );
 }
 
-function pickMeta(html: string, key: string) {
-  const patterns = [
-    new RegExp(`<meta[^>]+property=["']${key}["'][^>]+content=["']([^"']+)["']`, "i"),
-    new RegExp(`<meta[^>]+name=["']${key}["'][^>]+content=["']([^"']+)["']`, "i"),
-  ];
+async function tryFetchImageFromPage(url: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(config.sourceTimeoutMs),
+      headers: {
+        "user-agent": "TimesOfSFBot/1.1 (+https://www.timesofsf.com)",
+        accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+      },
+      redirect: "follow",
+    });
+    if (!response.ok) return undefined;
+    const html = await response.text();
+    const dom = new JSDOM(html, { url });
 
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (match?.[1]) return decodeEntities(match[1].trim());
+    // Check meta tags
+    for (const sel of ['meta[property="og:image:secure_url"]', 'meta[property="og:image"]', 'meta[name="twitter:image"]', 'link[rel="image_src"]']) {
+      const val = dom.window.document.querySelector(sel)?.getAttribute("content") || dom.window.document.querySelector(sel)?.getAttribute("href");
+      if (val?.startsWith("http")) return val;
+    }
+
+    // First large <img> in the page
+    const imgs = dom.window.document.querySelectorAll("img[src]");
+    for (const img of imgs) {
+      const src = (img.getAttribute("src") || "").trim();
+      if (!src) continue;
+      const fullSrc = src.startsWith("//") ? `https:${src}` : src;
+      if (!fullSrc.startsWith("http")) continue;
+      if (/pixel|tracker|icon|spacer|blank|1x1|beacon|analytics|transparent/i.test(fullSrc)) continue;
+      if (/\.(jpg|jpeg|png|webp)(\?|$)/i.test(fullSrc)) return fullSrc;
+      if (/\.(gif)(\?|$)/i.test(fullSrc) && !/spinner|loading/i.test(fullSrc)) return fullSrc;
+    }
+
+    return undefined;
+  } catch {
+    return undefined;
   }
-  return "";
 }
 
-function extractParagraphs(html: string) {
-  const matches = [...html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)];
-  return matches
-    .map((match) => stripTags(match[1]))
-    .filter((text) => text.length > 80)
-    .slice(0, 8);
-}
-
-function buildFacts(summary: string, paragraphs: string[]) {
-  const sentences = [summary, ...paragraphs]
-    .join(" ")
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence.length > 40)
-    .slice(0, 4);
-
-  return [...new Set(sentences)].slice(0, 3);
+async function buildFallbackExtraction(searchResult: SourceSearchResult): Promise<SourceExtraction> {
+  let imageUrl = searchResult.imageUrl?.startsWith("http") ? searchResult.imageUrl : undefined;
+  if (!imageUrl) {
+    imageUrl = await tryFetchImageFromPage(searchResult.articleUrl);
+  }
+  return {
+    sourceName: searchResult.sourceName,
+    sourceId: searchResult.sourceId,
+    sourceType: searchResult.sourceType,
+    reliabilityTier: searchResult.reliabilityTier,
+    allowedUse: searchResult.allowedUse,
+    articleUrl: searchResult.articleUrl,
+    canonicalUrl: searchResult.articleUrl,
+    headline: searchResult.headline,
+    imageUrl: imageUrl || "",
+    publishedAt: searchResult.publishedAt,
+    summary: searchResult.headline,
+    textExcerpt: searchResult.summary || "",
+    facts: [searchResult.summary, searchResult.headline].filter(Boolean) as string[],
+  };
 }
 
 export async function extractSource(searchResult: SourceSearchResult): Promise<SourceExtraction> {
-  const response = await fetch(searchResult.articleUrl, {
-    signal: AbortSignal.timeout(config.sourceTimeoutMs),
-    redirect: "follow",
-    headers: {
-      "user-agent": "TimesOfSFBot/1.0 (+https://example.com)",
-      "accept-language": "en-US,en;q=0.9",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Article fetch failed with ${response.status}`);
+  // Primary: full-article extraction via Mozilla Readability
+  // Gives us the real article text, headings, excerpts — far better than RSS snippets.
+  if (!config.disableNewsPlease) {
+    try {
+      return await extractWithReadabilityFallback(searchResult);
+    } catch {
+      // Fall through to RSS metadata fallback
+    }
   }
 
-  const html = await response.text();
-  const canonicalUrl = pickMeta(html, "og:url") || response.url || searchResult.articleUrl;
-  const metaTitle = pickMeta(html, "og:title") || pickMeta(html, "twitter:title");
-  const metaDescription =
-    pickMeta(html, "description") ||
-    pickMeta(html, "og:description") ||
-    pickMeta(html, "twitter:description") ||
-    searchResult.summary ||
-    "";
-  const paragraphs = extractParagraphs(html);
-  const textExcerpt = paragraphs.join(" ").slice(0, 2400);
-  const facts = buildFacts(metaDescription, paragraphs);
+  // Fallback: RSS metadata only (headline + description)
+  return buildFallbackExtraction(searchResult);
+}
 
-  if (!metaDescription && textExcerpt.length < 200) {
-    throw new Error("Insufficient accessible article text");
+export async function searchGoogleImage(query: string): Promise<string | undefined> {
+  if (!config.serperApiKey) {
+    console.warn("SERPER_API_KEY not set. Skipping Google Image search.");
+    return undefined;
   }
 
-  return {
-    sourceName: searchResult.sourceName,
-    articleUrl: searchResult.articleUrl,
-    canonicalUrl,
-    headline: metaTitle || searchResult.headline,
-    publishedAt: searchResult.publishedAt,
-    summary: metaDescription || searchResult.headline,
-    textExcerpt,
-    facts,
-  };
+  try {
+    const response = await fetch("https://google.serper.dev/images", {
+      method: "POST",
+      headers: {
+        "X-API-KEY": config.serperApiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ q: query, num: 1 }),
+    });
+
+    if (!response.ok) return undefined;
+    const data = await response.json();
+    return data.images?.[0]?.imageUrl;
+  } catch (error) {
+    console.error("Google Image search failed:", error);
+    return undefined;
+  }
 }

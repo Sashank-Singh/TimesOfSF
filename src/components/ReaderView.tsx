@@ -1,12 +1,25 @@
 import React, { useState, useRef, useMemo } from "react";
-import { Article } from "../types";
+import { Article, ArticleEntity } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
-import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp } from "lucide-react";
+import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { formatDate, cn } from "../lib/utils";
-import { DEFAULT_IMAGE } from "../services/newsService";
+import { formatPublishedTimestamp, cn } from "../lib/utils";
+
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
+import { lookupGlossaryDefinition } from "../lib/glossary";
+
+const categoryGradients: Record<string, string> = {
+  Tech: "from-indigo-900/80 via-indigo-800/60 to-transparent",
+  Funding: "from-emerald-900/80 via-emerald-800/60 to-transparent",
+  Civics: "from-slate-800/80 via-slate-700/60 to-transparent",
+  Culture: "from-violet-900/80 via-violet-800/60 to-transparent",
+  Transit: "from-sky-900/80 via-sky-800/60 to-transparent",
+  Food: "from-amber-900/80 via-amber-800/60 to-transparent",
+  Events: "from-rose-900/80 via-rose-800/60 to-transparent",
+};
+
+import { expandArticle } from "../services/newsService";
 
 interface ReaderViewProps {
   article: Article | null;
@@ -18,6 +31,8 @@ interface ReaderViewProps {
 
 function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
   const [showSummary, setShowSummary] = useState(false);
+  const [isExpanding, setIsExpanding] = useState(false);
+  const [content, setContent] = useState(article.content);
   const scrollRef = useRef<HTMLDivElement>(null);
   
   const { scrollYProgress } = useScroll({
@@ -30,64 +45,206 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     restDelta: 0.001
   });
 
-  const components = useMemo(() => ({
-    p: ({ children }: any) => {
-      const processText = (text: string): (string | React.ReactNode)[] => {
-        let result: (string | React.ReactNode)[] = [text];
-        
-        // Charts
-        result = result.flatMap(part => {
-          if (typeof part !== 'string') return part;
-          const chartRegex = /\[CHART:(\d+)\]/g;
-          const parts: (string | React.ReactNode)[] = [];
-          let lastIndex = 0;
-          let match;
-          while ((match = chartRegex.exec(part)) !== null) {
-            parts.push(part.slice(lastIndex, match.index));
-            const chartIdx = parseInt(match[1], 10);
-            if (article.dataBlocks?.[chartIdx]) {
-              const block = article.dataBlocks[chartIdx];
-              parts.push(<DataVisChart key={`chart-${chartIdx}`} title={block.title} data={block.data} />);
-            }
-            lastIndex = chartRegex.lastIndex;
+  const chartTokensPresent = content.includes("[CHART:");
+
+  const components = useMemo(() => {
+    const entities: ArticleEntity[] = article.entities ?? [];
+    const dataBlocks = article.dataBlocks ?? [];
+
+    const isAlphaNum = (ch: string) => /[A-Za-z0-9]/.test(ch);
+
+    // Fallback highlight: when the LLM doesn't insert [[Entity]] markers in bodyMarkdown,
+    // still highlight entity names if they appear verbatim in the prose.
+    const autoHighlightEntities = (text: string): (string | React.ReactNode)[] => {
+      const usable: ArticleEntity[] = entities
+        .filter((e): e is ArticleEntity => !!e?.name)
+        .map((e) => {
+          const def = e.definition?.trim() || lookupGlossaryDefinition(e.name);
+          return { name: e.name, definition: def } as ArticleEntity;
+        })
+        .filter((e) => !!e.definition && e.name.trim().length >= 3);
+
+      if (usable.length === 0) return [text];
+
+      const textLower = text.toLowerCase();
+      type Match = { start: number; end: number; entity: ArticleEntity };
+      const matches: Match[] = [];
+
+      for (const entity of usable) {
+        const needleLower = entity.name.toLowerCase();
+        if (!needleLower.trim()) continue;
+
+        let idx = 0;
+        while (idx < textLower.length) {
+          const found = textLower.indexOf(needleLower, idx);
+          if (found < 0) break;
+
+          const start = found;
+          const end = found + needleLower.length;
+
+          const before = start > 0 ? text[start - 1] : "";
+          const after = end < text.length ? text[end] : "";
+
+          // Avoid highlighting inside larger alphanumeric tokens.
+          if ((start > 0 && isAlphaNum(before)) || (end < text.length && isAlphaNum(after))) {
+            idx = end;
+            continue;
           }
-          parts.push(part.slice(lastIndex));
-          return parts;
+
+          matches.push({ start, end, entity });
+          idx = end;
+        }
+      }
+
+      if (matches.length === 0) return [text];
+
+      // Sort by earliest match; for ties prefer longer matches.
+      matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+
+      const nodes: (string | React.ReactNode)[] = [];
+      let cursor = 0;
+      let lastEnd = 0;
+
+      for (const m of matches) {
+        if (m.start < lastEnd) continue;
+        if (cursor < m.start) nodes.push(text.slice(cursor, m.start));
+        nodes.push(
+          <EntityHighlight
+            key={`entity-auto-${m.entity.name}-${m.start}`}
+            name={m.entity.name}
+            definition={m.entity.definition}
+          />,
+        );
+        cursor = m.end;
+        lastEnd = m.end;
+      }
+
+      if (cursor < text.length) nodes.push(text.slice(cursor));
+      return nodes;
+    };
+
+    return {
+      p: ({ children }: any) => {
+        const processText = (text: string): (string | React.ReactNode)[] => {
+          let result: (string | React.ReactNode)[] = [text];
+
+          // Charts
+          result = result.flatMap((part) => {
+            if (typeof part !== "string") return part;
+            const chartRegex = /\[CHART:(\d+)\]/g;
+            const parts: (string | React.ReactNode)[] = [];
+            let lastIndex = 0;
+            let match;
+            while ((match = chartRegex.exec(part)) !== null) {
+              parts.push(part.slice(lastIndex, match.index));
+              const chartIdx = parseInt(match[1], 10);
+              const block = dataBlocks[chartIdx];
+              if (block && block.title && Array.isArray(block.data)) {
+                parts.push(
+                  <DataVisChart
+                    key={`chart-${chartIdx}`}
+                    title={block.title}
+                    type={block.type}
+                    xAxisLabel={block.xAxisLabel}
+                    yAxisLabel={block.yAxisLabel}
+                    data={block.data}
+                  />,
+                );
+              }
+              lastIndex = chartRegex.lastIndex;
+            }
+            parts.push(part.slice(lastIndex));
+            return parts;
+          });
+
+          // Entities
+          result = result.flatMap((part) => {
+            if (typeof part !== "string") return part;
+
+            const entityRegex = /\[\[(.*?)\]\]/g;
+            const parts: (string | React.ReactNode)[] = [];
+            let lastIndex = 0;
+            let match;
+            let foundExplicit = false;
+            let insertedExplicit = false;
+
+            while ((match = entityRegex.exec(part)) !== null) {
+              foundExplicit = true;
+              parts.push(part.slice(lastIndex, match.index));
+              const entityName = match[1];
+              const entityData = entities.find((e) => e?.name?.toLowerCase() === entityName?.toLowerCase());
+              const explicitDefinition = entityData?.definition?.trim();
+              const fallbackDefinition = !explicitDefinition ? lookupGlossaryDefinition(entityName) : "";
+              const resolvedDefinition = explicitDefinition || fallbackDefinition;
+              const resolvedName = entityData?.name || entityName;
+
+              if (resolvedDefinition) {
+                parts.push(
+                  <EntityHighlight
+                    key={`entity-${entityName}-${match.index}`}
+                    name={resolvedName}
+                    definition={resolvedDefinition}
+                  />,
+                );
+                insertedExplicit = true;
+              } else {
+                parts.push(entityName);
+              }
+              lastIndex = entityRegex.lastIndex;
+            }
+
+            // Fallback if no explicit [[...]] markers were present in this string chunk.
+            // When markers ARE present, the while loop already handled them
+            // (pushing EntityHighlight for known entities or plain text for unknown ones).
+            // Don't fall back — autoHighlightEntities doesn't strip [[ brackets ]].
+            if (!foundExplicit) return autoHighlightEntities(part);
+
+            parts.push(part.slice(lastIndex));
+            return parts;
+          });
+
+          return result;
+        };
+
+        const finalChildren = React.Children.toArray(children).flatMap((node) => {
+          if (typeof node === "string") return processText(node);
+          return node;
         });
 
-        // Entities
-        result = result.flatMap(part => {
-          if (typeof part !== 'string') return part;
-          const entityRegex = /\[\[(.*?)\]\]/g;
-          const parts: (string | React.ReactNode)[] = [];
-          let lastIndex = 0;
-          let match;
-          while ((match = entityRegex.exec(part)) !== null) {
-            parts.push(part.slice(lastIndex, match.index));
-            const entityName = match[1];
-            const entityData = article.entities?.find(e => e.name.toLowerCase() === entityName.toLowerCase());
-            if (entityData) {
-              parts.push(<EntityHighlight key={`entity-${entityName}`} name={entityData.name} definition={entityData.definition} />);
-            } else {
-              parts.push(entityName);
-            }
-            lastIndex = entityRegex.lastIndex;
-          }
-          parts.push(part.slice(lastIndex));
-          return parts;
-        });
+        return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
+      },
 
-        return result;
-      };
+      // If the model omitted [CHART:n] placeholders, still render charts beneath "The Data Insight" heading.
+      h3: ({ children }: any) => {
+        const headingText = React.Children.toArray(children)
+          .map((c) => (typeof c === "string" ? c : ""))
+          .join("");
 
-      const finalChildren = React.Children.toArray(children).flatMap(node => {
-        if (typeof node === 'string') return processText(node);
-        return node;
-      });
+        const normalized = headingText.toLowerCase().replace(/\s+/g, " ").trim();
+        const isDataInsightHeading = normalized.includes("the data insight");
 
-      return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
-    }
-  }), [article]);
+        return (
+          <>
+            <h3>{children}</h3>
+            {isDataInsightHeading && dataBlocks.length > 0 && !chartTokensPresent && (
+              <div className="mt-6">
+                {dataBlocks.map((block, idx) => (
+                  <DataVisChart
+                    key={`auto-chart-${idx}`}
+                    title={block.title}
+                    type={block.type}
+                    xAxisLabel={block.xAxisLabel}
+                    yAxisLabel={block.yAxisLabel}
+                    data={block.data}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        );
+      },
+    };
+  }, [article, content, chartTokensPresent]);
 
   return (
     <motion.div
@@ -146,15 +303,24 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   {article.category}
                   <span className="w-8 md:w-12 h-[1px] bg-accent/20" />
                </div>
-               <h1 className="text-4xl sm:text-5xl md:text-7xl font-black leading-[0.95] tracking-tight mb-8 md:mb-12">
+               <h1 id="article-headline" className="text-4xl sm:text-5xl md:text-7xl font-black leading-[0.95] tracking-tight mb-8 md:mb-12">
                   {article.title}
                </h1>
                <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
-                  <span className="italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
-                  <div className="flex items-center gap-4 font-mono uppercase tracking-[0.1em]">
-                    <span>By {article.author}</span>
-                    <span className="w-1 h-1 bg-ink/10 rounded-full" />
-                    <span>{formatDate(article.date)}</span>
+                <span className="article-lead italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
+                  <div className="flex flex-col items-center gap-1 font-mono uppercase tracking-[0.1em]">
+                    <span className="flex items-center gap-4">
+                      <span>By {article.author}</span>
+                      <span className="w-1 h-1 bg-ink/10 rounded-full" />
+                      <span>{article.readTime} read</span>
+                    </span>
+                    <time
+                      dateTime={article.publishedAt}
+                      className="text-[10px] tracking-widest text-ink/45 normal-case"
+                      title={article.publishedAt}
+                    >
+                      Published {formatPublishedTimestamp(article.publishedAt)}
+                    </time>
                   </div>
                </div>
             </header>
@@ -179,21 +345,27 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   >
                     <div className="mt-4 pt-6 border-t border-ink/5 flex flex-col gap-6">
                       <p className="text-sm font-serif italic text-ink/70 leading-relaxed">
-                        {article.excerpt} This report explores {article.title.toLowerCase()} from a multi-disciplinary perspective, highlighting the socio-economic impact on San Francisco's evolving urban landscape.
+                        {article.excerpt} This AI-assisted report is generated from linked source material. Review the source list and claim notes below before relying on any specific detail.
                       </p>
                       
                       {article.tldr && (
-                        <ul className="space-y-4">
+                        <ul className="tldr-answer-engine space-y-4">
                           <li className="flex gap-4">
-                            <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest pt-1 shrink-0">Impact</span>
-                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whyItMatters}</p>
+                            <div className="shrink-0 pt-1">
+                              <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest px-2 py-1 bg-accent/5 rounded-sm">The Stakes</span>
+                            </div>
+                            <p className="text-xs leading-relaxed text-ink/70 font-medium">{article.tldr.whyItMatters}</p>
                           </li>
                           <li className="flex gap-4">
-                            <span className="text-[10px] font-mono font-bold text-ink/40 uppercase tracking-widest pt-1 shrink-0">Context</span>
+                            <div className="shrink-0 pt-1">
+                              <span className="text-[10px] font-mono font-bold text-ink/40 uppercase tracking-widest px-2 py-1 bg-ink/5 rounded-sm">The Backdrop</span>
+                            </div>
                             <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whoIsAffected}</p>
                           </li>
                           <li className="flex gap-4">
-                            <span className="text-[10px] font-mono font-bold text-ink/20 uppercase tracking-widest pt-1 shrink-0">Future</span>
+                            <div className="shrink-0 pt-1">
+                              <span className="text-[10px] font-mono font-bold text-ink/20 uppercase tracking-widest px-2 py-1 bg-ink/5 rounded-sm">The Horizon</span>
+                            </div>
                             <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whatIsNext}</p>
                           </li>
                         </ul>
@@ -207,29 +379,35 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             {/* Main content area */}
 
             <div className="relative aspect-video md:aspect-[21/9] mb-12 md:mb-24 overflow-hidden rounded-2xl shadow-2xl transition-all duration-1000 ease-out group/hero">
-               <img 
-                 src={article.imageUrl}
-                 alt={article.title}
-                 className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
-                 referrerPolicy="no-referrer"
-                 onError={(e) => {
-                   (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
-                 }}
-               />
-               <p className="absolute bottom-4 md:bottom-6 right-4 md:right-6 bg-paper/80 backdrop-blur-md px-3 md:px-4 py-1 md:py-2 text-[8px] md:text-[9px] font-mono tracking-tighter uppercase whitespace-nowrap rounded-sm">
-                 {article.imageCredit || "Field Photography / SF Archive"}
-               </p>
+               {article.imageUrl ? (
+                 <img
+                   src={article.imageUrl}
+                   alt={article.title}
+                   className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
+                   referrerPolicy="no-referrer"
+                   onError={(e) => {
+                     (e.target as HTMLImageElement).style.display = "none";
+                   }}
+                 />
+               ) : (
+                 <div className={`w-full h-full bg-gradient-to-br ${categoryGradients[article.category] || categoryGradients.Tech}`} />
+               )}
+               {article.imageCredit && (
+                 <div className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex flex-col items-end gap-1">
+                   <div className="flex items-center gap-2 bg-paper/90 backdrop-blur-md px-3 md:px-4 py-1.5 md:py-2 rounded-sm border border-ink/10 shadow-lg">
+                     <span className="text-[8px] md:text-[9px] font-mono font-bold tracking-widest uppercase text-ink/60">
+                       {article.imageCredit}
+                     </span>
+                     <sup className="text-[8px] font-mono text-accent font-bold">(2)</sup>
+                   </div>
+                   <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Source-linked dispatch</span>
+                 </div>
+               )}
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
               <div className="hidden lg:block lg:col-span-3">
                  <div className="sticky top-32 space-y-12 pr-8 border-r border-ink/5">
-                    <div>
-                      <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Metadata</h4>
-                      <p className="text-[11px] leading-relaxed italic text-ink/50">
-                        This story was verified by the Times of SF Editorial Board and follows strict local sourcing guidelines.
-                      </p>
-                    </div>
                     {article.additionalImages && article.additionalImages.length > 0 && (
                       <div className="space-y-6">
                         <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30">Visual Evidence</h4>
@@ -242,7 +420,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                                 className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" 
                                 referrerPolicy="no-referrer" 
                                 onError={(e) => {
-                                  (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+                                  (e.target as HTMLImageElement).style.display = "none";
                                 }}
                               />
                             </div>
@@ -265,7 +443,65 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
 
               <div className="lg:col-span-8 lg:col-start-5">
                 <div className="markdown-body">
-                  <ReactMarkdown components={components as any}>{article.content}</ReactMarkdown>
+                  <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
+                </div>
+
+                {(!!article.citations?.length) && (
+                  <section className="mt-16 md:mt-20 border-t-[3px] border-ink pt-10">
+                    <div className="mb-8">
+                      <p className="text-[10px] font-mono font-bold uppercase tracking-[0.3em] text-accent mb-3">Receipts</p>
+                      <h3 className="text-3xl md:text-4xl font-black tracking-tight">Sources & Evidence</h3>
+                      <p className="mt-3 text-xs text-ink/50 leading-relaxed max-w-2xl">
+                        One-line linked receipts for claims used in this report.
+                      </p>
+                    </div>
+
+                    {!!article.citations?.length && (
+                      <div className="mb-10">
+                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-3">Claim Notes</h4>
+                        <ul className="border border-ink/10 rounded-sm divide-y divide-ink/10">
+                          {article.citations.map((citation, idx) => (
+                            <li key={`${citation.sourceUrl}-${idx}`}>
+                              <a
+                                href={citation.sourceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/[0.03] transition-colors group"
+                              >
+                                <span className="flex-1 min-w-0 text-xs text-ink/80 truncate">{citation.claim}</span>
+                                <span className="shrink-0 text-[10px] font-mono uppercase tracking-tight text-ink/35">
+                                  {citation.sourceName}
+                                </span>
+                                <ExternalLink size={14} className="text-accent shrink-0 opacity-40 group-hover:opacity-100" />
+                              </a>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </section>
+                )}
+                
+                <div className="mt-16 p-8 border-2 border-ink bg-paper shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] group/expand">
+                  <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                    <div className="space-y-2">
+                      <h4 className="text-xs font-mono font-bold uppercase tracking-widest">Deepen this report</h4>
+                      <p className="text-[10px] font-mono text-ink/40 uppercase tracking-tight">Synthesize a longer, feature-length version using AI analysis.</p>
+                    </div>
+                    <button 
+                      onClick={async () => {
+                        setIsExpanding(true);
+                        const expanded = await expandArticle(article.id);
+                        if (expanded) setContent(expanded);
+                        setIsExpanding(false);
+                      }}
+                      disabled={isExpanding}
+                      className="px-8 py-3 bg-accent text-paper text-[10px] font-bold uppercase tracking-widest hover:bg-ink transition-colors disabled:opacity-50 flex items-center gap-3"
+                    >
+                      {isExpanding ? "Synthesizing..." : "Expand Full Feature"}
+                      <ChevronDown size={14} className={cn("transition-transform", isExpanding && "animate-bounce")} />
+                    </button>
+                  </div>
                 </div>
                 
                 {/* Mobile/Tablet Additional Images */}
@@ -280,7 +516,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                           className="w-full h-full object-cover grayscale brightness-90 transition-all duration-500" 
                           referrerPolicy="no-referrer" 
                           onError={(e) => {
-                            (e.target as HTMLImageElement).src = DEFAULT_IMAGE;
+                            (e.target as HTMLImageElement).style.display = "none";
                           }}
                         />
                       </div>
