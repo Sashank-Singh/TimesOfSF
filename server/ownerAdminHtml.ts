@@ -81,7 +81,7 @@ export function buildOwnerArticleIngestPageHtml(): string {
           if (!r.ok) { out.textContent = j.error || r.statusText; return; }
           if (j.ok && j.slug) {
             var o = location.origin;
-            out.textContent = ["Published.", "", "Open:", o + "/?articleId=" + encodeURIComponent(j.slug)].join(String.fromCharCode(10));
+            out.textContent = ["Published.", "", "Open:", o + "/articles/" + encodeURIComponent(j.slug)].join(String.fromCharCode(10));
             ev.target.url.value = "";
           } else {
             out.textContent = (j.result && j.result.reason) || "Not published.";

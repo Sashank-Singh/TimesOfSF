@@ -8,6 +8,8 @@ import { config, isProduction } from "./config";
 import {
   ensureSchema,
   fetchPipelineActivitySummary,
+  fetchPostById,
+  fetchPostBySlug,
   fetchPostSlugDatesForSitemap,
   fetchRecentPosts,
   fetchRun,
@@ -36,6 +38,99 @@ function sitemapLastmod(value: unknown): string {
   const s = typeof value === "string" ? value : "";
   if (!s) return new Date().toISOString().slice(0, 10);
   return s.slice(0, 10);
+}
+
+function absolutePublicUrl(pathname: string): string {
+  const base = config.appUrl.replace(/\/+$/, "");
+  return `${base}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+}
+
+function articlePath(slug: string): string {
+  return `/articles/${encodeURIComponent(slug)}`;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildArticleHeadTags(post: any): string {
+  const title = `${post.headline} | Times of SF`;
+  const description = String(post.dek || post.short_post || "").trim() || "Read this article on Times of San Francisco.";
+  const url = absolutePublicUrl(articlePath(post.slug));
+  const rawImage = typeof post.image_url === "string" ? post.image_url.trim() : "";
+  const image = rawImage
+    ? (rawImage.startsWith("http") ? rawImage : absolutePublicUrl(rawImage))
+    : absolutePublicUrl("/favicon.svg");
+  const published = post.created_at instanceof Date
+    ? post.created_at.toISOString()
+    : typeof post.created_at === "string"
+      ? post.created_at
+      : new Date().toISOString();
+
+  const jsonLd = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "NewsArticle",
+    headline: post.headline,
+    description,
+    datePublished: published,
+    dateModified: published,
+    url,
+    image: [image],
+    author: { "@type": "Organization", name: "Times of SF" },
+    publisher: {
+      "@type": "Organization",
+      name: "Times of San Francisco",
+      logo: {
+        "@type": "ImageObject",
+        url: absolutePublicUrl("/favicon.svg"),
+      },
+    },
+    mainEntityOfPage: url,
+  }).replace(/</g, "\\u003c");
+
+  return [
+    `<title>${escapeHtml(title)}</title>`,
+    `<meta name="description" content="${escapeHtml(description)}" />`,
+    `<link rel="canonical" href="${escapeHtml(url)}" />`,
+    `<meta property="og:site_name" content="Times of San Francisco" />`,
+    `<meta property="og:type" content="article" />`,
+    `<meta property="og:title" content="${escapeHtml(title)}" />`,
+    `<meta property="og:description" content="${escapeHtml(description)}" />`,
+    `<meta property="og:url" content="${escapeHtml(url)}" />`,
+    `<meta property="og:image" content="${escapeHtml(image)}" />`,
+    `<meta name="twitter:card" content="summary_large_image" />`,
+    `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
+    `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
+    `<meta name="twitter:image" content="${escapeHtml(image)}" />`,
+    `<script type="application/ld+json">${jsonLd}</script>`,
+  ].join("\n    ");
+}
+
+function injectArticleMetadata(indexHtml: string, post: any): string {
+  const articleTags = buildArticleHeadTags(post);
+  let html = indexHtml;
+  html = html.replace(/<title>[\s\S]*?<\/title>/i, "");
+  html = html.replace(/<meta\s+name="description"[\s\S]*?>/i, "");
+  html = html.replace(/<link\s+rel="canonical"[\s\S]*?>/i, "");
+  html = html.replace(/<meta\s+property="og:[^"]+"[\s\S]*?>/gi, "");
+  html = html.replace(/<meta\s+name="twitter:[^"]+"[\s\S]*?>/gi, "");
+  return html.replace("</head>", `    ${articleTags}\n  </head>`);
+}
+
+async function resolveLegacyArticleTarget(articleIdOrSlug: unknown) {
+  if (typeof articleIdOrSlug !== "string") return null;
+  const raw = articleIdOrSlug.trim();
+  if (!raw) return null;
+
+  const bySlug = await fetchPostBySlug(raw);
+  if (bySlug) return bySlug;
+
+  return fetchPostById(raw);
 }
 
 async function start() {
@@ -225,7 +320,7 @@ async function start() {
       const articleUrls = rows
         .filter((r) => r.slug && String(r.slug).trim())
         .map((r) => {
-          const loc = `${base}/?articleId=${encodeURIComponent(String(r.slug).trim())}`;
+          const loc = `${base}/articles/${encodeURIComponent(String(r.slug).trim())}`;
           const lastmod = sitemapLastmod(r.publishedAt);
           return `  <url><loc>${escapeXml(loc)}</loc><lastmod>${escapeXml(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`;
         })
@@ -357,6 +452,44 @@ ${articleUrls}
     const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
     const indexHtml = path.join(distDir, "index.html");
     if (fs.existsSync(indexHtml)) {
+      app.get("/", async (req, res, next) => {
+        const deepLinkTarget = req.query.articleId ?? req.query.id;
+        if (!deepLinkTarget) {
+          next();
+          return;
+        }
+
+        try {
+          const post = await resolveLegacyArticleTarget(deepLinkTarget);
+          if (!post) {
+            res.sendFile(indexHtml);
+            return;
+          }
+
+          const html = injectArticleMetadata(await fs.promises.readFile(indexHtml, "utf8"), post);
+          res.type("html").send(html);
+        } catch (error) {
+          console.error("legacy article html:", error);
+          res.sendFile(indexHtml);
+        }
+      });
+
+      app.get("/articles/:slug", async (req, res) => {
+        try {
+          const post = await fetchPostBySlug(req.params.slug);
+          if (!post) {
+            res.sendFile(indexHtml);
+            return;
+          }
+
+          const html = injectArticleMetadata(await fs.promises.readFile(indexHtml, "utf8"), post);
+          res.type("html").send(html);
+        } catch (error) {
+          console.error("article html:", error);
+          res.sendFile(indexHtml);
+        }
+      });
+
       app.use(express.static(distDir));
       app.get("*", (req, res, next) => {
         if (req.path.startsWith("/api")) {
