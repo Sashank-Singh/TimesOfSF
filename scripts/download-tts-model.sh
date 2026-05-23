@@ -5,16 +5,19 @@ BASE_URL="https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/mai
 
 mkdir -p "$MODEL_DIR/onnx" "$MODEL_DIR/voices"
 
-echo "Downloading Kokoro-82M TTS model files to $MODEL_DIR ..."
+echo "==> Downloading Kokoro-82M TTS model files to $MODEL_DIR ..."
 
+echo "    config.json"
 curl -sfL "$BASE_URL/config.json" -o "$MODEL_DIR/config.json"
+
+echo "    tokenizer.json + tokenizer_config.json"
 curl -sfL "$BASE_URL/tokenizer.json" -o "$MODEL_DIR/tokenizer.json"
 curl -sfL "$BASE_URL/tokenizer_config.json" -o "$MODEL_DIR/tokenizer_config.json"
 
-# Quantized model weights (88 MB)
-curl -sfL "$BASE_URL/onnx/model_quantized.onnx" -o "$MODEL_DIR/onnx/model_quantized.onnx"
+echo "    onnx/model_quantized.onnx (88 MB — this may take a moment)"
+curl -fL "$BASE_URL/onnx/model_quantized.onnx" -o "$MODEL_DIR/onnx/model_quantized.onnx" --progress-bar
 
-# All voice files (~510 KB each)
+echo "    voices/ (55 files, ~500 KB each)"
 for voice in \
   af.bin af_alloy.bin af_aoede.bin af_bella.bin af_heart.bin af_jessica.bin \
   af_kore.bin af_nicole.bin af_nova.bin af_river.bin af_sarah.bin af_sky.bin \
@@ -32,5 +35,6 @@ for voice in \
   curl -sfL "$BASE_URL/voices/$voice" -o "$MODEL_DIR/voices/$voice"
 done
 
-echo "TTS model download complete."
+echo ""
+echo "=> TTS model download complete."
 du -sh "$MODEL_DIR"

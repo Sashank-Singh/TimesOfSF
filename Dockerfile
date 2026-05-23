@@ -4,7 +4,7 @@ FROM node:22-bookworm-slim
 
 # Coolify expects curl or wget in the image for Docker-based health checks.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl \
+  && apt-get install -y --no-install-recommends curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
