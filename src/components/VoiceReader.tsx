@@ -111,7 +111,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     // Create/resume AudioContext SYNCHRONOUSLY (still in user-gesture context)
     // so the browser's autoplay policy doesn't block playback.
     let ctx = audioCtxRef.current;
-    if (!ctx) {
+    if (!ctx || ctx.state === "closed") {
       ctx = new AudioContext();
       audioCtxRef.current = ctx;
     }
@@ -208,12 +208,15 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     if (status === "playing") {
       isPausedRef.current = true;
       if (audioCtxRef.current?.state === "running") {
-        audioCtxRef.current.suspend();
+        audioCtxRef.current.suspend().catch(() => {});
       }
       updateStatus("paused");
     } else if (status === "paused") {
       isPausedRef.current = false;
-      audioCtxRef.current?.resume();
+      const ac = audioCtxRef.current;
+      if (ac && ac.state !== "closed") {
+        ac.resume().catch(() => {});
+      }
       updateStatus("playing");
     }
   }, [status, updateStatus]);
@@ -229,7 +232,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
 
   const handlePlay = useCallback(() => {
     if (status === "idle" || status === "ready" || status === "error") {
-      startPlayback();
+      startPlayback().catch(() => {});
     } else if (status === "playing" || status === "paused") {
       togglePause();
     }
