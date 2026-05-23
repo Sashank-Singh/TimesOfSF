@@ -60,9 +60,11 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     setError(null);
     setDownloadProgress(0);
 
-    // Point Transformers.js at the local server for model files (no Hugging Face download)
-    env.remoteHost = window.location.origin + "/models/";
-    env.remotePathTemplate = "{file}";
+    // Point Transformers.js at the local server for model files (no Hugging Face download).
+    // Note: Transformers.js v3 only substitutes {model} and {revision} — filename is always
+    // appended separately via pathJoin(). Do NOT use "{file}" as the template.
+    env.remoteHost = window.location.origin;
+    env.remotePathTemplate = "models/";
 
     // Intercept voice file requests from kokoro-js (hardcoded Hugging Face URL) and redirect locally
     const origFetch = window.fetch.bind(window);
