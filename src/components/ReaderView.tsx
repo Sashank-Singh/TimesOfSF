@@ -39,6 +39,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   const bodyRef = useRef<HTMLDivElement>(null);
   const [voiceActive, setVoiceActive] = useState(false);
   const [activeWord, setActiveWord] = useState(-1);
+  const [heroImageFailed, setHeroImageFailed] = useState(false);
   const wordElsRef = useRef<HTMLElement[]>([]);
   const wordSpansAppliedRef = useRef(false);
 
@@ -472,15 +473,13 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             {/* Main content area */}
 
             <div className="relative aspect-video md:aspect-[21/9] mb-12 md:mb-24 overflow-hidden rounded-2xl shadow-2xl transition-all duration-1000 ease-out group/hero">
-               {article.imageUrl ? (
+               {article.imageUrl && !heroImageFailed ? (
                  <img
                    src={article.imageUrl}
                    alt={article.title}
                    className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
                    referrerPolicy="no-referrer"
-                   onError={(e) => {
-                     (e.target as HTMLImageElement).style.display = "none";
-                   }}
+                   onError={() => setHeroImageFailed(true)}
                  />
                ) : (
                  <div className={`w-full h-full bg-gradient-to-br ${categoryGradients[article.category] || categoryGradients.Tech}`} />

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Article } from "../types";
 import { cn, formatPublishedTimestamp } from "../lib/utils";
 import { motion } from "motion/react";
@@ -14,7 +15,8 @@ const categoryGradients: Record<string, string> = {
 };
 
 function ArticleImage({ imageUrl, title, category }: { imageUrl?: string; title: string; category: string }) {
-  if (!imageUrl) {
+  const [imgFailed, setImgFailed] = useState(false);
+  if (!imageUrl || imgFailed) {
     return (
       <div className="w-full h-full bg-ink/5">
         <div className={`w-full h-full bg-gradient-to-br ${categoryGradients[category] || categoryGradients.Tech}`} />
@@ -27,9 +29,7 @@ function ArticleImage({ imageUrl, title, category }: { imageUrl?: string; title:
       alt={title}
       className="w-full h-full object-cover transition-all duration-1000 group-hover:scale-[1.02]"
       referrerPolicy="no-referrer"
-      onError={(e) => {
-        (e.target as HTMLImageElement).style.display = "none";
-      }}
+      onError={() => setImgFailed(true)}
     />
   );
 }
