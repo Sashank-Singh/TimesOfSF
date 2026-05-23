@@ -436,9 +436,10 @@ export async function fetchRelatedKnowledge(
   );
 }
 
-function safeParseJson(raw: string, fallback: any): any {
+function safeParseJson(raw: string | null | undefined, fallback: any): any {
   try {
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw ?? "");
+    return parsed ?? fallback;
   } catch {
     return fallback;
   }
