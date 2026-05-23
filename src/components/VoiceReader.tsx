@@ -40,6 +40,8 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
   const isPausedRef = useRef(false);
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
+  const loadingRef = useRef(false);
+  const loadPromiseRef = useRef<Promise<void>>(Promise.resolve());
 
   // Keep callback ref fresh without causing re-renders
   useEffect(() => { onWordRef.current = onWordChange; }, [onWordChange]);
@@ -56,9 +58,13 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
   }, [onStatusChange]);
 
   const loadModel = useCallback(async () => {
-    updateStatus("loading");
-    setError(null);
-    setDownloadProgress(0);
+    if (loadingRef.current) return loadPromiseRef.current;
+    if (ttsRef.current) return;
+    loadingRef.current = true;
+    const promise = (async () => {
+      updateStatus("loading");
+      setError(null);
+      setDownloadProgress(0);
 
     // Point Transformers.js at the local server for model files (no Hugging Face download).
     // Note: Transformers.js v3 only substitutes {model} and {revision} — filename is always
@@ -95,12 +101,17 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
         known.push({ id: key, name: key });
       }
       setVoices(known);
+      loadingRef.current = false;
       updateStatus("ready");
     } catch (err) {
       console.error("Failed to load Kokoro model:", err);
       setError("Failed to load the voice model. Please try again later.");
+      loadingRef.current = false;
       updateStatus("error");
     }
+  })();
+    loadPromiseRef.current = promise;
+    return promise;
   }, [updateStatus]);
 
   const startPlayback = useCallback(async () => {
@@ -118,7 +129,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     if (ctx.state === "suspended") await ctx.resume();
 
     if (!ttsRef.current) {
-      await loadModel();
+      await loadPromiseRef.current;
       if (!ttsRef.current) return;
     }
 
@@ -237,6 +248,11 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
       togglePause();
     }
   }, [status, startPlayback, togglePause]);
+
+  // Preload TTS model on mount so it's ready when the user clicks Listen
+  useEffect(() => {
+    loadModel().catch(() => {});
+  }, [loadModel]);
 
   useEffect(() => {
     return () => {
