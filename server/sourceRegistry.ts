@@ -65,7 +65,6 @@ export const SOURCE_REGISTRY: SourceRegistryEntry[] = [
     type: "wire",
     reliabilityTier: "wire_service",
     allowedUse: "headline_summary_link",
-    trendEligible: true,
   },
   {
     id: "fox-news",

@@ -1,9 +1,9 @@
-import React, { useState, useRef, useMemo } from "react";
+import React, { useState, useRef, useMemo, useEffect } from "react";
 import { Article, ArticleEntity } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
-import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, Headphones } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { formatPublishedTimestamp, cn } from "../lib/utils";
+import { formatPublishedTimestamp, cn, stripMarkdown } from "../lib/utils";
 
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
@@ -21,6 +21,8 @@ const categoryGradients: Record<string, string> = {
 
 import { expandArticle } from "../services/newsService";
 
+const VoiceReader = React.lazy(() => import("./VoiceReader"));
+
 interface ReaderViewProps {
   article: Article | null;
   onClose: () => void;
@@ -34,7 +36,14 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   const [isExpanding, setIsExpanding] = useState(false);
   const [content, setContent] = useState(article.content);
   const scrollRef = useRef<HTMLDivElement>(null);
-  
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [activeWord, setActiveWord] = useState(-1);
+  const wordElsRef = useRef<HTMLElement[]>([]);
+  const wordSpansAppliedRef = useRef(false);
+
+  const plainText = useMemo(() => stripMarkdown(content), [content]);
+
   const { scrollYProgress } = useScroll({
     container: scrollRef
   });
@@ -246,6 +255,79 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     };
   }, [article, content, chartTokensPresent]);
 
+  // Process DOM: wrap every word in a span when voice reader activates
+  useEffect(() => {
+    if (!voiceActive || !bodyRef.current) {
+      wordSpansAppliedRef.current = false;
+      return;
+    }
+
+    // Avoid re-processing if already applied (unless content changed)
+    if (wordSpansAppliedRef.current) return;
+
+    const walker = document.createTreeWalker(
+      bodyRef.current,
+      NodeFilter.SHOW_TEXT,
+      null,
+    );
+
+    const textNodes: Text[] = [];
+    while (walker.nextNode()) {
+      textNodes.push(walker.currentNode as Text);
+    }
+
+    let wordIdx = 0;
+    const allSpans: HTMLElement[] = [];
+
+    for (const node of textNodes) {
+      const text = node.textContent || "";
+      if (text.trim().length === 0) continue;
+
+      const parts = text.split(/(\s+)/);
+      const fragment = document.createDocumentFragment();
+
+      for (const part of parts) {
+        if (part.length === 0) continue;
+        if (/^\s+$/.test(part)) {
+          fragment.appendChild(document.createTextNode(part));
+        } else {
+          const span = document.createElement("span");
+          span.className =
+            "vr-word inline transition-all duration-75 rounded-sm cursor-default";
+          span.dataset.wi = String(wordIdx++);
+          span.textContent = part;
+          fragment.appendChild(span);
+          allSpans.push(span);
+        }
+      }
+
+      node.parentNode?.replaceChild(fragment, node);
+    }
+
+    wordElsRef.current = allSpans;
+    wordSpansAppliedRef.current = true;
+  }, [voiceActive, content]);
+
+  // Highlight the active word span
+  useEffect(() => {
+    const spans = wordElsRef.current;
+    const prevHighlighted = document.querySelectorAll(".vr-word-highlight");
+    prevHighlighted.forEach((el) => el.classList.remove("vr-word-highlight"));
+
+    if (!voiceActive || activeWord < 0 || activeWord >= spans.length) return;
+
+    const target = spans[activeWord];
+    if (target) {
+      target.classList.add("vr-word-highlight");
+
+      // Scroll to keep the word visible if needed
+      const rect = target.getBoundingClientRect();
+      if (rect.bottom > window.innerHeight || rect.top < 0) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [voiceActive, activeWord]);
+
   return (
     <motion.div
       ref={scrollRef}
@@ -278,13 +360,24 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   <Bookmark size={18} className={cn(isBookmarked && "fill-accent")} />
                 </button>
                 <div className="w-px h-4 bg-ink/10" />
-                <button 
-                  title="Share News" 
+                <button
+                  title="Share News"
                   onClick={onShare}
                   className="group flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest hover:text-accent transition-colors"
                 >
                   <Share2 size={16} />
                   <span className="hidden sm:inline">Share</span>
+                </button>
+                <button
+                  title="Listen to Article"
+                  onClick={() => setVoiceActive(!voiceActive)}
+                  className={cn(
+                    "group flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest transition-colors",
+                    voiceActive ? "text-accent" : "hover:text-accent",
+                  )}
+                >
+                  <Headphones size={16} className={cn(voiceActive && "animate-pulse")} />
+                  <span className="hidden sm:inline">{voiceActive ? "Close" : "Listen"}</span>
                 </button>
                 <button onClick={onClose} className="p-1 hover:rotate-90 transition-transform"><X size={20} /></button>
               </div>
@@ -442,7 +535,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
               </div>
 
               <div className="lg:col-span-8 lg:col-start-5">
-                <div className="markdown-body">
+                <div ref={bodyRef} className="markdown-body">
                   <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
                 </div>
 
@@ -543,6 +636,19 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                </div>
             </footer>
           </article>
+
+          {voiceActive && (
+            <React.Suspense fallback={null}>
+              <VoiceReader
+                text={plainText}
+                onWordChange={setActiveWord}
+                onClose={() => setVoiceActive(false)}
+              />
+            </React.Suspense>
+          )}
+
+          {/* Bottom padding when voice reader is active */}
+          {voiceActive && <div className="h-24" />}
     </motion.div>
   );
 }

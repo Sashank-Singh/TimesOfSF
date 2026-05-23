@@ -154,3 +154,14 @@
 .news-grid-item {
   @apply border-ink/5 transition-all duration-500;
 }
+
+/* Voice reader word-level karaoke highlighting */
+.vr-word {
+  transition: background-color 0.06s ease, color 0.06s ease;
+}
+.vr-word-highlight {
+  background-color: #fbbf24;
+  color: #121212;
+  border-radius: 3px;
+  padding: 1px 0;
+}

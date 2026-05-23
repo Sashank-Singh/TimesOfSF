@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import dotenv from "dotenv";
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
 
 dotenv.config({ path: path.resolve(process.cwd(), ".env") });
 
@@ -158,7 +158,7 @@ function validateParsed(s: Record<string, string>): string | null {
 
 async function main() {
   assertOwnerCli();
-  const sql = neon(process.env.DATABASE_URL!);
+  const sql = postgres(process.env.DATABASE_URL!);
 
   const rl = readline.createInterface({ input, output });
 
