@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { KokoroTTS } from "kokoro-js";
+import { env } from "@huggingface/transformers";
 import type { ProgressInfo } from "@huggingface/transformers";
 import { Play, Pause, StopCircle, Loader2, Volume2, X } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -58,6 +59,21 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     updateStatus("loading");
     setError(null);
     setDownloadProgress(0);
+
+    // Point Transformers.js at the local server for model files (no Hugging Face download)
+    env.remoteHost = window.location.origin + "/models/";
+    env.remotePathTemplate = "{file}";
+
+    // Intercept voice file requests from kokoro-js (hardcoded Hugging Face URL) and redirect locally
+    const origFetch = window.fetch.bind(window);
+    window.fetch = (input, ...args) => {
+      const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+      if (url.includes("huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX")) {
+        const local = url.replace("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main", window.location.origin + "/models");
+        return origFetch(local, ...args);
+      }
+      return origFetch(input, ...args);
+    };
     try {
       const tts = await KokoroTTS.from_pretrained(
         "onnx-community/Kokoro-82M-v1.0-ONNX",
@@ -237,19 +253,19 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
         />
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-4">
+      <div className="max-w-4xl mx-auto px-2 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-4">
         <div className="shrink-0">
           {isLoading ? (
-            <Loader2 size={18} className="animate-spin text-ink/40" />
+            <Loader2 size={16} className="animate-spin text-ink/40" />
           ) : (
-            <Volume2 size={18} className={cn(isPlaying ? "text-accent" : "text-ink/40")} />
+            <Volume2 size={16} className={cn(isPlaying ? "text-accent" : "text-ink/40")} />
           )}
         </div>
 
         {isLoading && (
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-mono text-ink/50">
-              <span>Downloading voice model...</span>
+              <span className="truncate">Downloading voice model...</span>
               <span className="font-bold">{downloadProgress}%</span>
             </div>
             <div className="mt-1 h-1 bg-ink/5 rounded-full overflow-hidden">
@@ -263,12 +279,12 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
 
         {status === "error" && !isLoading && (
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-mono text-red-600">{error}</p>
+            <p className="text-[10px] font-mono text-red-600 truncate">{error}</p>
           </div>
         )}
 
         {!isLoading && status !== "error" && (
-          <div className="flex-1 min-w-0">
+          <div className="hidden sm:block flex-1 min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-mono text-ink/50">
               <span className={cn(isPlaying && "text-accent font-bold")}>
                 {isPlaying && "Speaking"}
@@ -287,22 +303,22 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
         )}
 
         {!isLoading && status !== "error" && (
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <button
               onClick={handlePlay}
               className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest transition-all rounded-sm",
+                "flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest transition-all rounded-sm",
                 isPlaying
                   ? "bg-accent text-paper hover:bg-accent/90"
                   : "bg-ink/5 text-ink hover:bg-ink/10",
               )}
             >
               {isPlaying ? (
-                <><Pause size={12} /> Pause</>
+                <><Pause size={12} /> <span className="hidden sm:inline">Pause</span></>
               ) : isPaused ? (
-                <><Play size={12} /> Resume</>
+                <><Play size={12} /> <span className="hidden sm:inline">Resume</span></>
               ) : (
-                <><Play size={12} /> Listen</>
+                <><Play size={12} /> <span className="hidden sm:inline">Listen</span></>
               )}
             </button>
 
@@ -312,14 +328,14 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
                 className="p-1.5 hover:bg-ink/5 rounded-sm transition-colors text-ink/40 hover:text-ink"
                 title="Stop"
               >
-                <StopCircle size={16} />
+                <StopCircle size={14} />
               </button>
             )}
 
             <div className="relative">
               <button
                 onClick={() => { setSpeedOpen(!speedOpen); setVoiceOpen(false); }}
-                className="px-2 py-1.5 text-[10px] font-mono text-ink/50 hover:text-ink hover:bg-ink/5 rounded-sm transition-colors"
+                className="px-1.5 sm:px-2 py-1.5 text-[10px] font-mono text-ink/50 hover:text-ink hover:bg-ink/5 rounded-sm transition-colors"
               >
                 {speed}x
               </button>
@@ -328,7 +344,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
                   {SPEED_OPTIONS.map((s) => (
                     <button
                       key={s}
-                      onClick={() => { setSpeed(s); setSpeedOpen(false); }}
+                      onClick={() => { if (isPlaying || isPaused) stop(); setSpeed(s); setSpeedOpen(false); }}
                       className={cn(
                         "w-full px-3 py-1.5 text-[10px] font-mono text-left hover:bg-ink/5 transition-colors",
                         speed === s ? "text-accent font-bold" : "text-ink/60",
@@ -359,7 +375,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
                   {voices.map((v) => (
                     <button
                       key={v.id}
-                      onClick={() => { setVoice(v.id); setVoiceOpen(false); }}
+                      onClick={() => { if (isPlaying || isPaused) stop(); setVoice(v.id); setVoiceOpen(false); }}
                       className={cn(
                         "w-full px-3 py-1.5 text-[10px] font-mono text-left hover:bg-ink/5 transition-colors",
                         voice === v.id ? "text-accent font-bold" : "text-ink/60",

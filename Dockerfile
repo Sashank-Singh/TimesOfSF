@@ -13,6 +13,10 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+
+# Download Kokoro-82M TTS model files for local inference (no Hugging Face download at runtime)
+RUN chmod +x scripts/download-tts-model.sh && ./scripts/download-tts-model.sh
+
 # Same-origin: do not pass VITE_API_URL at image build (Coolify build args); Express serves /api + dist on one host.
 RUN npm run build
 

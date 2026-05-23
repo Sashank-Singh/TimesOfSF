@@ -448,6 +448,15 @@ ${articleUrls}
     app.use("/api/inngest", inngestState.handler);
   }
 
+  // Serve Kokoro-82M TTS model files for zero-download inference (served same-origin)
+  const ttsModelDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "models");
+  if (fs.existsSync(ttsModelDir)) {
+    app.use("/models", express.static(ttsModelDir, { maxAge: 86_400_000 }));
+    if (!isProduction()) console.log("Serving TTS model files from", ttsModelDir);
+  } else if (isProduction()) {
+    console.warn("TTS model directory not found at", ttsModelDir, "- VoiceReader will download from Hugging Face.");
+  }
+
   if (isProduction()) {
     const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
     const indexHtml = path.join(distDir, "index.html");
