@@ -66,7 +66,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
           device: "wasm",
           progress_callback: (p: ProgressInfo) => {
             if ((p.status === "download" || p.status === "progress") && typeof (p as any).progress === "number") {
-              setDownloadProgress(Math.round((p as any).progress * 100));
+              setDownloadProgress(Math.round((p as any).progress));
             }
           },
         },
@@ -90,17 +90,19 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     isPausedRef.current = false;
     lastWordRef.current = -1;
 
-    if (!ttsRef.current) {
-      await loadModel();
-      if (!ttsRef.current) return;
-    }
-
+    // Create/resume AudioContext SYNCHRONOUSLY (still in user-gesture context)
+    // so the browser's autoplay policy doesn't block playback.
     let ctx = audioCtxRef.current;
     if (!ctx) {
       ctx = new AudioContext();
       audioCtxRef.current = ctx;
     }
     if (ctx.state === "suspended") await ctx.resume();
+
+    if (!ttsRef.current) {
+      await loadModel();
+      if (!ttsRef.current) return;
+    }
 
     updateStatus("playing");
 
