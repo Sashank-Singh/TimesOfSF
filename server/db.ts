@@ -1,13 +1,13 @@
 import crypto from "node:crypto";
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
 import { config } from "./config";
 import { EditorialCategory, GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
-const sql = neon(config.databaseUrl);
+const sql = postgres(config.databaseUrl);
 
 export async function ensureSchema() {
-  await sql.transaction([
-    sql`
+  await sql.begin(async (sql) => {
+    await sql`
       CREATE TABLE IF NOT EXISTS pipeline_runs (
         id TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -18,8 +18,8 @@ export async function ensureSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         published_at TIMESTAMPTZ
       )
-    `,
-    sql`
+    `;
+    await sql`
       CREATE TABLE IF NOT EXISTS source_attempts (
         id BIGSERIAL PRIMARY KEY,
         run_id TEXT NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
@@ -36,8 +36,8 @@ export async function ensureSchema() {
         failure_reason TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
-    `,
-    sql`
+    `;
+    await sql`
       CREATE TABLE IF NOT EXISTS generated_posts (
         id BIGSERIAL PRIMARY KEY,
         run_id TEXT NOT NULL UNIQUE REFERENCES pipeline_runs(id) ON DELETE CASCADE,
@@ -59,18 +59,18 @@ export async function ensureSchema() {
         data_blocks JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
-    `,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS citations JSONB NOT NULL DEFAULT '[]'::jsonb`,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS source_urls JSONB NOT NULL DEFAULT '[]'::jsonb`,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS headline_hash TEXT`,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS canonical_key TEXT`,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS story_fingerprint JSONB`,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS category TEXT`,
-    sql`CREATE INDEX IF NOT EXISTS generated_posts_headline_hash_idx ON generated_posts (headline_hash)`,
-    sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`,
-    sql`CREATE INDEX IF NOT EXISTS generated_posts_category_created_idx ON generated_posts (category, created_at DESC)`,
-    sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS image_credit TEXT`,
-    sql`
+    `;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS citations JSONB NOT NULL DEFAULT '[]'::jsonb`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS source_urls JSONB NOT NULL DEFAULT '[]'::jsonb`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS headline_hash TEXT`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS canonical_key TEXT`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS story_fingerprint JSONB`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS category TEXT`;
+    await sql`CREATE INDEX IF NOT EXISTS generated_posts_headline_hash_idx ON generated_posts (headline_hash)`;
+    await sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`;
+    await sql`CREATE INDEX IF NOT EXISTS generated_posts_category_created_idx ON generated_posts (category, created_at DESC)`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS image_credit TEXT`;
+    await sql`
       CREATE TABLE IF NOT EXISTS events (
         id BIGSERIAL PRIMARY KEY,
         title TEXT NOT NULL,
@@ -79,8 +79,8 @@ export async function ensureSchema() {
         source TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
-    `,
-    sql`
+    `;
+    await sql`
       CREATE TABLE IF NOT EXISTS knowledge_state (
         id BIGSERIAL PRIMARY KEY,
         category TEXT NOT NULL,
@@ -93,23 +93,23 @@ export async function ensureSchema() {
         published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
-    `,
-    sql`CREATE INDEX IF NOT EXISTS knowledge_state_category_idx ON knowledge_state (category, published_at DESC)`,
-    sql`CREATE INDEX IF NOT EXISTS knowledge_state_entities_gin ON knowledge_state USING GIN (key_entities)`,
-  ]);
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS knowledge_state_category_idx ON knowledge_state (category, published_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS knowledge_state_entities_gin ON knowledge_state USING GIN (key_entities)`;
+  });
 }
 
 export async function saveEvents(events: Array<{title: string, url: string, date: string, source: string}>) {
   if (!events.length) return;
-  await sql.transaction([
-    sql`TRUNCATE TABLE events`,
-    ...events.map(
-      (e) => sql`
+  await sql.begin(async (sql) => {
+    await sql`TRUNCATE TABLE events`;
+    for (const e of events) {
+      await sql`
         INSERT INTO events (title, url, event_date, source)
         VALUES (${e.title}, ${e.url}, ${e.date}, ${e.source})
-      `
-    ),
-  ]);
+      `;
+    }
+  });
 }
 
 export async function fetchStoredEvents() {
