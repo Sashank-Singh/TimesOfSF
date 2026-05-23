@@ -113,7 +113,8 @@ export async function saveEvents(events: Array<{title: string, url: string, date
 }
 
 export async function fetchStoredEvents() {
-  return sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 16`;
+  const rows = await sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 16`;
+  return rows.map((r: any) => ({ title: r.title, url: r.url, date: r.date, source: r.source }));
 }
 
 /** Latest pipeline attempt (includes rejected / empty ticks). */
@@ -237,17 +238,18 @@ export async function completeRun(result: PipelineRunResult) {
 }
 
 export async function fetchPostSlugDatesForSitemap(limit = 2000) {
-  return sql`
+  const rows = await sql`
     SELECT slug, created_at AS "publishedAt"
     FROM generated_posts
     WHERE slug IS NOT NULL AND TRIM(slug) <> ''
     ORDER BY created_at DESC
     LIMIT ${limit}
   `;
+  return rows.map((r: any) => ({ slug: r.slug, publishedAt: r.publishedAt }));
 }
 
 export async function fetchRecentPosts(limit = 1000) {
-  return sql`
+  const rows = await sql`
     SELECT
       id,
       topic,
@@ -274,17 +276,18 @@ export async function fetchRecentPosts(limit = 1000) {
     ORDER BY created_at DESC
     LIMIT ${limit}
   `;
+  return rows as any[];
 }
 
 export async function fetchRun(runId: string) {
-  const runs = await sql`
+  const runs: any[] = await sql`
     SELECT *
     FROM pipeline_runs
     WHERE id = ${runId}
     LIMIT 1
   `;
 
-  const attempts = await sql`
+  const attempts: any[] = await sql`
     SELECT *
     FROM source_attempts
     WHERE run_id = ${runId}
