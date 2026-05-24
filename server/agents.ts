@@ -858,7 +858,7 @@ function enrichEntities(
   body: string,
   entities: GeneratedPost["entities"],
 ): { body: string; entities: GeneratedPost["entities"] } {
-  const existingNames = new Set((entities ?? []).map((e) => e.name.toLowerCase().trim()).filter(Boolean));
+  const existingNames = new Set((entities ?? []).map((e) => (e.name ?? "").toLowerCase().trim()).filter(Boolean));
 
   // Auto-extract additional proper nouns from the body
   const autoEntities = extractProperNounsAuto(body, existingNames);
@@ -968,10 +968,10 @@ export async function synthesizePost(
         const extraEntities = await extractEntitiesFromBody(post.bodyMarkdown ?? "");
         if (extraEntities.length > 0) {
           // Merge: keep existing entities, add new ones that don't overlap
-          const existingNames = new Set((post.entities ?? []).map((e) => e.name.toLowerCase()));
+          const existingNames = new Set((post.entities ?? []).map((e) => (e.name ?? "").toLowerCase()));
           const merged = [...(post.entities ?? [])];
           for (const e of extraEntities) {
-            if (!existingNames.has(e.name.toLowerCase())) {
+            if (e.name && !existingNames.has(e.name.toLowerCase())) {
               merged.push(e);
               existingNames.add(e.name.toLowerCase());
             }
