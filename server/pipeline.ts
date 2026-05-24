@@ -537,7 +537,7 @@ export async function runPipeline(options?: RunPipelineOptions) {
       const topicTokens = target.normalizedTopic.split(/\s+/).filter((t) => t.length > 4);
       const relatedPrev = recentKnowledge.filter(
         (k) =>
-          k.category === cat && topicTokens.some((t) => (k.keyEntities ?? []).some((e) => e.toLowerCase().includes(t))),
+          k.category === cat && topicTokens.some((t) => (Array.isArray(k.keyEntities) ? k.keyEntities : []).some((e) => e.toLowerCase().includes(t))),
       );
       const prevCoverage: PreviousCoverage[] = relatedPrev.map((k) => ({
         topic: k.topic,
@@ -589,7 +589,7 @@ export async function runPipeline(options?: RunPipelineOptions) {
         const cat = candidate.editorialCategory ?? classifyEditorialCategory(candidate);
         const topicTokens = candidate.normalizedTopic.split(/\s+/).filter((t) => t.length > 4);
         const relatedPrev = recentKnowledge.filter(
-          (k) => k.category === cat && topicTokens.some((t) => (k.keyEntities ?? []).some((e) => e.toLowerCase().includes(t))),
+          (k) => k.category === cat && topicTokens.some((t) => (Array.isArray(k.keyEntities) ? k.keyEntities : []).some((e) => e.toLowerCase().includes(t))),
         );
         const prevCoverage: PreviousCoverage[] = relatedPrev.map((k) => ({
           topic: k.topic,
