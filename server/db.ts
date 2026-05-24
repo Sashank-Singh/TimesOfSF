@@ -390,9 +390,9 @@ export async function fetchRecentKnowledgeState(limit = 10): Promise<KnowledgeSt
     topic: r.topic,
     headline: r.headline,
     slug: r.slug,
-    keyEntities: safeParseJson(r.keyEntitiesRaw, []),
-    keyFacts: safeParseJson(r.keyFactsRaw, []),
-    sourceUrls: safeParseJson(r.sourceUrlsRaw, []),
+    keyEntities: safeParseJsonArray(r.keyEntitiesRaw, []),
+    keyFacts: safeParseJsonArray(r.keyFactsRaw, []),
+    sourceUrls: safeParseJsonArray(r.sourceUrlsRaw, []),
     publishedAt: new Date(r.publishedAt),
   }));
 }
@@ -423,9 +423,9 @@ export async function fetchRelatedKnowledge(
     topic: r.topic,
     headline: r.headline,
     slug: r.slug,
-    keyEntities: safeParseJson(r.keyEntitiesRaw, []),
-    keyFacts: safeParseJson(r.keyFactsRaw, []),
-    sourceUrls: safeParseJson(r.sourceUrlsRaw, []),
+    keyEntities: safeParseJsonArray(r.keyEntitiesRaw, []),
+    keyFacts: safeParseJsonArray(r.keyFactsRaw, []),
+    sourceUrls: safeParseJsonArray(r.sourceUrlsRaw, []),
     publishedAt: new Date(r.publishedAt),
   }));
 
@@ -443,4 +443,9 @@ function safeParseJson(raw: string | null | undefined, fallback: any): any {
   } catch {
     return fallback;
   }
+}
+
+function safeParseJsonArray(raw: string | null | undefined, fallback: any[] = []): any[] {
+  const parsed = safeParseJson(raw, fallback);
+  return Array.isArray(parsed) ? parsed : fallback;
 }
