@@ -4,7 +4,7 @@ FROM node:22-bookworm-slim
 # Python3 + edge-tts for server-side TTS (natural neural voices, no model files)
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl ca-certificates python3 python3-pip \
-  && pip3 install --break-system-packages edge-tts==13.0.0 \
+  && pip3 install --break-system-packages edge-tts==7.2.8 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
