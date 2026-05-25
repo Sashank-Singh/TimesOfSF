@@ -24,10 +24,19 @@ export function getApiBase(): string {
   return raw;
 }
 
-function normalizeCredits(post: any): Article["credits"] {
-  if (!Array.isArray(post.credits)) return [];
+function safeParseArray(value: any): any[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try { const p = JSON.parse(value); return Array.isArray(p) ? p : []; } catch { return []; }
+  }
+  return [];
+}
 
-  return post.credits
+function normalizeCredits(post: any): Article["credits"] {
+  const credits = safeParseArray(post.credits);
+  if (credits.length === 0) return [];
+
+  return credits
     .filter((credit: any) => credit?.sourceName && credit?.articleUrl)
     .map((credit: any) => ({
       sourceName: credit.sourceName,
@@ -40,9 +49,10 @@ function normalizeCredits(post: any): Article["credits"] {
 }
 
 function normalizeCitations(post: any): Article["citations"] {
-  if (!Array.isArray(post.citations)) return [];
+  const citations = safeParseArray(post.citations);
+  if (citations.length === 0) return [];
 
-  const mapped = post.citations
+  const mapped = citations
     .filter((citation: any) => citation?.claim && citation?.sourceName && citation?.sourceUrl)
     .map((citation: any) => ({
       claim: citation.claim,
@@ -102,12 +112,14 @@ function dbPostToArticle(post: any): Article {
     imageUrl: post.imageUrl || undefined,
     imageCredit: post.imageCredit ?? undefined,
     readTime: `${Math.max(3, Math.ceil((post.body_markdown || "").split(" ").length / 200))} min`,
-    tldr: post.tldr || undefined,
+    tldr: post.tldr
+      ? (typeof post.tldr === "string" ? (() => { try { return JSON.parse(post.tldr); } catch { return undefined; } })() : post.tldr)
+      : undefined,
     credits: normalizeCredits(post),
     citations: normalizeCitations(post),
-    sourceUrls: Array.isArray(post.sourceUrls) ? post.sourceUrls : [],
-    entities: Array.isArray(post.entities) ? post.entities : [],
-    dataBlocks: Array.isArray(post.dataBlocks) ? post.dataBlocks : [],
+    sourceUrls: safeParseArray(post.sourceUrls),
+    entities: safeParseArray(post.entities),
+    dataBlocks: safeParseArray(post.dataBlocks),
   };
 }
 

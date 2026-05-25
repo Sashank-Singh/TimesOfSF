@@ -1,7 +1,4 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { KokoroTTS } from "kokoro-js";
-import { env } from "@huggingface/transformers";
-import type { ProgressInfo } from "@huggingface/transformers";
 import { Play, Pause, StopCircle, Loader2, Volume2, X } from "lucide-react";
 import { cn } from "../lib/utils";
 
@@ -9,7 +6,6 @@ export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paus
 
 interface VoiceReaderProps {
   text: string;
-  /** Reports the global word index (0-based) currently being spoken. */
   onWordChange?: (wordIndex: number) => void;
   onStatusChange?: (status: VoiceReaderStatus) => void;
   onComplete?: () => void;
@@ -18,252 +14,142 @@ interface VoiceReaderProps {
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5] as const;
 
-function splitSentences(text: string): string[] {
-  const result = text.match(/[^.!?]+[.!?]+(?:\s|$)|[^.!?]+$/g);
-  return result ?? [text];
+/** Map a character index to the word index in the original text. */
+function charIndexToWordIndex(text: string, charIndex: number): number {
+  const before = text.slice(0, Math.min(charIndex, text.length));
+  return before.split(/\s+/).filter(Boolean).length;
 }
 
 export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
-  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
   const [speed, setSpeed] = useState<number>(1);
-  const [voice, setVoice] = useState("af_bella");
   const [speedOpen, setSpeedOpen] = useState(false);
-  const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
+  const [voice, setVoice] = useState("");
   const [voiceOpen, setVoiceOpen] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
 
-  const ttsRef = useRef<KokoroTTS | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const abortRef = useRef(false);
-  const isPausedRef = useRef(false);
+  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
-  const loadingRef = useRef(false);
-  const loadPromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingRef = useRef(false);
 
-  // Keep callback ref fresh without causing re-renders
   useEffect(() => { onWordRef.current = onWordChange; }, [onWordChange]);
 
-  const sentences = splitSentences(text);
-
-  const totalWords = useMemo(() => {
-    return sentences.reduce((sum, s) => sum + s.trim().split(/\s+/).filter(Boolean).length, 0);
-  }, [sentences]);
+  const totalWords = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
 
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
     setStatus(s);
     onStatusChange?.(s);
   }, [onStatusChange]);
 
-  const loadModel = useCallback(async () => {
-    if (loadingRef.current) return loadPromiseRef.current;
-    if (ttsRef.current) return;
-    loadingRef.current = true;
-    const promise = (async () => {
-      updateStatus("loading");
-      setError(null);
-      setDownloadProgress(0);
-
-    // Point Transformers.js at the local server for model files (no Hugging Face download).
-    // Note: Transformers.js v3 only substitutes {model} and {revision} — filename is always
-    // appended separately via pathJoin(). Do NOT use "{file}" as the template.
-    env.remoteHost = window.location.origin;
-    env.remotePathTemplate = "models/";
-
-    // Intercept voice file requests from kokoro-js (hardcoded Hugging Face URL) and redirect locally
-    const origFetch = window.fetch.bind(window);
-    window.fetch = (input, ...args) => {
-      const url = typeof input === "string" ? input : input instanceof Request ? input.url : "";
-      if (url.includes("huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX")) {
-        const local = url.replace("https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main", window.location.origin + "/models");
-        return origFetch(local, ...args);
+  // Enumerate available voices on mount
+  useEffect(() => {
+    const loadVoices = () => {
+      const available = window.speechSynthesis.getVoices();
+      if (available.length > 0) {
+        setVoices(available.map((v) => ({ id: v.name, name: `${v.name} (${v.lang})` })));
+        setVoice(available[0].name);
       }
-      return origFetch(input, ...args);
     };
-    try {
-      const tts = await KokoroTTS.from_pretrained(
-        "onnx-community/Kokoro-82M-v1.0-ONNX",
-        {
-          dtype: "q8",
-          device: "wasm",
-          progress_callback: (p: ProgressInfo) => {
-            if ((p.status === "download" || p.status === "progress") && typeof (p as any).progress === "number") {
-              setDownloadProgress(Math.round((p as any).progress));
-            }
-          },
-        },
-      );
-      ttsRef.current = tts;
-      const known: Array<{ id: string; name: string }> = [];
-      for (const key of Object.keys(tts.voices)) {
-        known.push({ id: key, name: key });
-      }
-      setVoices(known);
-      loadingRef.current = false;
-      updateStatus("ready");
-    } catch (err) {
-      console.error("Failed to load Kokoro model:", err);
-      setError("Failed to load the voice model. Please try again later.");
-      loadingRef.current = false;
-      updateStatus("error");
+    loadVoices();
+    if (window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
     }
-  })();
-    loadPromiseRef.current = promise;
-    return promise;
-  }, [updateStatus]);
+    return () => { window.speechSynthesis.onvoiceschanged = null; };
+  }, []);
 
-  const startPlayback = useCallback(async () => {
-    abortRef.current = false;
-    isPausedRef.current = false;
+  const stopPlayback = useCallback(() => {
+    window.speechSynthesis.cancel();
+    pendingRef.current = false;
+    lastWordRef.current = -1;
+    utteranceRef.current = null;
+  }, []);
+
+  const startPlayback = useCallback(() => {
+    if (!window.speechSynthesis) {
+      setError("Speech synthesis is not available in this browser.");
+      updateStatus("error");
+      return;
+    }
+
+    stopPlayback();
+    pendingRef.current = true;
     lastWordRef.current = -1;
 
-    // Create/resume AudioContext SYNCHRONOUSLY (still in user-gesture context)
-    // so the browser's autoplay policy doesn't block playback.
-    let ctx = audioCtxRef.current;
-    if (!ctx || ctx.state === "closed") {
-      ctx = new AudioContext();
-      audioCtxRef.current = ctx;
-    }
-    if (ctx.state === "suspended") await ctx.resume();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = speed;
+    utterance.voice = voices.find((v) => v.id === voice) ? window.speechSynthesis.getVoices().find((v) => v.name === voice) ?? null : null;
 
-    if (!ttsRef.current) {
-      await loadPromiseRef.current;
-      if (!ttsRef.current) return;
-    }
-
-    updateStatus("playing");
-
-    try {
-      let cumulativeWords = 0;
-
-      for (let i = 0; i < sentences.length; i++) {
-        while (isPausedRef.current && !abortRef.current) {
-          await new Promise((r) => setTimeout(r, 200));
+    utterance.onboundary = (e) => {
+      if (e.name === "word" && typeof e.charIndex === "number") {
+        const wi = charIndexToWordIndex(text, e.charIndex);
+        if (wi !== lastWordRef.current) {
+          lastWordRef.current = wi;
+          onWordRef.current?.(wi);
+          setProgress(Math.round((wi / totalWords) * 100));
         }
-        if (abortRef.current) break;
-
-        // Generate audio for this sentence
-        const rawAudio = await ttsRef.current.generate(sentences[i], { voice: voice as any, speed });
-        const buffer = ctx.createBuffer(1, rawAudio.audio.length, rawAudio.sampling_rate);
-        buffer.getChannelData(0).set(rawAudio.audio);
-
-        const sentenceWords = sentences[i].trim().split(/\s+/).filter(Boolean);
-        if (sentenceWords.length === 0) continue;
-
-        const wordDuration = buffer.duration / sentenceWords.length;
-        const startTime = ctx.currentTime;
-
-        // Start playback
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        source.connect(ctx.destination);
-        source.start();
-
-        // Track word position during playback
-        const tracker = setInterval(() => {
-          if (abortRef.current) { clearInterval(tracker); return; }
-          if (ctx.state === "suspended") return;
-
-          const elapsed = ctx.currentTime - startTime;
-          const wi = Math.min(Math.floor(elapsed / wordDuration), sentenceWords.length - 1);
-          const globalWi = cumulativeWords + wi;
-
-          if (globalWi !== lastWordRef.current) {
-            lastWordRef.current = globalWi;
-            onWordRef.current?.(globalWi);
-          }
-
-          // Throttle progress state updates
-          if (wi % 2 === 0 || wi === sentenceWords.length - 1) {
-            setProgress(Math.round(((cumulativeWords + wi) / totalWords) * 100));
-          }
-        }, 40);
-
-        // Wait for audio to finish
-        await new Promise<void>((resolve) => {
-          source.onended = () => resolve();
-          // Safety timeout: if audio never ends, force continue
-          setTimeout(() => resolve(), (buffer.duration * 1000) + 2000);
-        });
-
-        clearInterval(tracker);
-
-        // Ensure final word is reported
-        const finalWi = cumulativeWords + sentenceWords.length - 1;
-        if (finalWi > lastWordRef.current) {
-          lastWordRef.current = finalWi;
-          onWordRef.current?.(finalWi);
-        }
-
-        cumulativeWords += sentenceWords.length;
-        setProgress(Math.round((cumulativeWords / totalWords) * 100));
       }
-    } catch (err) {
-      console.error("Playback error:", err);
-      if (!abortRef.current) {
-        setError("An error occurred during playback.");
-        updateStatus("error");
-        return;
-      }
-    }
+    };
 
-    if (!abortRef.current) {
+    utterance.onstart = () => {
+      updateStatus("playing");
+    };
+
+    utterance.onend = () => {
+      pendingRef.current = false;
+      setProgress(100);
+      onWordRef.current?.(totalWords - 1);
       updateStatus("idle");
       onComplete?.();
-    }
-  }, [sentences, totalWords, voice, speed, loadModel, updateStatus, onComplete]);
+    };
+
+    utterance.onerror = (e) => {
+      if (pendingRef.current) {
+        console.error("Speech synthesis error:", e);
+        setError("An error occurred during playback.");
+        updateStatus("error");
+      }
+      pendingRef.current = false;
+    };
+
+    utteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  }, [text, speed, voice, voices, totalWords, updateStatus, onComplete, stopPlayback]);
 
   const togglePause = useCallback(() => {
     if (status === "playing") {
-      isPausedRef.current = true;
-      if (audioCtxRef.current?.state === "running") {
-        audioCtxRef.current.suspend().catch(() => {});
-      }
+      window.speechSynthesis.pause();
       updateStatus("paused");
     } else if (status === "paused") {
-      isPausedRef.current = false;
-      const ac = audioCtxRef.current;
-      if (ac && ac.state !== "closed") {
-        ac.resume().catch(() => {});
-      }
+      window.speechSynthesis.resume();
       updateStatus("playing");
     }
   }, [status, updateStatus]);
 
   const stop = useCallback(() => {
-    abortRef.current = true;
-    isPausedRef.current = false;
+    stopPlayback();
     updateStatus("idle");
     setProgress(0);
     lastWordRef.current = -1;
     onWordRef.current?.(-1);
-  }, [updateStatus]);
+  }, [updateStatus, stopPlayback]);
 
   const handlePlay = useCallback(() => {
     if (status === "idle" || status === "ready" || status === "error") {
-      startPlayback().catch(() => {});
+      startPlayback();
     } else if (status === "playing" || status === "paused") {
       togglePause();
     }
   }, [status, startPlayback, togglePause]);
 
-  // Preload TTS model on mount so it's ready when the user clicks Listen
   useEffect(() => {
-    loadModel().catch(() => {});
-  }, [loadModel]);
-
-  useEffect(() => {
-    return () => {
-      abortRef.current = true;
-      audioCtxRef.current?.close();
-    };
-  }, []);
+    return () => { stopPlayback(); };
+  }, [stopPlayback]);
 
   const isPlaying = status === "playing";
   const isPaused = status === "paused";
-  const isLoading = status === "loading";
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[60] border-t border-ink/10 bg-paper/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
@@ -276,44 +162,34 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
 
       <div className="max-w-4xl mx-auto px-2 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-4">
         <div className="shrink-0">
-          {isLoading ? (
+          {voices.length === 0 ? (
             <Loader2 size={16} className="animate-spin text-ink/40" />
           ) : (
             <Volume2 size={16} className={cn(isPlaying ? "text-accent" : "text-ink/40")} />
           )}
         </div>
 
-        {isLoading && (
+        {voices.length === 0 && (
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 text-[10px] font-mono text-ink/50">
-              <span className="truncate">Downloading voice model...</span>
-              <span className="font-bold">{downloadProgress}%</span>
-            </div>
-            <div className="mt-1 h-1 bg-ink/5 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-accent rounded-full transition-all duration-300"
-                style={{ width: `${downloadProgress}%` }}
-              />
-            </div>
+            <p className="text-[10px] font-mono text-ink/50 truncate">Loading speech engine...</p>
           </div>
         )}
 
-        {status === "error" && !isLoading && (
+        {status === "error" && (
           <div className="flex-1 min-w-0">
             <p className="text-[10px] font-mono text-red-600 truncate">{error}</p>
           </div>
         )}
 
-        {!isLoading && status !== "error" && (
+        {voices.length > 0 && status !== "error" && (
           <div className="hidden sm:block flex-1 min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-mono text-ink/50">
               <span className={cn(isPlaying && "text-accent font-bold")}>
                 {isPlaying && "Speaking"}
                 {isPaused && "Paused"}
-                {status === "idle" && "Ready"}
-                {status === "ready" && "Ready"}
+                {(status === "idle" || status === "ready") && "Ready"}
               </span>
-              {status !== "idle" && status !== "ready" && (
+              {(status === "playing" || status === "paused") && (
                 <>
                   <span className="text-ink/20">·</span>
                   <span>{progress}%</span>
@@ -323,7 +199,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
           </div>
         )}
 
-        {!isLoading && status !== "error" && (
+        {voices.length > 0 && status !== "error" && (
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <button
               onClick={handlePlay}
@@ -365,7 +241,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
                   {SPEED_OPTIONS.map((s) => (
                     <button
                       key={s}
-                      onClick={() => { if (isPlaying || isPaused) stop(); setSpeed(s); setSpeedOpen(false); }}
+                      onClick={() => { stop(); setSpeed(s); setSpeedOpen(false); }}
                       className={cn(
                         "w-full px-3 py-1.5 text-[10px] font-mono text-left hover:bg-ink/5 transition-colors",
                         speed === s ? "text-accent font-bold" : "text-ink/60",
@@ -382,21 +258,16 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
               <button
                 onClick={() => { setVoiceOpen(!voiceOpen); setSpeedOpen(false); }}
                 className="hidden sm:block px-2 py-1.5 text-[10px] font-mono text-ink/50 hover:text-ink hover:bg-ink/5 rounded-sm transition-colors max-w-[80px] truncate"
-                title={voice}
+                title={voice || "Voice"}
               >
-                {voice}
+                {voice || "Voice"}
               </button>
               {voiceOpen && (
-                <div className="absolute bottom-full right-0 mb-2 bg-paper border border-ink/10 rounded-sm shadow-lg max-h-48 overflow-y-auto min-w-[120px]">
-                  {voices.length === 0 && (
-                    <div className="px-3 py-2 text-[9px] font-mono text-ink/40">
-                      Load model first
-                    </div>
-                  )}
+                <div className="absolute bottom-full right-0 mb-2 bg-paper border border-ink/10 rounded-sm shadow-lg max-h-48 overflow-y-auto min-w-[160px]">
                   {voices.map((v) => (
                     <button
                       key={v.id}
-                      onClick={() => { if (isPlaying || isPaused) stop(); setVoice(v.id); setVoiceOpen(false); }}
+                      onClick={() => { stop(); setVoice(v.id); setVoiceOpen(false); }}
                       className={cn(
                         "w-full px-3 py-1.5 text-[10px] font-mono text-left hover:bg-ink/5 transition-colors",
                         voice === v.id ? "text-accent font-bold" : "text-ink/60",
@@ -419,7 +290,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
           </div>
         )}
 
-        {status === "error" && !isLoading && (
+        {status === "error" && (
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={startPlayback}
