@@ -462,28 +462,39 @@ ${articleUrls}
 
     try {
       const python = await import("node:child_process");
-      const proc = python.spawn("python3", pythonArgs, { timeout: 120_000 });
-      const chunks: Buffer[] = [];
+      const proc = python.spawn("python3", pythonArgs, { timeout: 60_000 });
+      let hasData = false;
 
-      proc.stdout.on("data", (d: Buffer) => chunks.push(d));
+      res.set("Content-Type", "audio/mpeg");
+      res.set("X-TTS-Voice", voice);
+
+      proc.stdout.on("data", (d: Buffer) => {
+        if (!hasData) hasData = true;
+        res.write(d);
+      });
+
       proc.stderr.on("data", (d: Buffer) => {
         if (d.length > 0) console.error("[tts stderr]", d.toString().trim());
       });
 
-      await new Promise<void>((resolve, reject) => {
-        proc.on("close", (code: number | null) => {
-          if (code === 0 && chunks.length > 0) resolve();
-          else reject(new Error(`TTS process exited ${code} (${chunks.length} chunks)`));
-        });
-        proc.on("error", reject);
+      proc.on("close", (code: number | null) => {
+        if (hasData) {
+          res.end();
+        } else {
+          console.error("[tts] no output, code:", code);
+          if (!res.headersSent) res.status(500).json({ error: "TTS failed" });
+          else res.end();
+        }
       });
 
-      res.set("Content-Type", "audio/mpeg");
-      res.set("X-TTS-Voice", voice);
-      res.send(Buffer.concat(chunks));
+      proc.on("error", (err) => {
+        console.error("[tts] spawn error:", err);
+        if (!res.headersSent) res.status(500).json({ error: "TTS failed" });
+        else res.end();
+      });
     } catch (err) {
       console.error("TTS failed:", err);
-      res.status(500).json({ error: "TTS generation failed", detail: err instanceof Error ? err.message : String(err) });
+      if (!res.headersSent) res.status(500).json({ error: "TTS generation failed" });
     }
   });
 
