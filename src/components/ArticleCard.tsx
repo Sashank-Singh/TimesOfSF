@@ -79,6 +79,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
             <div className="flex items-center gap-4 mb-6">
                <button
                 onClick={onBookmark}
+                type="button"
                 className={cn("flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest", isBookmarked && "bg-ink text-paper")}
                >
                  <Bookmark size={14} className={cn(isBookmarked && "fill-paper")} />
@@ -86,6 +87,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
                </button>
                <button
                 onClick={onShare}
+                type="button"
                 className="flex items-center gap-2 px-4 py-2 border border-ink/10 hover:bg-ink hover:text-paper transition-all text-[10px] font-mono uppercase tracking-widest"
                >
                  <Share2 size={14} />
@@ -150,6 +152,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           <button
             className={cn("hover:text-accent transition-colors p-1", isBookmarked && "text-accent fill-accent")}
             onClick={onBookmark}
+            type="button"
             title="Bookmark"
           >
             <Bookmark size={12} />
@@ -157,6 +160,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
           <button
             className="hover:text-accent transition-colors p-1"
             onClick={onShare}
+            type="button"
             title="Share"
           >
             <Share2 size={12} />
