@@ -23,7 +23,7 @@ END_MARKER = b"\n---END---\n"
 
 async def generate(text: str, voice: str) -> None:
     communicate = Communicate(text, voice)
-    async for chunk in communicate:
+    async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             sys.stdout.buffer.write(chunk["data"])
     sys.stdout.buffer.write(END_MARKER)
