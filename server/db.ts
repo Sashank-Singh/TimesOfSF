@@ -174,7 +174,7 @@ export async function saveSourceAttempt(runId: string, attempt: SourceAttempt) {
       ${result?.publishedAt ?? null},
       ${result?.summary ?? null},
       ${result?.textExcerpt ?? null},
-      ${result ? JSON.stringify(result.facts) : null},
+      ${result?.facts ?? null},
       ${attempt.reason ?? null}
     )
   `;
@@ -199,15 +199,15 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
           ${post.imageCredit ?? null},
           ${post.bodyMarkdown},
           ${post.shortPost},
-          ${JSON.stringify(post.credits)},
-          ${JSON.stringify(post.citations ?? [])},
-          ${JSON.stringify(post.sourceUrls ?? [])},
+          ${post.credits},
+          ${post.citations ?? []},
+          ${post.sourceUrls ?? []},
           ${post.headlineHash ?? null},
           ${post.canonicalKey ?? null},
-          ${post.storyFingerprint ? JSON.stringify(post.storyFingerprint) : null},
-          ${post.tldr ? JSON.stringify(post.tldr) : null},
-          ${post.entities ? JSON.stringify(post.entities) : null},
-          ${post.dataBlocks ? JSON.stringify(post.dataBlocks) : null},
+          ${post.storyFingerprint ?? null},
+          ${post.tldr ?? null},
+          ${post.entities ?? null},
+          ${post.dataBlocks ?? null},
           ${post.editorialCategory ?? null}
         )
         RETURNING id
@@ -366,9 +366,9 @@ export async function saveKnowledgeState(post: GeneratedPost, topic: string, sou
       ${topic},
       ${post.headline},
       ${post.slug},
-      ${JSON.stringify(keyEntities)},
-      ${JSON.stringify(keyFacts)},
-      ${JSON.stringify(sourceUrls)}
+      ${keyEntities},
+      ${keyFacts},
+      ${sourceUrls}
     )
   `;
 }
