@@ -22,7 +22,7 @@ VOICES = {
 async def stream_tts(text: str, voice: str) -> None:
     """Stream TTS audio to stdout. edge-tts handles long text internally."""
     communicate = Communicate(text, voice)
-    async for chunk in communicate:
+    async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             sys.stdout.buffer.write(chunk["data"])
             sys.stdout.buffer.flush()
