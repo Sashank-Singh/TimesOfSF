@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
 import { config, isProduction } from "./config";
@@ -448,53 +449,87 @@ ${articleUrls}
     app.use("/api/inngest", inngestState.handler);
   }
 
-  // Server-side TTS via edge-tts (Python subprocess)
+  // Persistent TTS worker — keeps edge-tts import cached across requests
+  const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts_worker.py");
+  const END_MARKER = Buffer.from("\n---END---\n");
+  let ttsWorker: import("node:child_process").ChildProcess | null = null;
+  let ttsQueue: Array<{
+    text: string;
+    voice: string;
+    resolve: (data: Buffer) => void;
+    reject: (err: Error) => void;
+  }> = [];
+  let ttsBusy = false;
+  let ttsBuf = Buffer.alloc(0);
+
+  function spawnTtsWorker() {
+    try {
+      ttsBuf = Buffer.alloc(0);
+      const proc = spawn("python3", [ttsWorkerScript], { stdio: ["pipe", "pipe", "pipe"] });
+
+      proc.stdout.on("data", (chunk: Buffer) => {
+        ttsBuf = Buffer.concat([ttsBuf, chunk]);
+        const endIdx = ttsBuf.indexOf(END_MARKER);
+        if (endIdx >= 0) {
+          const response = ttsBuf.subarray(0, endIdx);
+          ttsBuf = ttsBuf.subarray(endIdx + END_MARKER.length);
+          ttsBusy = false;
+          const item = ttsQueue.shift();
+          item?.resolve(response);
+          flushTtsQueue();
+        }
+      });
+
+      proc.stderr.on("data", (d: Buffer) => {
+        if (d.length > 0) console.error("[tts-worker]", d.toString().trim());
+      });
+
+      proc.on("exit", (code) => {
+        ttsWorker = null;
+        ttsBusy = false;
+        if (ttsQueue.length > 0) {
+          ttsQueue.shift()?.reject(new Error(`TTS worker exited (${code})`));
+          flushTtsQueue();
+        }
+      });
+
+      proc.on("error", () => { ttsWorker = null; ttsBusy = false; });
+      ttsWorker = proc;
+    } catch {
+      ttsWorker = null;
+    }
+  }
+
+  function flushTtsQueue() {
+    if (!ttsWorker || ttsBusy || ttsQueue.length === 0) return;
+    if (ttsWorker.exitCode !== null) { spawnTtsWorker(); return; }
+    ttsBusy = true;
+    ttsWorker.stdin?.write(JSON.stringify(ttsQueue[0]) + "\n");
+  }
+
+  function requestTts(text: string, voice: string): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      if (!ttsWorker || ttsWorker.exitCode !== null) spawnTtsWorker();
+      ttsQueue.push({ text, voice, resolve, reject });
+      if (!ttsBusy) flushTtsQueue();
+    });
+  }
+
   app.post("/api/tts", async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     const voice = typeof req.body?.voice === "string" ? req.body.voice.trim() : "en-US-JennyNeural";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
     const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
-    const pythonArgs = [
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts.py"),
-      JSON.stringify({ text: truncated, voice }),
-    ];
 
     try {
-      const python = await import("node:child_process");
-      const proc = python.spawn("python3", pythonArgs, { timeout: 60_000 });
-      let hasData = false;
-
+      const audio = await requestTts(truncated, voice);
       res.set("Content-Type", "audio/mpeg");
       res.set("X-TTS-Voice", voice);
-
-      proc.stdout.on("data", (d: Buffer) => {
-        if (!hasData) hasData = true;
-        res.write(d);
-      });
-
-      proc.stderr.on("data", (d: Buffer) => {
-        if (d.length > 0) console.error("[tts stderr]", d.toString().trim());
-      });
-
-      proc.on("close", (code: number | null) => {
-        if (hasData) {
-          res.end();
-        } else {
-          console.error("[tts] no output, code:", code);
-          if (!res.headersSent) res.status(500).json({ error: "TTS failed" });
-          else res.end();
-        }
-      });
-
-      proc.on("error", (err) => {
-        console.error("[tts] spawn error:", err);
-        if (!res.headersSent) res.status(500).json({ error: "TTS failed" });
-        else res.end();
-      });
+      res.send(audio);
     } catch (err) {
-      console.error("TTS failed:", err);
-      if (!res.headersSent) res.status(500).json({ error: "TTS generation failed" });
+      console.error("[tts] error:", err);
+      res.status(500).json({ error: "TTS generation failed" });
     }
   });
 
