@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Article, EventInfo } from './types';
 import { fetchArticles, fetchEvents } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
@@ -44,6 +44,7 @@ export default function App() {
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [apiError, setApiError] = useState(false);
+  const deepLinkedRef = useRef(false);
 
   useEffect(() => {
     const p = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -111,8 +112,9 @@ export default function App() {
   
   useEffect(() => {
     if (selectedArticle) {
+      deepLinkedRef.current = true;
       window.history.replaceState({}, '', articlePath(selectedArticle.slug));
-    } else {
+    } else if (deepLinkedRef.current) {
       window.history.replaceState({}, '', '/');
     }
   }, [selectedArticle]);
@@ -218,7 +220,7 @@ export default function App() {
         // user clicked cancel, squash the error
       });
     } else {
-      navigator.clipboard.writeText(shareUrl);
+      navigator.clipboard.writeText(shareUrl).catch(() => {});
       toast.success('Link copied to clipboard');
     }
   };
@@ -671,7 +673,7 @@ export default function App() {
         }} 
         isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
         onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}
-        onShare={() => selectedArticle && handleShare(selectedArticle)}
+        onShare={(e) => selectedArticle && handleShare(selectedArticle, e)}
       />
     </div>
   );

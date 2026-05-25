@@ -28,7 +28,7 @@ interface ReaderViewProps {
   onClose: () => void;
   isBookmarked: boolean;
   onBookmark: () => void;
-  onShare: () => void;
+  onShare: (e?: React.MouseEvent) => void;
 }
 
 function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
@@ -367,6 +367,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                 <button
                   title="Share News"
                   onClick={onShare}
+                  type="button"
                   className="group flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest hover:text-accent transition-colors"
                 >
                   <Share2 size={16} />
@@ -643,7 +644,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             <React.Suspense fallback={null}>
               <VoiceReader
                 text={plainText}
-                title={article.headline}
+                title={article.title}
                 onWordChange={setActiveWord}
                 onClose={() => setVoiceActive(false)}
               />
