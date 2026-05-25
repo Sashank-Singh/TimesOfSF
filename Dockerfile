@@ -1,10 +1,10 @@
 # Production image: Express API + Vite static (Coolify / Docker).
-# Uses Mozilla Readability (pure JS) for full-article extraction — no Python dependency.
 FROM node:22-bookworm-slim
 
-# Coolify expects curl or wget in the image for Docker-based health checks.
+# Python3 + edge-tts for server-side TTS (natural neural voices, no model files)
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates \
+  && apt-get install -y --no-install-recommends curl ca-certificates python3 python3-pip \
+  && pip3 install --break-system-packages edge-tts==13.0.0 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -13,9 +13,6 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-
-# Download Kokoro-82M TTS model files for local inference (no Hugging Face download at runtime)
-RUN chmod +x scripts/download-tts-model.sh && ./scripts/download-tts-model.sh
 
 # Same-origin: do not pass VITE_API_URL at image build (Coolify build args); Express serves /api + dist on one host.
 RUN npm run build

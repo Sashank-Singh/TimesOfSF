@@ -14,11 +14,16 @@ interface VoiceReaderProps {
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5] as const;
 
-/** Map a character index to the word index in the original text. */
-function charIndexToWordIndex(text: string, charIndex: number): number {
-  const before = text.slice(0, Math.min(charIndex, text.length));
-  return before.split(/\s+/).filter(Boolean).length;
-}
+const VOICES: Array<{ id: string; name: string }> = [
+  { id: "en-US-JennyNeural", name: "English (US) — Jenny (female)" },
+  { id: "en-US-GuyNeural", name: "English (US) — Guy (male)" },
+  { id: "en-US-AriaNeural", name: "English (US) — Aria (female)" },
+  { id: "en-US-DavisNeural", name: "English (US) — Davis (male)" },
+  { id: "en-GB-SoniaNeural", name: "English (UK) — Sonia (female)" },
+  { id: "en-GB-RyanNeural", name: "English (UK) — Ryan (male)" },
+  { id: "en-AU-NatashaNeural", name: "English (AU) — Natasha (female)" },
+  { id: "en-IN-NeerjaNeural", name: "English (IN) — Neerja (female)" },
+];
 
 export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
@@ -26,14 +31,13 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
   const [progress, setProgress] = useState(0);
   const [speed, setSpeed] = useState<number>(1);
   const [speedOpen, setSpeedOpen] = useState(false);
-  const [voice, setVoice] = useState("");
+  const [voice, setVoice] = useState(VOICES[0].id);
   const [voiceOpen, setVoiceOpen] = useState(false);
-  const [voices, setVoices] = useState<Array<{ id: string; name: string }>>([]);
 
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
-  const pendingRef = useRef(false);
 
   useEffect(() => { onWordRef.current = onWordChange; }, [onWordChange]);
 
@@ -44,112 +48,123 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
     onStatusChange?.(s);
   }, [onStatusChange]);
 
-  // Enumerate available voices on mount
+  const cleanupAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount
   useEffect(() => {
-    const loadVoices = () => {
-      const available = window.speechSynthesis.getVoices();
-      if (available.length > 0) {
-        setVoices(available.map((v) => ({ id: v.name, name: `${v.name} (${v.lang})` })));
-        setVoice(available[0].name);
+    return () => { cleanupAudio(); };
+  }, [cleanupAudio]);
+
+  const fetchAndPlay = useCallback(async () => {
+    setError(null);
+    updateStatus("loading");
+
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server responded with ${response.status}`);
       }
-    };
-    loadVoices();
-    if (window.speechSynthesis.onvoiceschanged !== undefined) {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-    return () => { window.speechSynthesis.onvoiceschanged = null; };
-  }, []);
 
-  const stopPlayback = useCallback(() => {
-    window.speechSynthesis.cancel();
-    pendingRef.current = false;
-    lastWordRef.current = -1;
-    utteranceRef.current = null;
-  }, []);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
 
-  const startPlayback = useCallback(() => {
-    if (!window.speechSynthesis) {
-      setError("Speech synthesis is not available in this browser.");
-      updateStatus("error");
-      return;
-    }
+      const audio = new Audio(url);
+      audio.playbackRate = speed;
+      audioRef.current = audio;
 
-    stopPlayback();
-    pendingRef.current = true;
-    lastWordRef.current = -1;
+      audio.onloadedmetadata = () => {
+        updateStatus("playing");
+      };
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = speed;
-    utterance.voice = voices.find((v) => v.id === voice) ? window.speechSynthesis.getVoices().find((v) => v.name === voice) ?? null : null;
-
-    utterance.onboundary = (e) => {
-      if (e.name === "word" && typeof e.charIndex === "number") {
-        const wi = charIndexToWordIndex(text, e.charIndex);
-        if (wi !== lastWordRef.current) {
-          lastWordRef.current = wi;
-          onWordRef.current?.(wi);
-          setProgress(Math.round((wi / totalWords) * 100));
+      audio.ontimeupdate = () => {
+        if (audio.duration && audio.duration > 0) {
+          const pct = Math.round((audio.currentTime / audio.duration) * 100);
+          setProgress(pct);
+          const wi = Math.round((audio.currentTime / audio.duration) * totalWords);
+          if (wi !== lastWordRef.current) {
+            lastWordRef.current = wi;
+            onWordRef.current?.(wi);
+          }
         }
-      }
-    };
+      };
 
-    utterance.onstart = () => {
-      updateStatus("playing");
-    };
+      audio.onended = () => {
+        cleanupAudio();
+        setProgress(100);
+        onWordRef.current?.(totalWords - 1);
+        updateStatus("idle");
+        onComplete?.();
+      };
 
-    utterance.onend = () => {
-      pendingRef.current = false;
-      setProgress(100);
-      onWordRef.current?.(totalWords - 1);
-      updateStatus("idle");
-      onComplete?.();
-    };
-
-    utterance.onerror = (e) => {
-      if (pendingRef.current) {
-        console.error("Speech synthesis error:", e);
-        setError("An error occurred during playback.");
+      audio.onerror = (e) => {
+        console.error("Audio playback error:", e);
+        setError("Playback failed.");
         updateStatus("error");
-      }
-      pendingRef.current = false;
-    };
+        cleanupAudio();
+      };
 
-    utteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-  }, [text, speed, voice, voices, totalWords, updateStatus, onComplete, stopPlayback]);
+      await audio.play();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to generate speech";
+      console.error("TTS error:", err);
+      setError(message);
+      updateStatus("error");
+      cleanupAudio();
+    }
+  }, [text, voice, speed, totalWords, updateStatus, onComplete, cleanupAudio]);
 
   const togglePause = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
     if (status === "playing") {
-      window.speechSynthesis.pause();
+      audio.pause();
       updateStatus("paused");
     } else if (status === "paused") {
-      window.speechSynthesis.resume();
-      updateStatus("playing");
+      audio.play().catch((err) => {
+        console.error("Resume failed:", err);
+        setError("Failed to resume playback.");
+        updateStatus("error");
+      });
     }
   }, [status, updateStatus]);
 
   const stop = useCallback(() => {
-    stopPlayback();
+    cleanupAudio();
     updateStatus("idle");
     setProgress(0);
     lastWordRef.current = -1;
     onWordRef.current?.(-1);
-  }, [updateStatus, stopPlayback]);
+  }, [updateStatus, cleanupAudio]);
 
   const handlePlay = useCallback(() => {
     if (status === "idle" || status === "ready" || status === "error") {
-      startPlayback();
+      fetchAndPlay();
     } else if (status === "playing" || status === "paused") {
       togglePause();
     }
-  }, [status, startPlayback, togglePause]);
-
-  useEffect(() => {
-    return () => { stopPlayback(); };
-  }, [stopPlayback]);
+  }, [status, fetchAndPlay, togglePause]);
 
   const isPlaying = status === "playing";
   const isPaused = status === "paused";
+  const isLoading = status === "loading";
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-[60] border-t border-ink/10 bg-paper/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
@@ -162,16 +177,16 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
 
       <div className="max-w-4xl mx-auto px-2 sm:px-4 py-2 sm:py-3 flex items-center gap-2 sm:gap-4">
         <div className="shrink-0">
-          {voices.length === 0 ? (
-            <Loader2 size={16} className="animate-spin text-ink/40" />
+          {isLoading ? (
+            <Loader2 size={16} className="animate-spin text-accent" />
           ) : (
             <Volume2 size={16} className={cn(isPlaying ? "text-accent" : "text-ink/40")} />
           )}
         </div>
 
-        {voices.length === 0 && (
+        {isLoading && (
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-mono text-ink/50 truncate">Loading speech engine...</p>
+            <p className="text-[10px] font-mono text-ink/50 truncate">Generating audio...</p>
           </div>
         )}
 
@@ -181,7 +196,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
           </div>
         )}
 
-        {voices.length > 0 && status !== "error" && (
+        {!isLoading && status !== "error" && (
           <div className="hidden sm:block flex-1 min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-mono text-ink/50">
               <span className={cn(isPlaying && "text-accent font-bold")}>
@@ -199,7 +214,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
           </div>
         )}
 
-        {voices.length > 0 && status !== "error" && (
+        {!isLoading && status !== "error" && (
           <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <button
               onClick={handlePlay}
@@ -258,13 +273,13 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
               <button
                 onClick={() => { setVoiceOpen(!voiceOpen); setSpeedOpen(false); }}
                 className="hidden sm:block px-2 py-1.5 text-[10px] font-mono text-ink/50 hover:text-ink hover:bg-ink/5 rounded-sm transition-colors max-w-[80px] truncate"
-                title={voice || "Voice"}
+                title={VOICES.find((v) => v.id === voice)?.name || voice}
               >
-                {voice || "Voice"}
+                {voice}
               </button>
               {voiceOpen && (
                 <div className="absolute bottom-full right-0 mb-2 bg-paper border border-ink/10 rounded-sm shadow-lg max-h-48 overflow-y-auto min-w-[160px]">
-                  {voices.map((v) => (
+                  {VOICES.map((v) => (
                     <button
                       key={v.id}
                       onClick={() => { stop(); setVoice(v.id); setVoiceOpen(false); }}
@@ -293,7 +308,7 @@ export function VoiceReader({ text, onWordChange, onStatusChange, onComplete, on
         {status === "error" && (
           <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={startPlayback}
+              onClick={fetchAndPlay}
               className="px-3 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest bg-accent text-paper rounded-sm hover:bg-accent/90 transition-colors"
             >
               Retry

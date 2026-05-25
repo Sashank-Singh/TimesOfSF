@@ -448,14 +448,42 @@ ${articleUrls}
     app.use("/api/inngest", inngestState.handler);
   }
 
-  // Serve Kokoro-82M TTS model files for zero-download inference (served same-origin)
-  const ttsModelDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "models");
-  if (fs.existsSync(ttsModelDir)) {
-    app.use("/models", express.static(ttsModelDir, { maxAge: 86_400_000 }));
-    if (!isProduction()) console.log("Serving TTS model files from", ttsModelDir);
-  } else if (isProduction()) {
-    console.warn("TTS model directory not found at", ttsModelDir, "- VoiceReader will download from Hugging Face.");
-  }
+  // Server-side TTS via edge-tts (Python subprocess)
+  app.post("/api/tts", async (req, res) => {
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    const voice = typeof req.body?.voice === "string" ? req.body.voice.trim() : "en-US-JennyNeural";
+    if (!text) { res.status(400).json({ error: "Missing text" }); return; }
+
+    const pythonArgs = [path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts.py")];
+    const chunked = text.length > 2500 && text.length <= 10000 ? text.slice(0, 10000) : text.slice(0, 10000);
+    pythonArgs.push(JSON.stringify({ text: chunked, voice }));
+
+    try {
+      const python = await import("node:child_process");
+      const proc = python.spawn("python3", pythonArgs, { timeout: 120_000 });
+      const chunks: Buffer[] = [];
+
+      proc.stdout.on("data", (d: Buffer) => chunks.push(d));
+      proc.stderr.on("data", (d: Buffer) => {
+        if (d.length > 0) console.error("[tts stderr]", d.toString().trim());
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        proc.on("close", (code: number | null) => {
+          if (code === 0 && chunks.length > 0) resolve();
+          else reject(new Error(`TTS process exited ${code} (${chunks.length} chunks)`));
+        });
+        proc.on("error", reject);
+      });
+
+      res.set("Content-Type", "audio/wav");
+      res.set("X-TTS-Voice", voice);
+      res.send(Buffer.concat(chunks));
+    } catch (err) {
+      console.error("TTS failed:", err);
+      res.status(500).json({ error: "TTS generation failed", detail: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   if (isProduction()) {
     const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
