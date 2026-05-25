@@ -643,6 +643,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             <React.Suspense fallback={null}>
               <VoiceReader
                 text={plainText}
+                title={article.headline}
                 onWordChange={setActiveWord}
                 onClose={() => setVoiceActive(false)}
               />
