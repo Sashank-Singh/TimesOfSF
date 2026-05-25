@@ -454,9 +454,11 @@ ${articleUrls}
     const voice = typeof req.body?.voice === "string" ? req.body.voice.trim() : "en-US-JennyNeural";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
-    const pythonArgs = [path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts.py")];
-    const chunked = text.length > 2500 && text.length <= 10000 ? text.slice(0, 10000) : text.slice(0, 10000);
-    pythonArgs.push(JSON.stringify({ text: chunked, voice }));
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const pythonArgs = [
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts.py"),
+      JSON.stringify({ text: truncated, voice }),
+    ];
 
     try {
       const python = await import("node:child_process");
@@ -476,7 +478,7 @@ ${articleUrls}
         proc.on("error", reject);
       });
 
-      res.set("Content-Type", "audio/wav");
+      res.set("Content-Type", "audio/mpeg");
       res.set("X-TTS-Voice", voice);
       res.send(Buffer.concat(chunks));
     } catch (err) {
