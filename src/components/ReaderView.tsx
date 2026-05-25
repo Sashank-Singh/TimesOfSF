@@ -181,11 +181,14 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             while ((match = entityRegex.exec(part)) !== null) {
               foundExplicit = true;
               parts.push(part.slice(lastIndex, match.index));
-              const entityName = match[1];
+              const raw = match[1];
+              const pipeIdx = raw.indexOf("|");
+              const entityName = pipeIdx >= 0 ? raw.slice(0, pipeIdx).trim() : raw;
+              const inlineDef = pipeIdx >= 0 ? raw.slice(pipeIdx + 1).trim() : "";
               const entityData = entities.find((e) => e?.name?.toLowerCase() === entityName?.toLowerCase());
               const explicitDefinition = entityData?.definition?.trim();
-              const fallbackDefinition = !explicitDefinition ? lookupGlossaryDefinition(entityName) : "";
-              const resolvedDefinition = explicitDefinition || fallbackDefinition;
+              const fallbackDefinition = !explicitDefinition && !inlineDef ? lookupGlossaryDefinition(entityName) : "";
+              const resolvedDefinition = explicitDefinition || inlineDef || fallbackDefinition;
               const resolvedName = entityData?.name || entityName;
 
               if (resolvedDefinition) {
