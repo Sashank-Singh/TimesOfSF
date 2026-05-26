@@ -455,7 +455,6 @@ ${articleUrls}
   let ttsWorker: import("node:child_process").ChildProcess | null = null;
   let ttsQueue: Array<{
     text: string;
-    voice: string;
     resolve: (data: Buffer) => void;
     reject: (err: Error) => void;
   }> = [];
@@ -504,28 +503,26 @@ ${articleUrls}
     if (!ttsWorker || ttsBusy || ttsQueue.length === 0) return;
     if (ttsWorker.exitCode !== null) { spawnTtsWorker(); return; }
     ttsBusy = true;
-    ttsWorker.stdin?.write(JSON.stringify(ttsQueue[0]) + "\n");
+    ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text }) + "\n");
   }
 
-  function requestTts(text: string, voice: string): Promise<Buffer> {
+  function requestTts(text: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       if (!ttsWorker || ttsWorker.exitCode !== null) spawnTtsWorker();
-      ttsQueue.push({ text, voice, resolve, reject });
+      ttsQueue.push({ text, resolve, reject });
       if (!ttsBusy) flushTtsQueue();
     });
   }
 
   app.post("/api/tts", async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-    const voice = typeof req.body?.voice === "string" ? req.body.voice.trim() : "en-US-JennyNeural";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
     const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
 
     try {
-      const audio = await requestTts(truncated, voice);
+      const audio = await requestTts(truncated);
       res.set("Content-Type", "audio/mpeg");
-      res.set("X-TTS-Voice", voice);
       res.send(audio);
     } catch (err) {
       console.error("[tts] error:", err);

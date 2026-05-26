@@ -5,24 +5,18 @@ on stdin. Responses are: binary audio data, then "\n---END---\n" marker on
 stdout. Stderr is for errors only.
 
 Protocol:
-   stdin:  {"text":"hello","voice":"en-US-JennyNeural"}\n
+   stdin:  {"text":"hello"}\n
    stdout: <binary MP3 chunks>...\n---END---\n
 """
 import json, sys, asyncio
 from edge_tts import Communicate
 
-VOICES = {
-    "en-US-JennyNeural": True, "en-US-GuyNeural": True,
-    "en-US-AriaNeural": True, "en-US-DavisNeural": True,
-    "en-GB-SoniaNeural": True, "en-GB-RyanNeural": True,
-    "en-AU-NatashaNeural": True, "en-IN-NeerjaNeural": True,
-}
-
+VOICE = "en-US-JennyNeural"
 END_MARKER = b"\n---END---\n"
 
 
-async def generate(text: str, voice: str) -> None:
-    communicate = Communicate(text, voice)
+async def generate(text: str) -> None:
+    communicate = Communicate(text, VOICE)
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             sys.stdout.buffer.write(chunk["data"])
@@ -38,14 +32,11 @@ def main() -> None:
         try:
             data = json.loads(line)
             text = data.get("text", "")
-            voice = data.get("voice", "en-US-JennyNeural")
             if not text:
                 sys.stderr.write("Missing text\n")
                 sys.stderr.flush()
                 continue
-            if voice not in VOICES:
-                voice = "en-US-JennyNeural"
-            asyncio.run(generate(text, voice))
+            asyncio.run(generate(text))
         except Exception as exc:
             sys.stderr.write(f"Error: {exc}\n")
             sys.stderr.flush()

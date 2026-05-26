@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { Play, Pause, StopCircle, Loader2, ChevronUp, ChevronDown, Headphones, RotateCcw, RotateCw } from "lucide-react";
+import { Play, Pause, StopCircle, Loader2, ChevronUp, ChevronDown, RotateCcw, RotateCw } from "lucide-react";
 import { cn } from "../lib/utils";
 
 export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paused" | "error";
@@ -17,17 +17,6 @@ const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 const SKIP_SECONDS = 10;
 const FETCH_TIMEOUT = 45_000;
 
-const VOICES: Array<{ id: string; name: string }> = [
-  { id: "en-US-JennyNeural", name: "Jenny (US)" },
-  { id: "en-US-GuyNeural", name: "Guy (US)" },
-  { id: "en-US-AriaNeural", name: "Aria (US)" },
-  { id: "en-US-DavisNeural", name: "Davis (US)" },
-  { id: "en-GB-SoniaNeural", name: "Sonia (UK)" },
-  { id: "en-GB-RyanNeural", name: "Ryan (UK)" },
-  { id: "en-AU-NatashaNeural", name: "Natasha (AU)" },
-  { id: "en-IN-NeerjaNeural", name: "Neerja (IN)" },
-];
-
 function fmtTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
@@ -43,22 +32,24 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   const [duration, setDuration] = useState(0);
   const [speed, setSpeed] = useState<number>(1);
   const [speedOpen, setSpeedOpen] = useState(false);
-  const [voice, setVoice] = useState(VOICES[0].id);
-  const [voiceOpen, setVoiceOpen] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const preloadUrlRef = useRef<string | null>(null);
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
   const barRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => { onWordRef.current = onWordChange; }, [onWordChange]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   const totalWords = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
 
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
+    if (!mountedRef.current) return;
     setStatus(s);
     onStatusChange?.(s);
   }, [onStatusChange]);
@@ -77,20 +68,146 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     }
   }, []);
 
-  useEffect(() => { return () => { cleanupAudio(); }; }, [cleanupAudio]);
+  /** Release preloaded-but-unused blob so GC can collect it */
+  const discardPreload = useCallback(() => {
+    if (preloadUrlRef.current) {
+      URL.revokeObjectURL(preloadUrlRef.current);
+      preloadUrlRef.current = null;
+    }
+  }, []);
 
+  useEffect(() => {
+    return () => {
+      cleanupAudio();
+      discardPreload();
+    };
+  }, [cleanupAudio, discardPreload]);
+
+  // ── Preload audio as soon as the reader mounts ──
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    if (!truncated.trim()) {
+      updateStatus("idle");
+      return;
+    }
+
+    updateStatus("loading");
+    setError(null);
+
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
+    (async () => {
+      try {
+        const resp = await fetch("/api/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: truncated, voice: "en-US-JennyNeural" }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.error || `Server error (${resp.status})`);
+        }
+
+        const blob = await resp.blob();
+        if (!blob.size) throw new Error("Empty audio response");
+        if (cancelled) { URL.revokeObjectURL(preloadUrlRef.current ?? ""); return; }
+
+        preloadUrlRef.current = URL.createObjectURL(blob);
+        if (!cancelled) updateStatus("ready");
+      } catch (err: unknown) {
+        if (cancelled) return;
+        if (err instanceof DOMException && err.name === "AbortError") {
+          setError("Request timed out. Try again.");
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to generate speech");
+        }
+        if (!cancelled) updateStatus("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // Only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Start playback from preloaded audio ──
+  const startPlayback = useCallback((url: string) => {
+    discardPreload();
+
+    const audio = new Audio(url);
+    audio.playbackRate = speed;
+    audioRef.current = audio;
+    blobUrlRef.current = url;
+
+    audio.onloadedmetadata = () => {
+      setDuration(audio.duration);
+      updateStatus("playing");
+    };
+
+    audio.ontimeupdate = () => {
+      if (isSeeking) return;
+      if (audio.duration && audio.duration > 0) {
+        const ct = audio.currentTime;
+        setCurrentTime(ct);
+        const pct = Math.round((ct / audio.duration) * 100);
+        setProgress(pct);
+        const wi = Math.round((ct / audio.duration) * totalWords);
+        if (wi !== lastWordRef.current) {
+          lastWordRef.current = wi;
+          onWordRef.current?.(wi);
+        }
+      }
+    };
+
+    audio.onended = () => {
+      cleanupAudio();
+      setProgress(100);
+      setCurrentTime(0);
+      setDuration(0);
+      onWordRef.current?.(totalWords - 1);
+      updateStatus("idle");
+      onComplete?.();
+    };
+
+    audio.onerror = () => {
+      setError("Playback failed. Tap to retry.");
+      updateStatus("error");
+      cleanupAudio();
+    };
+
+    audio.play().catch(() => {
+      setError("Playback failed to start.");
+      updateStatus("error");
+      cleanupAudio();
+    });
+  }, [speed, totalWords, updateStatus, onComplete, cleanupAudio, discardPreload, isSeeking]);
+
+  // ── Fallback fetch+play (when preload failed) ──
   const fetchAndPlay = useCallback(async () => {
     setError(null);
     updateStatus("loading");
-    abortRef.current = new AbortController();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
 
     try {
-      const timer = setTimeout(() => abortRef.current?.abort(), FETCH_TIMEOUT);
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
       const response = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice }),
-        signal: abortRef.current.signal,
+        body: JSON.stringify({ text: truncated, voice: "en-US-JennyNeural" }),
+        signal: controller.signal,
       });
       clearTimeout(timer);
 
@@ -103,49 +220,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       if (!blob.size) throw new Error("Empty audio response");
 
       const url = URL.createObjectURL(blob);
-      blobUrlRef.current = url;
-
-      const audio = new Audio(url);
-      audio.playbackRate = speed;
-      audioRef.current = audio;
-
-      audio.onloadedmetadata = () => {
-        setDuration(audio.duration);
-        updateStatus("playing");
-      };
-
-      audio.ontimeupdate = () => {
-        if (isSeeking) return;
-        if (audio.duration && audio.duration > 0) {
-          const ct = audio.currentTime;
-          setCurrentTime(ct);
-          const pct = Math.round((ct / audio.duration) * 100);
-          setProgress(pct);
-          const wi = Math.round((ct / audio.duration) * totalWords);
-          if (wi !== lastWordRef.current) {
-            lastWordRef.current = wi;
-            onWordRef.current?.(wi);
-          }
-        }
-      };
-
-      audio.onended = () => {
-        cleanupAudio();
-        setProgress(100);
-        setCurrentTime(0);
-        setDuration(0);
-        onWordRef.current?.(totalWords - 1);
-        updateStatus("idle");
-        onComplete?.();
-      };
-
-      audio.onerror = () => {
-        setError("Playback failed. Tap to retry.");
-        updateStatus("error");
-        cleanupAudio();
-      };
-
-      await audio.play();
+      startPlayback(url);
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError("Request timed out. Try again.");
@@ -155,7 +230,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       updateStatus("error");
       cleanupAudio();
     }
-  }, [text, voice, speed, totalWords, updateStatus, onComplete, cleanupAudio, isSeeking]);
+  }, [text, totalWords, updateStatus, cleanupAudio, startPlayback]);
 
   const togglePause = useCallback(() => {
     const audio = audioRef.current;
@@ -166,13 +241,14 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
 
   const stop = useCallback(() => {
     cleanupAudio();
+    discardPreload();
     updateStatus("idle");
     setProgress(0);
     setCurrentTime(0);
     setDuration(0);
     lastWordRef.current = -1;
     onWordRef.current?.(-1);
-  }, [updateStatus, cleanupAudio]);
+  }, [updateStatus, cleanupAudio, discardPreload]);
 
   const skip = useCallback((delta: number) => {
     const audio = audioRef.current;
@@ -185,9 +261,17 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   }, []);
 
   const handlePlay = useCallback(() => {
-    if (status === "idle" || status === "ready" || status === "error") fetchAndPlay();
-    else if (status === "playing" || status === "paused") togglePause();
-  }, [status, fetchAndPlay, togglePause]);
+    if (status === "idle") {
+      fetchAndPlay();
+    } else if (status === "ready") {
+      if (preloadUrlRef.current) startPlayback(preloadUrlRef.current);
+      else fetchAndPlay();
+    } else if (status === "error") {
+      fetchAndPlay();
+    } else if (status === "playing" || status === "paused") {
+      togglePause();
+    }
+  }, [status, fetchAndPlay, startPlayback, togglePause]);
 
   // Progress bar dragging
   const seekFromEvent = useCallback((clientX: number) => {
@@ -233,6 +317,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   const isPlaying = status === "playing";
   const isPaused = status === "paused";
   const isLoading = status === "loading";
+  const isReady = status === "ready";
   const isActive = isPlaying || isPaused;
   const hasAudio = isActive && duration > 0;
 
@@ -250,7 +335,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
             "h-full bg-white transition-[width] duration-75",
             isSeeking && "bg-white/80",
           )}
-          style={{ width: `${isLoading ? 5 : isActive ? progress : 0}%` }}
+          style={{ width: `${isLoading || isReady ? 0 : isActive ? progress : 0}%` }}
         />
         {/* Thumb */}
         {hasAudio && (
@@ -268,25 +353,25 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       <div className="max-w-5xl mx-auto px-3 sm:px-6 py-2.5 sm:py-4">
         {/* Info row */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 mb-2 sm:mb-0">
-          {/* Icon */}
+          {/* Status icon */}
           <div className={cn(
             "w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0",
-            isLoading ? "bg-white/10" : isActive ? "bg-white/20" : "bg-white/5",
+            isLoading ? "bg-white/10" : isActive ? "bg-white/20" : isReady ? "bg-accent/20" : "bg-white/5",
           )}>
             {isLoading ? (
               <Loader2 size={14} className="animate-spin text-white/70" />
             ) : (
-              <Headphones size={14} className={cn(isActive ? "text-white" : "text-white/40")} />
+              <Play size={14} className={cn(isReady && "text-accent", isActive && "text-white", !isReady && !isActive && "text-white/40")} />
             )}
           </div>
 
           {/* Now playing */}
           <div className="min-w-0 flex-1">
             <p className="text-[12px] sm:text-[13px] font-medium text-white/90 truncate leading-tight">
-              {isLoading ? "Generating audio..." : title || "Now Playing"}
+              {isLoading ? "Preparing audio..." : isReady ? "Ready to play" : title || "Now Playing"}
             </p>
             <p className="text-[10px] sm:text-[11px] text-white/40 truncate leading-tight mt-0.5">
-              {isLoading ? "Using neural voice" : hasAudio ? fmtTime(currentTime) : isActive ? `${progress}%` : "Tap play to listen"}
+              {isLoading ? "Generating with neural voice" : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
             </p>
           </div>
 
@@ -318,11 +403,11 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
         {/* Controls row */}
         {!isLoading && status !== "error" && (
           <div className="flex items-center justify-center sm:justify-between gap-1 sm:gap-2">
-            {/* Left: speed + voice (desktop) */}
+            {/* Left: speed (desktop) */}
             <div className="hidden sm:flex items-center gap-1">
               <div className="relative">
                 <button
-                  onClick={() => { setSpeedOpen(!speedOpen); setVoiceOpen(false); }}
+                  onClick={() => setSpeedOpen(!speedOpen)}
                   className="h-8 px-3 rounded-full text-[11px] font-medium text-white/50 hover:text-white hover:bg-white/10 transition-all"
                 >
                   {speed}x
@@ -339,31 +424,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                         )}
                       >
                         {s}x
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="relative">
-                <button
-                  onClick={() => { setVoiceOpen(!voiceOpen); setSpeedOpen(false); }}
-                  className="h-8 px-3 rounded-full text-[11px] font-medium text-white/50 hover:text-white hover:bg-white/10 transition-all flex items-center gap-1"
-                >
-                  {VOICES.find((v) => v.id === voice)?.name || voice}
-                  {voiceOpen ? <ChevronDown size={11} /> : <ChevronUp size={11} />}
-                </button>
-                {voiceOpen && (
-                  <div className="absolute top-full left-0 mt-2 bg-neutral-900 border border-white/10 rounded-xl shadow-2xl overflow-y-auto min-w-[170px] py-1 max-h-56 z-10">
-                    {VOICES.map((v) => (
-                      <button
-                        key={v.id}
-                        onClick={() => { stop(); setVoice(v.id); setVoiceOpen(false); }}
-                        className={cn(
-                          "w-full px-4 py-2 text-[12px] font-medium text-left hover:bg-white/10 transition-colors",
-                          voice === v.id ? "text-white" : "text-white/50",
-                        )}
-                      >
-                        {v.name}
                       </button>
                     ))}
                   </div>
@@ -391,7 +451,9 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                   "flex items-center justify-center w-10 h-10 sm:w-12 sm:h-12 rounded-full transition-all duration-200 active:scale-90",
                   isActive
                     ? "bg-white text-black hover:bg-white/90"
-                    : "bg-white/10 text-white hover:bg-white/20",
+                    : isReady
+                      ? "bg-accent text-white hover:bg-accent/90"
+                      : "bg-white/10 text-white hover:bg-white/20",
                 )}
               >
                 {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
@@ -425,7 +487,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
               {/* Mobile speed */}
               <div className="sm:hidden relative">
                 <button
-                  onClick={() => { setSpeedOpen(!speedOpen); setVoiceOpen(false); }}
+                  onClick={() => setSpeedOpen(!speedOpen)}
                   className="h-7 px-2 rounded-full text-[10px] font-medium text-white/50 hover:text-white hover:bg-white/10 transition-all"
                 >
                   {speed}x
