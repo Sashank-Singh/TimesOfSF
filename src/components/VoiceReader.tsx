@@ -7,6 +7,7 @@ export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paus
 
 interface VoiceReaderProps {
   text: string;
+  slug: string;
   title?: string;
   onWordChange?: (wordIndex: number) => void;
   onStatusChange?: (status: VoiceReaderStatus) => void;
@@ -18,6 +19,7 @@ const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 const SKIP_SECONDS = 10;
 const FETCH_TIMEOUT = 45_000;
 const TTS_URL = `${getApiBase()}/api/tts`;
+const TTS_ARTICLE_BUILD_URL = `${getApiBase()}/api/tts/article-audio/build`;
 const TTS_CHUNK_CHAR_LIMIT = 900;
 const TTS_RATE = "+18%";
 
@@ -74,9 +76,11 @@ function fmtTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function VoiceReader({ text, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
+export function VoiceReader({ text, slug, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [fullAudioStatus, setFullAudioStatus] = useState<"idle" | "pending" | "ready" | "failed">("idle");
+  const [fullAudioUrl, setFullAudioUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -110,6 +114,60 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     });
   }, [chunks]);
   const totalWords = useMemo(() => Math.max(1, chunks.reduce((sum, chunk) => sum + countWords(chunk), 0)), [chunks]);
+
+  useEffect(() => {
+    if (!slug || !text.trim()) return;
+    let cancelled = false;
+    let pollTimer: number | undefined;
+
+    const poll = async (key: string) => {
+      try {
+        const resp = await fetch(`${getApiBase()}/api/tts/article-audio/${encodeURIComponent(key)}/status`);
+        if (!resp.ok) throw new Error(`Audio status failed (${resp.status})`);
+        const data = await resp.json();
+        if (cancelled) return;
+        if (data.status === "ready" && data.audioUrl) {
+          setFullAudioStatus("ready");
+          setFullAudioUrl(`${getApiBase()}${data.audioUrl}`);
+          return;
+        }
+        if (data.status === "failed") {
+          setFullAudioStatus("failed");
+          return;
+        }
+        pollTimer = window.setTimeout(() => void poll(key), 3000);
+      } catch {
+        if (!cancelled) setFullAudioStatus("failed");
+      }
+    };
+
+    (async () => {
+      try {
+        setFullAudioStatus("pending");
+        const resp = await fetch(TTS_ARTICLE_BUILD_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug, text, voice: "en-US-JennyNeural", rate: TTS_RATE }),
+        });
+        if (!resp.ok) throw new Error(`Audio build failed (${resp.status})`);
+        const data = await resp.json();
+        if (cancelled) return;
+        if (data.status === "ready" && data.audioUrl) {
+          setFullAudioStatus("ready");
+          setFullAudioUrl(`${getApiBase()}${data.audioUrl}`);
+          return;
+        }
+        if (data.key) void poll(data.key);
+      } catch {
+        if (!cancelled) setFullAudioStatus("failed");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (pollTimer) window.clearTimeout(pollTimer);
+    };
+  }, [slug, text]);
 
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
     if (!mountedRef.current) return;
@@ -607,6 +665,16 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
 
             {/* Right: close + mobile extras */}
             <div className="flex items-center gap-1">
+              {fullAudioStatus === "ready" && fullAudioUrl && (
+                <a
+                  href={fullAudioUrl}
+                  download
+                  className="hidden sm:flex h-8 px-3 items-center rounded-full text-[11px] font-medium text-white/60 hover:text-white hover:bg-white/10 transition-all"
+                >
+                  MP3
+                </a>
+              )}
+
               {/* Mobile speed */}
               <div className="sm:hidden relative">
                 <button

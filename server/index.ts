@@ -457,6 +457,7 @@ ${articleUrls}
     : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", config.ttsCacheDir);
   const END_MARKER = Buffer.from("\n---END---\n");
   let ttsWorker: import("node:child_process").ChildProcess | null = null;
+  const fullAudioBuilds = new Map<string, { status: "pending" | "ready" | "failed"; error?: string }>();
   let ttsQueue: Array<{
     text: string;
     voice: string;
@@ -533,6 +534,82 @@ ${articleUrls}
     return path.join(ttsCacheDir, `${key}.mp3`);
   }
 
+  function splitTtsText(raw: string, limit = 900): string[] {
+    const pieces = raw
+      .replace(/\s+/g, " ")
+      .split(/(?<=[.!?])\s+/)
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    const chunks: string[] = [];
+    let current = "";
+
+    for (const piece of pieces.length ? pieces : [raw.trim()]) {
+      const words = piece.length > limit ? piece.split(/\s+/).filter(Boolean) : [piece];
+      for (const part of words) {
+        const next = current ? `${current} ${part}` : part;
+        if (next.length > limit && current) {
+          chunks.push(current);
+          current = part;
+        } else {
+          current = next;
+        }
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+  }
+
+  function fullAudioKey(slug: string, text: string, voice: string, rate: string): string {
+    const safeSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "article";
+    const hash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify({ provider: "edge-tts-full", version: 1, slug: safeSlug, voice, rate, text }))
+      .digest("hex")
+      .slice(0, 24);
+    return `${safeSlug}-${hash}`;
+  }
+
+  function fullAudioPath(key: string): string {
+    return path.join(ttsCacheDir, "articles", `${key}.mp3`);
+  }
+
+  async function generateTtsWithChunkCache(text: string, voice: string, rate: string): Promise<Buffer> {
+    const cachePath = ttsCachePath(text, voice, rate);
+    try {
+      return await fs.promises.readFile(cachePath);
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") console.warn("[tts] cache read failed:", err);
+    }
+
+    const audio = await requestTts(text, voice, rate);
+    try {
+      await fs.promises.mkdir(path.dirname(cachePath), { recursive: true });
+      await fs.promises.writeFile(cachePath, audio);
+    } catch (err) {
+      console.warn("[tts] cache write failed:", err);
+    }
+    return audio;
+  }
+
+  async function buildFullArticleAudio(key: string, text: string, voice: string, rate: string) {
+    const outputPath = fullAudioPath(key);
+    try {
+      fullAudioBuilds.set(key, { status: "pending" });
+      const chunks = splitTtsText(text);
+      const buffers: Buffer[] = [];
+      for (const chunk of chunks) {
+        buffers.push(await generateTtsWithChunkCache(chunk, voice, rate));
+      }
+      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.promises.writeFile(outputPath, Buffer.concat(buffers));
+      fullAudioBuilds.set(key, { status: "ready" });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Full audio build failed";
+      fullAudioBuilds.set(key, { status: "failed", error });
+      console.error("[tts] full article audio build failed:", err);
+    }
+  }
+
   app.post("/api/tts", async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
@@ -574,6 +651,64 @@ ${articleUrls}
     } catch (err) {
       console.error("[tts] error:", err);
       res.status(500).json({ error: "TTS generation failed" });
+    }
+  });
+
+  app.post("/api/tts/article-audio/build", async (req, res) => {
+    const slug = typeof req.body?.slug === "string" ? req.body.slug.trim() : "";
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!slug || !text) {
+      res.status(400).json({ ok: false, error: "Missing slug or text" });
+      return;
+    }
+
+    const voice = typeof req.body?.voice === "string" && req.body.voice.trim()
+      ? req.body.voice.trim()
+      : "en-US-JennyNeural";
+    const rate = typeof req.body?.rate === "string" && /^[+-]\d+%$/.test(req.body.rate.trim())
+      ? req.body.rate.trim()
+      : config.ttsRate;
+    const key = fullAudioKey(slug, text, voice, rate);
+    const outputPath = fullAudioPath(key);
+
+    try {
+      await fs.promises.access(outputPath, fs.constants.R_OK);
+      fullAudioBuilds.set(key, { status: "ready" });
+      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.mp3` });
+      return;
+    } catch {
+      const current = fullAudioBuilds.get(key);
+      if (!current || current.status === "failed") {
+        void buildFullArticleAudio(key, text, voice, rate);
+      }
+      res.status(202).json({ ok: true, key, status: fullAudioBuilds.get(key)?.status ?? "pending" });
+    }
+  });
+
+  app.get("/api/tts/article-audio/:key/status", async (req, res) => {
+    const key = req.params.key.replace(/\.mp3$/i, "");
+    const outputPath = fullAudioPath(key);
+    try {
+      await fs.promises.access(outputPath, fs.constants.R_OK);
+      fullAudioBuilds.set(key, { status: "ready" });
+      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.mp3` });
+      return;
+    } catch {
+      const state = fullAudioBuilds.get(key) ?? { status: "pending" as const };
+      res.json({ ok: true, key, ...state });
+    }
+  });
+
+  app.get("/api/tts/article-audio/:key.mp3", async (req, res) => {
+    const key = req.params.key;
+    const outputPath = fullAudioPath(key);
+    try {
+      await fs.promises.access(outputPath, fs.constants.R_OK);
+      res.set("Content-Type", "audio/mpeg");
+      res.set("Content-Disposition", `attachment; filename="${key}.mp3"`);
+      res.sendFile(outputPath);
+    } catch {
+      res.status(404).json({ ok: false, error: "Audio is not ready" });
     }
   });
 
