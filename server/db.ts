@@ -199,19 +199,19 @@ export async function saveGeneratedPost(runId: string, post: GeneratedPost) {
           ${post.imageCredit ?? null},
           ${post.bodyMarkdown},
           ${post.shortPost},
-          ${post.credits},
-          ${post.citations ?? []},
-          ${post.sourceUrls ?? []},
+          ${sql.json(post.credits)},
+          ${sql.json(post.citations ?? [])},
+          ${sql.json(post.sourceUrls ?? [])},
           ${post.headlineHash ?? null},
           ${post.canonicalKey ?? null},
-          ${post.storyFingerprint ?? null},
-          ${post.tldr ?? null},
-          ${post.entities ?? null},
-          ${post.dataBlocks ?? null},
+          ${post.storyFingerprint ? sql.json(post.storyFingerprint) : null},
+          ${post.tldr ? sql.json(post.tldr) : null},
+          ${post.entities ? sql.json(post.entities) : null},
+          ${post.dataBlocks ? sql.json(post.dataBlocks) : null},
           ${post.editorialCategory ?? null}
         )
         RETURNING id
-      `) as Array<{ id: number }>;
+      `) as unknown as Array<{ id: number }>;
       return inserted[0]?.id;
     } catch (err: any) {
       // If unique constraint violation on slug, retry with random suffix
