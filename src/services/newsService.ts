@@ -162,15 +162,3 @@ export async function fetchEvents(): Promise<EventInfo[]> {
   }
   return await res.json();
 }
-
-export async function expandArticle(id: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${getApiBase()}/api/posts/${id}/expand`, { method: "POST" });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.content;
-  } catch (err) {
-    console.error("expandArticle error:", err);
-    return null;
-  }
-}

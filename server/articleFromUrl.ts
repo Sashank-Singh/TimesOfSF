@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { synthesizePost } from "./agents";
+import { rewritePostForCopyrightSafety, synthesizePost } from "./agents";
 import { config } from "./config";
 import { completeRun, createRun, fetchRecentPosts, saveGeneratedPost, saveSourceAttempt } from "./db";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline } from "./dedupe";
@@ -155,7 +155,7 @@ export async function publishArticleFromSubmittedUrl(
   }
 
   try {
-    const post = await synthesizePost(topic, [extraction]);
+    let post = await synthesizePost(topic, [extraction]);
     if (options?.editorialCategory && ALL_EDITORIAL_CATEGORIES.includes(options.editorialCategory)) {
       post.editorialCategory = options.editorialCategory;
     }
@@ -167,7 +167,11 @@ export async function publishArticleFromSubmittedUrl(
 
     const copyrightRisk = findCopyrightRisk(post.bodyMarkdown, [extraction]);
     if (copyrightRisk) {
-      throw new Error(copyrightRisk);
+      post = await rewritePostForCopyrightSafety(post, copyrightRisk);
+      const repairedRisk = findCopyrightRisk(post.bodyMarkdown, [extraction]);
+      if (repairedRisk) {
+        throw new Error(repairedRisk);
+      }
     }
 
     const hero = await pickHeroImageFromSources([extraction], topic);
