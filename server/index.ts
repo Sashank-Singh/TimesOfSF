@@ -23,6 +23,79 @@ function shouldRunInternalPipelineTimer(): boolean {
   return true;
 }
 
+const TTS_INLINE_MAX_CHARS = 8_000;
+const TTS_FULL_ARTICLE_MAX_CHARS = 60_000;
+
+function timingSafeSecret(ok: string | undefined, got: string | undefined): boolean {
+  if (!ok || !got) return false;
+  try {
+    const a = Buffer.from(ok, "utf8");
+    const b = Buffer.from(got, "utf8");
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+function requestSecret(req: express.Request): string | undefined {
+  const auth = req.header("authorization") ?? "";
+  if (auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  const headerSecret = req.header("x-admin-secret") ?? req.header("x-cron-secret");
+  if (headerSecret) return headerSecret.trim();
+  const querySecret = typeof req.query.secret === "string" ? req.query.secret : undefined;
+  if (querySecret) return querySecret.trim();
+  const bodySecret = typeof req.body?.secret === "string" ? req.body.secret : undefined;
+  return bodySecret?.trim();
+}
+
+function isOwnerAuthorized(req: express.Request): boolean {
+  return timingSafeSecret(config.ownerCliSecret, requestSecret(req));
+}
+
+function isCronAuthorized(req: express.Request): boolean {
+  return timingSafeSecret(config.cronSecret, requestSecret(req));
+}
+
+function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (isOwnerAuthorized(req)) {
+    next();
+    return;
+  }
+  res.status(401).json({ ok: false, error: "Unauthorized" });
+}
+
+function requireOwnerOrCron(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (isOwnerAuthorized(req) || isCronAuthorized(req)) {
+    next();
+    return;
+  }
+  res.status(401).json({ ok: false, error: "Unauthorized" });
+}
+
+type RateBucket = { count: number; resetAt: number };
+const rateBuckets = new Map<string, RateBucket>();
+
+function rateLimit(name: string, max: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const key = `${name}:${req.ip ?? req.socket.remoteAddress ?? "unknown"}`;
+    const now = Date.now();
+    const current = rateBuckets.get(key);
+    if (!current || current.resetAt <= now) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      next();
+      return;
+    }
+    current.count += 1;
+    if (current.count > max) {
+      res.setHeader("Retry-After", Math.ceil((current.resetAt - now) / 1000).toString());
+      res.status(429).json({ error: "Too many requests" });
+      return;
+    }
+    next();
+  };
+}
+
 function escapeXml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -136,7 +209,14 @@ async function start() {
   await ensureSchema();
 
   const app = express();
-  const corsOrigins = config.corsAllowedOrigins;
+  let corsOrigins = config.corsAllowedOrigins;
+  if (corsOrigins.length === 0 && isProduction()) {
+    try {
+      corsOrigins = [new URL(config.appUrl).origin];
+    } catch {
+      corsOrigins = [];
+    }
+  }
   app.use(
     cors(
       corsOrigins.length > 0
@@ -159,7 +239,7 @@ async function start() {
         : { origin: true },
     ),
   );
-  app.use(express.json());
+  app.use(express.json({ limit: "256kb" }));
 
   app.post("/api/admin/article-from-url", async (req, res) => {
     if (!config.ownerCliSecret) {
@@ -311,11 +391,7 @@ ${articleUrls}
    * Wake + run from UptimeRobot, Coolify scheduled tasks, GitHub Actions, etc.
    * Example: GET /api/cron/pipeline?secret=$CRON_SECRET
    */
-  app.get("/api/cron/pipeline", async (req, res) => {
-    if (!config.cronSecret || req.query.secret !== config.cronSecret) {
-      res.status(401).json({ ok: false, error: "Unauthorized" });
-      return;
-    }
+  app.get("/api/cron/pipeline", requireOwnerOrCron, async (_req, res) => {
     try {
       const coalesce = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
       const result = await runPipeline({ coalesceWithinMs: coalesce });
@@ -329,7 +405,7 @@ ${articleUrls}
     }
   });
 
-  app.all("/api/pipeline/run", async (_req, res) => {
+  app.post("/api/pipeline/run", requireOwnerOrCron, async (_req, res) => {
     try {
       const result = await runPipeline();
       const published = result.some((run) => run.published);
@@ -353,7 +429,7 @@ ${articleUrls}
     }
   });
 
-  app.get("/api/runs/:runId", async (req, res) => {
+  app.get("/api/runs/:runId", requireOwner, async (req, res) => {
     try {
       const run = await fetchRun(req.params.runId);
       res.json(run);
@@ -375,7 +451,7 @@ ${articleUrls}
     }
   });
 
-  app.post("/api/posts/:id/expand", async (req, res) => {
+  app.post("/api/posts/:id/expand", requireOwner, async (req, res) => {
     try {
       const { fetchPostById, updatePostContent } = await import("./db");
       const { expandContent } = await import("./agents");
@@ -575,11 +651,11 @@ ${articleUrls}
     }
   }
 
-  app.post("/api/tts", async (req, res) => {
+  app.post("/api/tts", rateLimit("tts-post", 30, 60_000), async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
-    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const truncated = text.length > TTS_INLINE_MAX_CHARS ? text.slice(0, TTS_INLINE_MAX_CHARS) : text;
 
     try {
       const audio = await requestTts(truncated);
@@ -591,11 +667,15 @@ ${articleUrls}
     }
   });
 
-  app.post("/api/tts/article-audio/build", async (req, res) => {
+  app.post("/api/tts/article-audio/build", rateLimit("tts-full-build", 8, 60_000), async (req, res) => {
     const slug = typeof req.body?.slug === "string" ? req.body.slug.trim() : "";
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!slug || !text) {
       res.status(400).json({ ok: false, error: "Missing slug or text" });
+      return;
+    }
+    if (text.length > TTS_FULL_ARTICLE_MAX_CHARS) {
+      res.status(413).json({ ok: false, error: "Article text is too large for TTS generation" });
       return;
     }
 
@@ -616,7 +696,7 @@ ${articleUrls}
     }
   });
 
-  app.get("/api/tts/article-audio/:key/status", async (req, res) => {
+  app.get("/api/tts/article-audio/:key/status", rateLimit("tts-full-status", 120, 60_000), async (req, res) => {
     const key = req.params.key.replace(/\.wav$/i, "");
     const outputPath = fullAudioPath(key);
     try {
@@ -630,7 +710,7 @@ ${articleUrls}
     }
   });
 
-  app.get("/api/tts/article-audio/:key.wav", async (req, res) => {
+  app.get("/api/tts/article-audio/:key.wav", rateLimit("tts-full-download", 60, 60_000), async (req, res) => {
     const key = req.params.key;
     const outputPath = fullAudioPath(key);
     try {
@@ -645,11 +725,11 @@ ${articleUrls}
 
   // Streaming TTS endpoint — returns audio progressively as it generates.
   // Browser <audio> starts playing as soon as the first sentence arrives (~3-5s).
-  app.get("/api/tts/stream", async (req, res) => {
+  app.get("/api/tts/stream", rateLimit("tts-stream", 20, 60_000), async (req, res) => {
     const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
-    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const truncated = text.length > TTS_INLINE_MAX_CHARS ? text.slice(0, TTS_INLINE_MAX_CHARS) : text;
     const streamerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_streamer.py");
 
     res.setHeader("Content-Type", "audio/wav");
@@ -682,10 +762,10 @@ ${articleUrls}
 
   // Chunked TTS endpoint — per-sentence PCM chunks as NDJSON, for Web Audio API.
   // Each line is JSON: {"pcm": "<base64>"} — first line has {"sampleRate": 24000}.
-  app.get("/api/tts/chunked", async (req, res) => {
+  app.get("/api/tts/chunked", rateLimit("tts-chunked", 20, 60_000), async (req, res) => {
     const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
-    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const truncated = text.length > TTS_INLINE_MAX_CHARS ? text.slice(0, TTS_INLINE_MAX_CHARS) : text;
 
     const chunkedScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_chunked.py");
 

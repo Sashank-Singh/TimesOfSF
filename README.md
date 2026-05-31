@@ -104,7 +104,7 @@ Full examples and comments live in `**[.env.example](.env.example)**`. Summary:
 
 ### Pipeline & scheduling
 
-By default the server runs the pipeline with an internal timer every 10 minutes (`INTERNAL_PIPELINE_INTERVAL_MS=600000`). Optional: `CRON_SECRET` for `GET /api/cron/pipeline?secret=…`, `DISABLE_INTERNAL_PIPELINE_CRON` if using an external Coolify scheduled task instead, `PIPELINE_COALESCE_MS`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults.
+By default the server runs the pipeline with an internal timer every 10 minutes (`INTERNAL_PIPELINE_INTERVAL_MS=600000`). Optional: `CRON_SECRET` for `GET /api/cron/pipeline?secret=…`, `DISABLE_INTERNAL_PIPELINE_CRON` if using an external Coolify scheduled task instead, `PIPELINE_COALESCE_MS`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults. Manual pipeline routes require either `CRON_SECRET` or `OWNER_CLI_SECRET`.
 
 ### Owner-only tools
 
@@ -133,13 +133,14 @@ Public read endpoints used by the SPA:
 
 - `GET /api/posts` — recent articles  
 - `GET /api/events` — stored events  
-- `POST /api/posts/:id/expand` — expand article body (LLM)
 
 Operational / owner (see server code for auth and bodies):
 
 - `GET /health` — liveness + pipeline summary JSON  
 - `GET /api/cron/pipeline` — optional cron trigger (`CRON_SECRET`)  
-- `POST /api/pipeline/run` — run the pipeline immediately  
+- `POST /api/pipeline/run` — run the pipeline immediately (`CRON_SECRET` or `OWNER_CLI_SECRET`)  
+- `GET /api/runs/:runId` — inspect a pipeline run (`OWNER_CLI_SECRET`)  
+- `POST /api/posts/:id/expand` — expand article body (`OWNER_CLI_SECRET`)  
 - `POST /api/admin/article-from-url` — publish from URL (`OWNER_CLI_SECRET`)  
 
 ---
