@@ -449,8 +449,8 @@ ${articleUrls}
     app.use("/api/inngest", inngestState.handler);
   }
 
-  // Persistent TTS worker — keeps edge-tts import cached across requests
-  const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts_worker.py");
+  // Persistent Kokoro TTS worker — local ONNX inference, no cloud API
+  const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_worker.py");
   const END_MARKER = Buffer.from("\n---END---\n");
   let ttsWorker: import("node:child_process").ChildProcess | null = null;
   let ttsQueue: Array<{
@@ -522,12 +522,104 @@ ${articleUrls}
 
     try {
       const audio = await requestTts(truncated);
-      res.set("Content-Type", "audio/mpeg");
+      res.set("Content-Type", "audio/wav");
       res.send(audio);
     } catch (err) {
       console.error("[tts] error:", err);
       res.status(500).json({ error: "TTS generation failed" });
     }
+  });
+
+  // Streaming TTS endpoint — returns audio progressively as it generates.
+  // Browser <audio> starts playing as soon as the first sentence arrives (~3-5s).
+  app.get("/api/tts/stream", async (req, res) => {
+    const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
+    if (!text) { res.status(400).json({ error: "Missing text" }); return; }
+
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const streamerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_streamer.py");
+
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    const proc = spawn("python3", [streamerScript, truncated], { stdio: ["pipe", "pipe", "pipe"] });
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      if (!res.destroyed) res.write(chunk);
+    });
+
+    proc.on("close", (code) => {
+      if (!res.destroyed) {
+        if (code !== 0 && !res.headersSent) {
+          res.status(500).json({ error: "TTS generation failed" });
+        } else {
+          res.end();
+        }
+      }
+    });
+
+    proc.on("error", () => {
+      if (!res.destroyed) {
+        if (!res.headersSent) res.status(500).json({ error: "Failed to start TTS" });
+        else res.end();
+      }
+    });
+  });
+
+  // Chunked TTS endpoint — per-sentence PCM chunks as NDJSON, for Web Audio API.
+  // Each line is JSON: {"pcm": "<base64>"} — first line has {"sampleRate": 24000}.
+  app.get("/api/tts/chunked", async (req, res) => {
+    const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
+    if (!text) { res.status(400).json({ error: "Missing text" }); return; }
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+
+    const chunkedScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_chunked.py");
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    const proc = spawn("python3", [chunkedScript], { stdio: ["pipe", "pipe", "pipe"] });
+
+    proc.stdin.write(truncated);
+    proc.stdin.end();
+
+    // Pipe stdout → response with proper backpressure.
+    // DO NOT kill on req close — pipe() manages stream lifecycle, and
+    // req.on("close") fires too early on proxy-kept-alive GET connections.
+    proc.stdout.pipe(res);
+
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+
+    // Safety timer — kill orphaned process after 10 minutes
+    const killTimer = setTimeout(() => { proc.kill(); }, 600_000);
+    proc.on("exit", () => clearTimeout(killTimer));
+
+    // If pipe already ended res, skip extra end
+    const maybeEnd = () => { if (!res.writableEnded) res.end(); };
+
+    proc.on("close", (code) => {
+      clearTimeout(killTimer);
+      if (res.writableEnded || res.destroyed) return;
+      if (code !== 0) {
+        const msg = stderr.trim() || `exit ${code}`;
+        console.error("[tts-chunked] error:", msg);
+        if (!res.headersSent) res.status(500).json({ error: `TTS error: ${msg}` });
+        else maybeEnd();
+      } else {
+        maybeEnd();
+      }
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(killTimer);
+      console.error("[tts-chunked] spawn error:", err);
+      if (!res.headersSent && !res.destroyed) {
+        res.status(500).json({ error: "Failed to start TTS" });
+      }
+    });
   });
 
   if (isProduction()) {

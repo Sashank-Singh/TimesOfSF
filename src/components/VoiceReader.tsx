@@ -15,7 +15,6 @@ interface VoiceReaderProps {
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 const SKIP_SECONDS = 10;
-const FETCH_TIMEOUT = 45_000;
 
 function fmtTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return "0:00";
@@ -24,7 +23,19 @@ function fmtTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** base64 int16 PCM → Float32Array */
+function decodePcm(b64: string): Float32Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const i16 = new Int16Array(bytes.buffer);
+  const out = new Float32Array(i16.length);
+  for (let i = 0; i < i16.length; i++) out[i] = i16[i] / 32768;
+  return out;
+}
+
 export function VoiceReader({ text, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
+  // ── state ──
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -33,257 +44,405 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   const [speed, setSpeed] = useState<number>(1);
   const [speedOpen, setSpeedOpen] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [pendingPlay, setPendingPlay] = useState(false);
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
-  const preloadUrlRef = useRef<string | null>(null);
+  // ── refs — streaming + Web Audio ──
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const totalSamplesRef = useRef(0);               // raw 1x sample count
+  const playbackStartRef = useRef(-1);              // ctx.currentTime when play started; -1 = not started
+  const scheduledEndRef = useRef(0);                // ctx.currentTime when last scheduled chunk ends
+  const streamAbortRef = useRef<AbortController | null>(null);
+  const streamDoneRef = useRef(false);
+  const sourceNodesRef = useRef<AudioBufferSourceNode[]>([]);
+
+  // ── refs — UI / lifecycle ──
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
   const barRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+  const pendingPlayRef = useRef(false);
+  const speedRef = useRef(speed);
+  const statusRef = useRef(status);
 
   useEffect(() => { onWordRef.current = onWordChange; }, [onWordChange]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  useEffect(() => { speedRef.current = speed; }, [speed]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const totalWords = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
 
+  // ── helpers ──
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
     if (!mountedRef.current) return;
     setStatus(s);
     onStatusChange?.(s);
   }, [onStatusChange]);
 
-  const cleanupAudio = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = "";
-      audioRef.current = null;
+  /** Schedule a PCM chunk for playback on the current AudioContext */
+  const scheduleChunk = useCallback((float32: Float32Array) => {
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === "closed") return;
+
+    const buf = ctx.createBuffer(1, float32.length, 24000);
+    buf.getChannelData(0).set(float32);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = speedRef.current;
+    src.connect(ctx.destination);
+
+    const now = ctx.currentTime;
+    const when = Math.max(scheduledEndRef.current, now);
+    src.start(when);
+    scheduledEndRef.current = when + float32.length / (24000 * speedRef.current);
+    sourceNodesRef.current.push(src);
+  }, []);
+
+  /** Schedule ALL currently buffered chunks */
+  const playBuffered = useCallback(() => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+      audioCtxRef.current = new AudioContext();
     }
-    if (blobUrlRef.current) {
-      URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = null;
+    const ctx = audioCtxRef.current;
+    playbackStartRef.current = ctx.currentTime;
+    scheduledEndRef.current = ctx.currentTime;
+    sourceNodesRef.current = [];
+
+    for (const chunk of pcmChunksRef.current) {
+      const buf = ctx.createBuffer(1, chunk.length, 24000);
+      buf.getChannelData(0).set(chunk);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.playbackRate.value = speedRef.current;
+      src.connect(ctx.destination);
+      const when = Math.max(scheduledEndRef.current, ctx.currentTime);
+      src.start(when);
+      scheduledEndRef.current = when + chunk.length / (24000 * speedRef.current);
+      sourceNodesRef.current.push(src);
     }
   }, []);
 
-  /** Release preloaded-but-unused blob so GC can collect it */
-  const discardPreload = useCallback(() => {
-    if (preloadUrlRef.current) {
-      URL.revokeObjectURL(preloadUrlRef.current);
-      preloadUrlRef.current = null;
+  /** Accept a PCM chunk from the stream */
+  const acceptChunk = useCallback((b64: string) => {
+    if (!mountedRef.current) return;
+    try {
+      const float32 = decodePcm(b64);
+      if (float32.length === 0) return;
+      pcmChunksRef.current.push(float32);
+      totalSamplesRef.current += float32.length;
+      setDuration(totalSamplesRef.current / (24000 * speedRef.current));
+
+      // If playback already started, schedule immediately
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed" && playbackStartRef.current !== -1) {
+        scheduleChunk(float32);
+      }
+    } catch { /* skip corrupt chunk */ }
+  }, [scheduleChunk]);
+
+  /** Clean shutdown — close AudioContext, abort stream, reset refs */
+  const stopAll = useCallback(() => {
+    pendingPlayRef.current = false;
+    setPendingPlay(false);
+    sourceNodesRef.current = [];
+    playbackStartRef.current = -1;
+    scheduledEndRef.current = 0;
+    streamDoneRef.current = false;
+    pcmChunksRef.current = [];
+    totalSamplesRef.current = 0;
+
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      audioCtxRef.current.close();
     }
+    audioCtxRef.current = null;
+
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
   }, []);
 
-  useEffect(() => {
-    return () => {
-      cleanupAudio();
-      discardPreload();
-    };
-  }, [cleanupAudio, discardPreload]);
+  // ── NDJSON stream reader ──
+  const startStream = useCallback(() => {
+    if (!mountedRef.current) return;
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = new AbortController();
 
-  // ── Preload audio as soon as the reader mounts ──
-  useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    abortRef.current = controller;
+    streamDoneRef.current = false;
+    pcmChunksRef.current = [];
+    totalSamplesRef.current = 0;
+    setError(null);
+    updateStatus("loading");
 
     const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
-    if (!truncated.trim()) {
-      updateStatus("idle");
-      return;
-    }
-
-    updateStatus("loading");
-    setError(null);
-
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    const controller = streamAbortRef.current;
 
     (async () => {
       try {
-        const resp = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: truncated, voice: "en-US-JennyNeural" }),
+        const resp = await fetch(`/api/tts/chunked?text=${encodeURIComponent(truncated)}`, {
           signal: controller.signal,
         });
-        clearTimeout(timer);
-
         if (!resp.ok) {
           const errData = await resp.json().catch(() => ({}));
-          throw new Error(errData.error || `Server error (${resp.status})`);
+          throw new Error(errData.error || `Server ${resp.status}`);
         }
 
-        const blob = await resp.blob();
-        if (!blob.size) throw new Error("Empty audio response");
-        if (cancelled) { URL.revokeObjectURL(preloadUrlRef.current ?? ""); return; }
+        const reader = resp.body!.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let gotMetadata = false;
 
-        preloadUrlRef.current = URL.createObjectURL(blob);
-        if (!cancelled) updateStatus("ready");
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() || "";               // keep incomplete line
+
+          for (const line of lines) {
+            const t = line.trim();
+            if (!t) continue;
+            try {
+              const data = JSON.parse(t);
+              if (data.sampleRate && !gotMetadata) {
+                gotMetadata = true;
+              } else if (data.pcm) {
+                gotMetadata = true;
+                acceptChunk(data.pcm);
+                // On first PCM chunk → mark ready
+                if (statusRef.current === "loading" && mountedRef.current) {
+                  updateStatus("ready");
+                  if (pendingPlayRef.current) {
+                    pendingPlayRef.current = false;
+                    setPendingPlay(false);
+                    playBuffered();
+                    updateStatus("playing");
+                  }
+                }
+              } else if (data.done) {
+                streamDoneRef.current = true;
+                return;
+              }
+            } catch { /* skip malformed */ }
+          }
+        }
+        streamDoneRef.current = true;
       } catch (err: unknown) {
-        if (cancelled) return;
-        if (err instanceof DOMException && err.name === "AbortError") {
-          setError("Request timed out. Try again.");
-        } else {
-          setError(err instanceof Error ? err.message : "Failed to generate speech");
-        }
-        if (!cancelled) updateStatus("error");
+        if (!mountedRef.current) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Stream failed");
+        updateStatus("error");
       }
     })();
+  }, [text, updateStatus, acceptChunk, playBuffered]);
 
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-    // Only run on mount
+  // Preload stream on mount
+  useEffect(() => {
+    startStream();
+    return () => { stopAll(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Start playback from preloaded audio ──
-  const startPlayback = useCallback((url: string) => {
-    discardPreload();
+  // ── progress + completion watcher ──
+  useEffect(() => {
+    if (status !== "playing") return;
 
-    const audio = new Audio(url);
-    audio.playbackRate = speed;
-    audioRef.current = audio;
-    blobUrlRef.current = url;
+    const interval = setInterval(() => {
+      const ctx = audioCtxRef.current;
+      if (!ctx || ctx.state === "closed" || playbackStartRef.current === -1) return;
 
-    audio.onloadedmetadata = () => {
-      setDuration(audio.duration);
-      updateStatus("playing");
-    };
+      const ct = ctx.currentTime - playbackStartRef.current;
+      const tot = totalSamplesRef.current / (24000 * speedRef.current);
 
-    audio.ontimeupdate = () => {
-      if (isSeeking) return;
-      if (audio.duration && audio.duration > 0) {
-        const ct = audio.currentTime;
-        setCurrentTime(ct);
-        const pct = Math.round((ct / audio.duration) * 100);
-        setProgress(pct);
-        const wi = Math.round((ct / audio.duration) * totalWords);
-        if (wi !== lastWordRef.current) {
-          lastWordRef.current = wi;
-          onWordRef.current?.(wi);
-        }
-      }
-    };
+      setCurrentTime(ct);
+      if (tot > 0) setProgress(Math.min(100, Math.round((ct / tot) * 100)));
 
-    audio.onended = () => {
-      cleanupAudio();
-      setProgress(100);
-      setCurrentTime(0);
-      setDuration(0);
-      onWordRef.current?.(totalWords - 1);
-      updateStatus("idle");
-      onComplete?.();
-    };
-
-    audio.onerror = () => {
-      setError("Playback failed. Tap to retry.");
-      updateStatus("error");
-      cleanupAudio();
-    };
-
-    audio.play().catch(() => {
-      setError("Playback failed to start.");
-      updateStatus("error");
-      cleanupAudio();
-    });
-  }, [speed, totalWords, updateStatus, onComplete, cleanupAudio, discardPreload, isSeeking]);
-
-  // ── Fallback fetch+play (when preload failed) ──
-  const fetchAndPlay = useCallback(async () => {
-    setError(null);
-    updateStatus("loading");
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
-
-    try {
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: truncated, voice: "en-US-JennyNeural" }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server error (${response.status})`);
+      // word tracking
+      const wi = tot > 0 ? Math.min(totalWords - 1, Math.round((ct / tot) * totalWords)) : 0;
+      if (wi !== lastWordRef.current) {
+        lastWordRef.current = wi;
+        onWordRef.current?.(wi);
       }
 
-      const blob = await response.blob();
-      if (!blob.size) throw new Error("Empty audio response");
-
-      const url = URL.createObjectURL(blob);
-      startPlayback(url);
-    } catch (err: unknown) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        setError("Request timed out. Try again.");
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to generate speech");
+      // completion
+      if (streamDoneRef.current && scheduledEndRef.current > 0 && ctx.currentTime >= scheduledEndRef.current) {
+        stopAll();
+        setProgress(100);
+        setCurrentTime(0);
+        setDuration(0);
+        lastWordRef.current = -1;
+        onWordRef.current?.(totalWords - 1);
+        updateStatus("idle");
+        onComplete?.();
       }
-      updateStatus("error");
-      cleanupAudio();
-    }
-  }, [text, totalWords, updateStatus, cleanupAudio, startPlayback]);
+    }, 250);
 
+    return () => clearInterval(interval);
+  }, [status, totalWords, updateStatus, onComplete, stopAll]);
+
+  // ── transport controls ──
   const togglePause = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (status === "playing") { audio.pause(); updateStatus("paused"); }
-    else if (status === "paused") { audio.play().catch(() => { setError("Resume failed."); updateStatus("error"); }); }
-  }, [status, updateStatus]);
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === "closed") return;
+    if (ctx.state === "running") {
+      ctx.suspend();
+      updateStatus("paused");
+    } else if (ctx.state === "suspended") {
+      ctx.resume();
+      updateStatus("playing");
+    }
+  }, [updateStatus]);
 
   const stop = useCallback(() => {
-    cleanupAudio();
-    discardPreload();
-    updateStatus("idle");
+    stopAll();
     setProgress(0);
     setCurrentTime(0);
     setDuration(0);
     lastWordRef.current = -1;
     onWordRef.current?.(-1);
-  }, [updateStatus, cleanupAudio, discardPreload]);
+    updateStatus("idle");
+  }, [updateStatus, stopAll]);
 
   const skip = useCallback((delta: number) => {
-    const audio = audioRef.current;
-    if (!audio || !audio.duration) return;
-    const newTime = Math.max(0, Math.min(audio.duration, audio.currentTime + delta));
-    audio.currentTime = newTime;
-    setCurrentTime(newTime);
-    const pct = Math.round((newTime / audio.duration) * 100);
-    setProgress(pct);
-  }, []);
+    const ctx = audioCtxRef.current;
+    if (!ctx || ctx.state === "closed") return;
+
+    const ct = ctx.currentTime - playbackStartRef.current;
+    const tot = totalSamplesRef.current / (24000 * speedRef.current);
+    if (tot <= 0) return;
+
+    const newPos = Math.max(0, Math.min(tot, ct + delta));
+    const newSample = Math.round(newPos * 24000 * speedRef.current);
+    const clamped = Math.min(newSample, totalSamplesRef.current);
+
+    // Close old AudioContext, create fresh
+    ctx.close();
+    const newCtx = new AudioContext();
+    audioCtxRef.current = newCtx;
+    playbackStartRef.current = newCtx.currentTime;
+    scheduledEndRef.current = newCtx.currentTime;
+    sourceNodesRef.current = [];
+
+    // Reschedule from clamped sample onward
+    let remaining = clamped;
+    for (const chunk of pcmChunksRef.current) {
+      if (remaining <= 0) {
+        scheduleChunk(chunk);
+      } else if (remaining < chunk.length) {
+        scheduleChunk(chunk.slice(remaining));
+        remaining = -1;
+      } else {
+        remaining -= chunk.length;
+      }
+    }
+
+    if (newCtx.state === "suspended") newCtx.resume();
+  }, [scheduleChunk]);
 
   const handlePlay = useCallback(() => {
-    if (status === "idle") {
-      fetchAndPlay();
-    } else if (status === "ready") {
-      if (preloadUrlRef.current) startPlayback(preloadUrlRef.current);
-      else fetchAndPlay();
-    } else if (status === "error") {
-      fetchAndPlay();
-    } else if (status === "playing" || status === "paused") {
-      togglePause();
+    switch (statusRef.current) {
+      case "idle":
+      case "error":
+        pendingPlayRef.current = true;
+        setPendingPlay(true);
+        startStream();
+        break;
+      case "loading":
+        // Create AudioContext inside click gesture so autoplay works
+        if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+          audioCtxRef.current = new AudioContext();
+          playbackStartRef.current = audioCtxRef.current.currentTime;
+          scheduledEndRef.current = audioCtxRef.current.currentTime;
+          // Schedule any chunks that already buffered
+          for (const chunk of pcmChunksRef.current) {
+            const ctx = audioCtxRef.current!;
+            const buf = ctx.createBuffer(1, chunk.length, 24000);
+            buf.getChannelData(0).set(chunk);
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.playbackRate.value = speedRef.current;
+            src.connect(ctx.destination);
+            const when = Math.max(scheduledEndRef.current, ctx.currentTime);
+            src.start(when);
+            scheduledEndRef.current = when + chunk.length / (24000 * speedRef.current);
+            sourceNodesRef.current.push(src);
+          }
+        }
+        pendingPlayRef.current = false;
+        setPendingPlay(false);
+        updateStatus("playing");
+        break;
+      case "ready":
+        playBuffered();
+        updateStatus("playing");
+        break;
+      case "playing":
+        togglePause();
+        break;
+      case "paused":
+        togglePause();
+        break;
     }
-  }, [status, fetchAndPlay, startPlayback, togglePause]);
+  }, [startStream, playBuffered, togglePause, updateStatus]);
 
-  // Progress bar dragging
+  // ── progress bar seeking ──
   const seekFromEvent = useCallback((clientX: number) => {
     const bar = barRef.current;
-    const audio = audioRef.current;
-    if (!bar || !audio || !audio.duration) return;
+    if (!bar) return;
     const rect = bar.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const newTime = ratio * audio.duration;
-    audio.currentTime = newTime;
-    setCurrentTime(newTime);
-    setProgress(Math.round(ratio * 100));
+    const tot = totalSamplesRef.current / (24000 * speedRef.current);
+    if (tot <= 0) return;
+    const newPos = ratio * tot;
+    const newSample = Math.round(newPos * 24000 * speedRef.current);
+    const clamped = Math.min(newSample, totalSamplesRef.current);
+
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state !== "closed") ctx.close();
+    const newCtx = new AudioContext();
+    audioCtxRef.current = newCtx;
+    playbackStartRef.current = newCtx.currentTime;
+    scheduledEndRef.current = newCtx.currentTime;
+    sourceNodesRef.current = [];
+
+    let remaining = clamped;
+    for (const chunk of pcmChunksRef.current) {
+      if (remaining <= 0) {
+        (buf => {
+          const c = newCtx;
+          const b = c.createBuffer(1, buf.length, 24000);
+          b.getChannelData(0).set(buf);
+          const src = c.createBufferSource();
+          src.buffer = b;
+          src.playbackRate.value = speedRef.current;
+          src.connect(c.destination);
+          const when = Math.max(scheduledEndRef.current, c.currentTime);
+          src.start(when);
+          scheduledEndRef.current = when + buf.length / (24000 * speedRef.current);
+          sourceNodesRef.current.push(src);
+        })(chunk);
+      } else if (remaining < chunk.length) {
+        const sliced = chunk.slice(remaining);
+        (buf => {
+          const c = newCtx;
+          const b = c.createBuffer(1, buf.length, 24000);
+          b.getChannelData(0).set(buf);
+          const src = c.createBufferSource();
+          src.buffer = b;
+          src.playbackRate.value = speedRef.current;
+          src.connect(c.destination);
+          const when = Math.max(scheduledEndRef.current, c.currentTime);
+          src.start(when);
+          scheduledEndRef.current = when + buf.length / (24000 * speedRef.current);
+          sourceNodesRef.current.push(src);
+        })(sliced);
+        remaining = -1;
+      } else {
+        remaining -= chunk.length;
+      }
+    }
+
+    setCurrentTime(newPos);
+    setProgress(Math.min(100, Math.round(ratio * 100)));
+    if (newCtx.state === "suspended") newCtx.resume();
   }, []);
 
   const onBarMouseDown = useCallback((e: React.MouseEvent) => {
@@ -314,6 +473,14 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     return () => { window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onEnd); };
   }, [isSeeking, seekFromEvent]);
 
+  // ── speed ──
+  const handleSpeedChange = useCallback((s: number) => {
+    for (const src of sourceNodesRef.current) src.playbackRate.value = s;
+    setSpeed(s);
+    setSpeedOpen(false);
+  }, []);
+
+  // ── render ──
   const isPlaying = status === "playing";
   const isPaused = status === "paused";
   const isLoading = status === "loading";
@@ -337,7 +504,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
           )}
           style={{ width: `${isLoading || isReady ? 0 : isActive ? progress : 0}%` }}
         />
-        {/* Thumb */}
         {hasAudio && (
           <div
             className={cn(
@@ -353,7 +519,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       <div className="max-w-5xl mx-auto px-3 sm:px-6 py-2.5 sm:py-4">
         {/* Info row */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 mb-2 sm:mb-0">
-          {/* Status icon */}
           <div className={cn(
             "w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center shrink-0",
             isLoading ? "bg-white/10" : isActive ? "bg-white/20" : isReady ? "bg-accent/20" : "bg-white/5",
@@ -365,17 +530,15 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
             )}
           </div>
 
-          {/* Now playing */}
           <div className="min-w-0 flex-1">
             <p className="text-[12px] sm:text-[13px] font-medium text-white/90 truncate leading-tight">
               {isLoading ? "Preparing audio..." : isReady ? "Ready to play" : title || "Now Playing"}
             </p>
             <p className="text-[10px] sm:text-[11px] text-white/40 truncate leading-tight mt-0.5">
-              {isLoading ? "Generating with neural voice" : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
+              {isLoading ? (pendingPlay ? "Will play when ready" : "Processing locally") : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
             </p>
           </div>
 
-          {/* Time display - desktop */}
           {hasAudio && (
             <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono text-white/40">
               <span className="text-white/70">{fmtTime(currentTime)}</span>
@@ -384,15 +547,12 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
             </div>
           )}
 
-          {/* Error on mobile */}
           {status === "error" && (
             <span className="sm:hidden text-[10px] text-red-400 truncate max-w-[100px]">{error}</span>
           )}
-
-          {/* Retry on mobile */}
           {status === "error" && (
             <button
-              onClick={fetchAndPlay}
+              onClick={handlePlay}
               className="sm:hidden h-7 px-3 rounded-full text-[10px] font-medium bg-white/10 text-white hover:bg-white/20 transition-all shrink-0"
             >
               Retry
@@ -403,7 +563,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
         {/* Controls row */}
         {!isLoading && status !== "error" && (
           <div className="flex items-center justify-center sm:justify-between gap-1 sm:gap-2">
-            {/* Left: speed (desktop) */}
             <div className="hidden sm:flex items-center gap-1">
               <div className="relative">
                 <button
@@ -417,7 +576,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                     {SPEED_OPTIONS.map((s) => (
                       <button
                         key={s}
-                        onClick={() => { if (isActive) skip(0); setSpeed(s); setSpeedOpen(false); }}
+                        onClick={() => handleSpeedChange(s)}
                         className={cn(
                           "w-full px-4 py-2 text-[12px] font-medium text-left hover:bg-white/10 transition-colors",
                           speed === s ? "text-white" : "text-white/50",
@@ -431,9 +590,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
               </div>
             </div>
 
-            {/* Center: transport controls */}
             <div className="flex items-center gap-1 sm:gap-2">
-              {/* -10s */}
               {isActive && (
                 <button
                   onClick={() => skip(-SKIP_SECONDS)}
@@ -444,7 +601,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                 </button>
               )}
 
-              {/* Play/Pause */}
               <button
                 onClick={handlePlay}
                 className={cn(
@@ -459,7 +615,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                 {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
               </button>
 
-              {/* +10s */}
               {isActive && (
                 <button
                   onClick={() => skip(SKIP_SECONDS)}
@@ -470,7 +625,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                 </button>
               )}
 
-              {/* Stop */}
               {isActive && (
                 <button
                   onClick={stop}
@@ -482,9 +636,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
               )}
             </div>
 
-            {/* Right: close + mobile extras */}
             <div className="flex items-center gap-1">
-              {/* Mobile speed */}
               <div className="sm:hidden relative">
                 <button
                   onClick={() => setSpeedOpen(!speedOpen)}
@@ -497,7 +649,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                     {SPEED_OPTIONS.map((s) => (
                       <button
                         key={s}
-                        onClick={() => { if (isActive) skip(0); setSpeed(s); setSpeedOpen(false); }}
+                        onClick={() => handleSpeedChange(s)}
                         className={cn(
                           "w-full px-3 py-1.5 text-[11px] font-medium text-left hover:bg-white/10 transition-colors",
                           speed === s ? "text-white" : "text-white/50",
@@ -510,7 +662,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
                 )}
               </div>
 
-              {/* Close */}
               <button
                 onClick={onClose}
                 className="flex items-center justify-center w-8 h-8 rounded-full text-white/30 hover:text-white hover:bg-white/10 transition-all active:scale-90"
@@ -524,12 +675,11 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
           </div>
         )}
 
-        {/* Error state desktop */}
         {status === "error" && (
           <div className="hidden sm:flex items-center justify-center gap-3 mt-1">
             <span className="text-[12px] text-red-400">{error}</span>
             <button
-              onClick={fetchAndPlay}
+              onClick={handlePlay}
               className="h-8 px-4 rounded-full text-[11px] font-medium bg-white/10 text-white hover:bg-white/20 transition-all"
             >
               Retry
@@ -537,10 +687,9 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
           </div>
         )}
 
-        {/* Loading state */}
         {isLoading && (
           <div className="flex items-center justify-center sm:hidden mt-1">
-            <span className="text-[10px] text-white/40">Generating speech...</span>
+            <span className="text-[10px] text-white/40">Generating audio...</span>
           </div>
         )}
       </div>
