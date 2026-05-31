@@ -255,9 +255,10 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       setCurrentTime(ct);
       if (tot > 0) setProgress(Math.min(100, Math.round((ct / tot) * 100)));
 
-      // word tracking
-      const wi = tot > 0 ? Math.min(totalWords - 1, Math.round((ct / tot) * totalWords)) : 0;
-      if (wi !== lastWordRef.current) {
+      // word tracking — monotonic forward only to prevent oscillation
+      const rawWi = tot > 0 ? Math.round((ct / tot) * totalWords) : 0;
+      const wi = Math.min(totalWords - 1, rawWi);
+      if (wi > lastWordRef.current) {
         lastWordRef.current = wi;
         onWordRef.current?.(wi);
       }
@@ -335,7 +336,12 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     }
 
     if (newCtx.state === "suspended") newCtx.resume();
-  }, [scheduleChunk]);
+
+    // Emit correct word immediately after seek
+    const newWi = tot > 0 ? Math.min(totalWords - 1, Math.round((newPos / tot) * totalWords)) : 0;
+    lastWordRef.current = newWi;
+    onWordRef.current?.(newWi);
+  }, [scheduleChunk, totalWords]);
 
   const handlePlay = useCallback(() => {
     switch (statusRef.current) {
@@ -443,7 +449,12 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     setCurrentTime(newPos);
     setProgress(Math.min(100, Math.round(ratio * 100)));
     if (newCtx.state === "suspended") newCtx.resume();
-  }, []);
+
+    // Emit correct word immediately after seek
+    const newWi = tot > 0 ? Math.min(totalWords - 1, Math.round((newPos / tot) * totalWords)) : 0;
+    lastWordRef.current = newWi;
+    onWordRef.current?.(newWi);
+  }, [totalWords]);
 
   const onBarMouseDown = useCallback((e: React.MouseEvent) => {
     setIsSeeking(true);
