@@ -10,7 +10,7 @@ In production, the Docker/Coolify app serves both the public SPA and `/api/*` fr
 | --- | --- |
 | `src/` | Public React UI: articles, events, search, reader, TTS controls |
 | `server/` | Express API, article pipeline, SEO HTML injection, Kokoro TTS |
-| Postgres | Articles, pipeline runs, source attempts, events, knowledge state |
+| Postgres | Articles, pipeline runs, source attempts, events, newsletter subscribers, knowledge state |
 | Docker/Coolify | Production runtime for the single Express + static app container |
 
 ## Requirements
@@ -168,6 +168,7 @@ Public routes used by the frontend:
 
 - `GET /api/posts`
 - `GET /api/events`
+- `POST /api/newsletter/subscribe`
 - `GET /health`
 - TTS playback/download routes, rate-limited
 

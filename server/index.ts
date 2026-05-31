@@ -25,6 +25,7 @@ function shouldRunInternalPipelineTimer(): boolean {
 
 const TTS_INLINE_MAX_CHARS = 8_000;
 const TTS_FULL_ARTICLE_MAX_CHARS = 60_000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 
 function timingSafeSecret(ok: string | undefined, got: string | undefined): boolean {
   if (!ok || !got) return false;
@@ -448,6 +449,24 @@ ${articleUrls}
     } catch (error) {
       console.error("Failed to fetch events from DB:", error);
       res.status(500).json({ error: "Failed to fetch events" });
+    }
+  });
+
+  app.post("/api/newsletter/subscribe", rateLimit("newsletter-subscribe", 5, 60_000), async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const source = typeof req.body?.source === "string" ? req.body.source.trim().slice(0, 80) : "footer";
+    if (!EMAIL_RE.test(email) || email.length > 254) {
+      res.status(400).json({ ok: false, error: "Enter a valid email address." });
+      return;
+    }
+
+    try {
+      const { saveNewsletterSubscriber } = await import("./db");
+      await saveNewsletterSubscriber(email, source || "footer");
+      res.status(201).json({ ok: true });
+    } catch (error) {
+      console.error("newsletter subscribe:", error);
+      res.status(500).json({ ok: false, error: "Could not subscribe right now." });
     }
   });
 

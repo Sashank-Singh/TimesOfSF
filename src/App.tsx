@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { Article, EventInfo } from './types';
-import { fetchArticles, fetchEvents } from './services/newsService';
+import { fetchArticles, fetchEvents, subscribeToNewsletter } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
 import { EventsPanel } from './components/EventsPanel';
@@ -44,7 +44,29 @@ export default function App() {
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [apiError, setApiError] = useState(false);
+  const [newsletterEmail, setNewsletterEmail] = useState("");
+  const [newsletterLoading, setNewsletterLoading] = useState(false);
   const deepLinkedRef = useRef(false);
+
+  const handleNewsletterSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const email = newsletterEmail.trim();
+    if (!email) {
+      toast.error("Enter your email first.");
+      return;
+    }
+
+    try {
+      setNewsletterLoading(true);
+      await subscribeToNewsletter(email);
+      setNewsletterEmail("");
+      toast.success("Thank you for subscribing to our morning briefing.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not subscribe right now.");
+    } finally {
+      setNewsletterLoading(false);
+    }
+  };
 
   useEffect(() => {
     const p = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -627,19 +649,24 @@ export default function App() {
              <p className="max-w-sm text-ink/60 text-sm leading-relaxed mb-8 italic">
                Independent. Local. Essential. The Times of SF is dedicated to chronicling the vibrant soul of the Bay Area through rigorous journalism and elegant design.
              </p>
-             <div className="flex items-center gap-4 mb-8">
+             <form onSubmit={handleNewsletterSubmit} className="flex items-center gap-4 mb-8">
                <input 
                  type="email" 
                  placeholder="your@email.com" 
+                 value={newsletterEmail}
+                 onChange={(event) => setNewsletterEmail(event.target.value)}
+                 disabled={newsletterLoading}
+                 required
                  className="bg-transparent border-b border-ink/20 py-2 text-sm focus:border-accent outline-none flex-grow max-w-[200px]"
                />
                <button 
-                 onClick={() => toast.success("Thank you for subscribing to our morning briefing.")}
+                 type="submit"
+                 disabled={newsletterLoading}
                  className="text-[10px] font-mono font-bold uppercase tracking-widest px-6 py-2 bg-ink text-paper hover:bg-accent transition-colors"
                 >
-                 Join the Newsletter
+                 {newsletterLoading ? "Joining..." : "Join the Newsletter"}
                </button>
-             </div>
+             </form>
           </div>
           <div>
             <h4 className="text-xs font-mono uppercase tracking-widest mb-6 opacity-40">Categories</h4>
