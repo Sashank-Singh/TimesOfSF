@@ -324,9 +324,10 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     if (target) {
       target.classList.add("vr-word-highlight");
 
-      // Scroll to keep the word visible if needed
+      // Scroll only when word is fully off-screen, not just partially clipped
       const rect = target.getBoundingClientRect();
-      if (rect.bottom > window.innerHeight || rect.top < 0) {
+      const margin = 60; // px buffer before triggering scroll
+      if (rect.bottom > window.innerHeight + margin || rect.top < -margin) {
         target.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
