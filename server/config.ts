@@ -140,6 +140,10 @@ export const config = {
   copyrightOverlapRatioThreshold: readOptionalFloat("COPYRIGHT_OVERLAP_RATIO_THRESHOLD", 0.12),
   /** If non-empty, only these origins get CORS headers (use when static site is on another domain). */
   corsAllowedOrigins: readCorsAllowedOrigins(),
+  /** Disk cache for generated TTS chunks. Use persistent storage on private servers. */
+  ttsCacheDir: process.env.TTS_CACHE_DIR?.trim() || ".cache/tts",
+  /** Edge TTS speaking rate for generated audio. Examples: +0%, +15%, -10%. */
+  ttsRate: process.env.TTS_RATE?.trim() || "+18%",
 };
 
 export function isProduction() {

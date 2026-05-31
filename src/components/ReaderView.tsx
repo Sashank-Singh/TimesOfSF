@@ -3,7 +3,7 @@ import { Article, ArticleEntity } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, Headphones } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { formatPublishedTimestamp, cn, stripMarkdown } from "../lib/utils";
+import { formatPublishedTimestamp, cn, stripCitationSectionsForTts, stripMarkdown } from "../lib/utils";
 
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
@@ -43,7 +43,7 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   const wordElsRef = useRef<HTMLElement[]>([]);
   const wordSpansAppliedRef = useRef(false);
 
-  const plainText = useMemo(() => stripMarkdown(content), [content]);
+  const plainText = useMemo(() => stripCitationSectionsForTts(stripMarkdown(content)), [content]);
 
   const { scrollYProgress } = useScroll({
     container: scrollRef

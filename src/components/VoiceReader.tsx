@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Play, Pause, StopCircle, Loader2, ChevronUp, ChevronDown, RotateCcw, RotateCw } from "lucide-react";
 import { cn } from "../lib/utils";
+import { getApiBase } from "../services/newsService";
 
 export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paused" | "error";
 
@@ -16,6 +17,55 @@ interface VoiceReaderProps {
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 const SKIP_SECONDS = 10;
 const FETCH_TIMEOUT = 45_000;
+const TTS_URL = `${getApiBase()}/api/tts`;
+const TTS_CHUNK_CHAR_LIMIT = 900;
+const TTS_RATE = "+18%";
+
+function splitTtsChunks(raw: string): string[] {
+  const pieces = raw
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((piece) => piece.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const piece of pieces.length ? pieces : [raw.trim()]) {
+    if (piece.length > TTS_CHUNK_CHAR_LIMIT) {
+      const words = piece.split(/\s+/).filter(Boolean);
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (next.length > TTS_CHUNK_CHAR_LIMIT && current) {
+          chunks.push(current);
+          current = word;
+        } else {
+          current = next;
+        }
+      }
+      continue;
+    }
+
+    const next = current ? `${current} ${piece}` : piece;
+    if (next.length > TTS_CHUNK_CHAR_LIMIT && current) {
+      chunks.push(current);
+      current = piece;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks.length ? chunks : [];
+}
+
+function countWords(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 function fmtTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return "0:00";
@@ -37,6 +87,10 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   const preloadUrlRef = useRef<string | null>(null);
+  const activeUrlRef = useRef<string | null>(null);
+  const chunkUrlsRef = useRef<Map<number, string>>(new Map());
+  const chunkPromisesRef = useRef<Map<number, Promise<string>>>(new Map());
+  const currentChunkRef = useRef(0);
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
   const barRef = useRef<HTMLDivElement>(null);
@@ -46,7 +100,16 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   useEffect(() => { onWordRef.current = onWordChange; }, [onWordChange]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
-  const totalWords = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
+  const chunks = useMemo(() => splitTtsChunks(text), [text]);
+  const chunkWordStarts = useMemo(() => {
+    let offset = 0;
+    return chunks.map((chunk) => {
+      const start = offset;
+      offset += countWords(chunk);
+      return start;
+    });
+  }, [chunks]);
+  const totalWords = useMemo(() => Math.max(1, chunks.reduce((sum, chunk) => sum + countWords(chunk), 0)), [chunks]);
 
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
     if (!mountedRef.current) return;
@@ -66,6 +129,10 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       URL.revokeObjectURL(blobUrlRef.current);
       blobUrlRef.current = null;
     }
+    activeUrlRef.current = null;
+    for (const url of chunkUrlsRef.current.values()) URL.revokeObjectURL(url);
+    chunkUrlsRef.current.clear();
+    chunkPromisesRef.current.clear();
   }, []);
 
   /** Release preloaded-but-unused blob so GC can collect it */
@@ -75,6 +142,65 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       preloadUrlRef.current = null;
     }
   }, []);
+
+  const fetchChunkUrl = useCallback((index: number): Promise<string> => {
+    const existing = chunkUrlsRef.current.get(index);
+    if (existing) return Promise.resolve(existing);
+
+    const pending = chunkPromisesRef.current.get(index);
+    if (pending) return pending;
+
+    const chunk = chunks[index];
+    if (!chunk) return Promise.reject(new Error("Missing audio chunk"));
+
+    const promise = (async () => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
+        try {
+          const resp = await fetch(TTS_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: chunk, voice: "en-US-JennyNeural", rate: TTS_RATE }),
+            signal: controller.signal,
+          });
+
+          if (!resp.ok) {
+            const errData = await resp.json().catch(() => ({}));
+            throw new Error(errData.error || `Server error (${resp.status})`);
+          }
+
+          const blob = await resp.blob();
+          if (!blob.size) throw new Error("Empty audio response");
+          const url = URL.createObjectURL(blob);
+          chunkUrlsRef.current.set(index, url);
+          return url;
+        } catch (err) {
+          lastError = err;
+          if (attempt === 0) await wait(500);
+        } finally {
+          clearTimeout(timer);
+          if (abortRef.current === controller) abortRef.current = null;
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("Failed to generate speech");
+    })().finally(() => {
+      chunkPromisesRef.current.delete(index);
+    });
+
+    chunkPromisesRef.current.set(index, promise);
+    return promise;
+  }, [chunks]);
+
+  const preloadNextChunk = useCallback((index: number) => {
+    if (index >= chunks.length) return;
+    fetchChunkUrl(index).catch(() => {
+      /* Surface the error when playback needs this chunk. */
+    });
+  }, [chunks.length, fetchChunkUrl]);
 
   useEffect(() => {
     return () => {
@@ -89,8 +215,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
-    if (!truncated.trim()) {
+    if (!chunks.length) {
       updateStatus("idle");
       return;
     }
@@ -98,28 +223,10 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     updateStatus("loading");
     setError(null);
 
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-
     (async () => {
       try {
-        const resp = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: truncated, voice: "en-US-JennyNeural" }),
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-
-        if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}));
-          throw new Error(errData.error || `Server error (${resp.status})`);
-        }
-
-        const blob = await resp.blob();
-        if (!blob.size) throw new Error("Empty audio response");
-        if (cancelled) { URL.revokeObjectURL(preloadUrlRef.current ?? ""); return; }
-
-        preloadUrlRef.current = URL.createObjectURL(blob);
+        preloadUrlRef.current = await fetchChunkUrl(0);
+        preloadNextChunk(1);
         if (!cancelled) updateStatus("ready");
       } catch (err: unknown) {
         if (cancelled) return;
@@ -134,17 +241,25 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      controller.abort();
     };
     // Only run on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Start playback from preloaded audio ──
-  const startPlayback = useCallback((url: string) => {
-    discardPreload();
+  const startPlayback = useCallback((url: string, chunkIndex = 0) => {
+    if (preloadUrlRef.current && preloadUrlRef.current !== url) {
+      discardPreload();
+    }
+    preloadUrlRef.current = null;
+    currentChunkRef.current = chunkIndex;
+    activeUrlRef.current = url;
+    preloadNextChunk(chunkIndex + 1);
 
-    const audio = new Audio(url);
+    const audio = audioRef.current ?? new Audio();
+    audio.pause();
+    audio.src = url;
     audio.playbackRate = speed;
     audioRef.current = audio;
     blobUrlRef.current = url;
@@ -159,22 +274,44 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       if (audio.duration && audio.duration > 0) {
         const ct = audio.currentTime;
         setCurrentTime(ct);
-        const pct = Math.round((ct / audio.duration) * 100);
+        const chunkWords = countWords(chunks[chunkIndex] ?? "");
+        const wordBase = chunkWordStarts[chunkIndex] ?? 0;
+        const wordProgress = Math.round((ct / audio.duration) * chunkWords);
+        const articleWord = Math.min(totalWords - 1, wordBase + wordProgress);
+        const pct = Math.round(((wordBase + wordProgress) / totalWords) * 100);
         setProgress(pct);
-        const wi = Math.round((ct / audio.duration) * totalWords);
-        if (wi !== lastWordRef.current) {
-          lastWordRef.current = wi;
-          onWordRef.current?.(wi);
+        if (articleWord !== lastWordRef.current) {
+          lastWordRef.current = articleWord;
+          onWordRef.current?.(articleWord);
         }
       }
     };
 
     audio.onended = () => {
-      cleanupAudio();
+      const nextChunk = chunkIndex + 1;
+      if (nextChunk < chunks.length) {
+        updateStatus("loading");
+        fetchChunkUrl(nextChunk)
+          .then((nextUrl) => {
+            if (!mountedRef.current) return;
+            if (activeUrlRef.current && activeUrlRef.current !== nextUrl) {
+              URL.revokeObjectURL(activeUrlRef.current);
+              chunkUrlsRef.current.delete(chunkIndex);
+            }
+            startPlayback(nextUrl, nextChunk);
+          })
+          .catch((err: unknown) => {
+            setError(err instanceof Error ? err.message : "Failed to generate speech");
+            updateStatus("error");
+          });
+        return;
+      }
+
       setProgress(100);
       setCurrentTime(0);
       setDuration(0);
       onWordRef.current?.(totalWords - 1);
+      cleanupAudio();
       updateStatus("idle");
       onComplete?.();
     };
@@ -190,7 +327,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       updateStatus("error");
       cleanupAudio();
     });
-  }, [speed, totalWords, updateStatus, onComplete, cleanupAudio, discardPreload, isSeeking]);
+  }, [speed, chunks, chunkWordStarts, totalWords, updateStatus, onComplete, cleanupAudio, discardPreload, isSeeking, fetchChunkUrl, preloadNextChunk]);
 
   // ── Fallback fetch+play (when preload failed) ──
   const fetchAndPlay = useCallback(async () => {
@@ -199,28 +336,9 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
-
     try {
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: truncated, voice: "en-US-JennyNeural" }),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.error || `Server error (${response.status})`);
-      }
-
-      const blob = await response.blob();
-      if (!blob.size) throw new Error("Empty audio response");
-
-      const url = URL.createObjectURL(blob);
-      startPlayback(url);
+      const url = await fetchChunkUrl(0);
+      startPlayback(url, 0);
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setError("Request timed out. Try again.");
@@ -230,7 +348,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       updateStatus("error");
       cleanupAudio();
     }
-  }, [text, totalWords, updateStatus, cleanupAudio, startPlayback]);
+  }, [updateStatus, cleanupAudio, startPlayback, fetchChunkUrl]);
 
   const togglePause = useCallback(() => {
     const audio = audioRef.current;
@@ -242,6 +360,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   const stop = useCallback(() => {
     cleanupAudio();
     discardPreload();
+    currentChunkRef.current = 0;
     updateStatus("idle");
     setProgress(0);
     setCurrentTime(0);
@@ -257,8 +376,12 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     audio.currentTime = newTime;
     setCurrentTime(newTime);
     const pct = Math.round((newTime / audio.duration) * 100);
-    setProgress(pct);
-  }, []);
+    const chunkIndex = currentChunkRef.current;
+    const wordBase = chunkWordStarts[chunkIndex] ?? 0;
+    const chunkWords = countWords(chunks[chunkIndex] ?? "");
+    const wordProgress = Math.round((newTime / audio.duration) * chunkWords);
+    setProgress(Math.round(((wordBase + wordProgress) / totalWords) * 100));
+  }, [chunks, chunkWordStarts, totalWords]);
 
   const handlePlay = useCallback(() => {
     if (status === "idle") {
@@ -371,7 +494,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
               {isLoading ? "Preparing audio..." : isReady ? "Ready to play" : title || "Now Playing"}
             </p>
             <p className="text-[10px] sm:text-[11px] text-white/40 truncate leading-tight mt-0.5">
-              {isLoading ? "Generating with neural voice" : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
+              {isLoading ? "Generating next section" : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
             </p>
           </div>
 
