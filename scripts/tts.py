@@ -8,11 +8,12 @@ import json, sys, asyncio
 from edge_tts import Communicate
 
 VOICE = "en-US-JennyNeural"
+RATE = "+18%"
 
 
-async def stream_tts(text: str) -> None:
+async def stream_tts(text: str, voice: str, rate: str) -> None:
     """Stream TTS audio to stdout. edge-tts handles long text internally."""
-    communicate = Communicate(text, VOICE)
+    communicate = Communicate(text, voice, rate=rate)
     async for chunk in communicate.stream():
         if chunk["type"] == "audio":
             sys.stdout.buffer.write(chunk["data"])
@@ -22,7 +23,9 @@ async def stream_tts(text: str) -> None:
 if __name__ == "__main__":
     input_data = json.loads(sys.argv[1])
     text = input_data.get("text", "")
+    voice = input_data.get("voice") or VOICE
+    rate = input_data.get("rate") or RATE
     if not text:
         sys.stderr.write("Missing text\n")
         sys.exit(1)
-    asyncio.run(stream_tts(text))
+    asyncio.run(stream_tts(text, voice, rate))

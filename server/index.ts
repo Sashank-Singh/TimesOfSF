@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
@@ -451,8 +452,12 @@ ${articleUrls}
 
   // Persistent Kokoro TTS worker — local ONNX inference, no cloud API
   const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_worker.py");
+  const ttsCacheDir = path.isAbsolute(config.ttsCacheDir)
+    ? config.ttsCacheDir
+    : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", config.ttsCacheDir);
   const END_MARKER = Buffer.from("\n---END---\n");
   let ttsWorker: import("node:child_process").ChildProcess | null = null;
+  const fullAudioBuilds = new Map<string, { status: "pending" | "ready" | "failed"; error?: string }>();
   let ttsQueue: Array<{
     text: string;
     resolve: (data: Buffer) => void;
@@ -514,6 +519,119 @@ ${articleUrls}
     });
   }
 
+  function ttsCachePath(text: string): string {
+    const key = crypto
+      .createHash("sha256")
+      .update(JSON.stringify({ provider: "kokoro", version: 1, text }))
+      .digest("hex");
+    return path.join(ttsCacheDir, `${key}.wav`);
+  }
+
+  function splitTtsText(raw: string, limit = 900): string[] {
+    const pieces = raw
+      .replace(/\s+/g, " ")
+      .split(/(?<=[.!?])\s+/)
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    const chunks: string[] = [];
+    let current = "";
+
+    for (const piece of pieces.length ? pieces : [raw.trim()]) {
+      const words = piece.length > limit ? piece.split(/\s+/).filter(Boolean) : [piece];
+      for (const part of words) {
+        const next = current ? `${current} ${part}` : part;
+        if (next.length > limit && current) {
+          chunks.push(current);
+          current = part;
+        } else {
+          current = next;
+        }
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks;
+  }
+
+  function fullAudioKey(slug: string, text: string): string {
+    const safeSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "article";
+    const hash = crypto
+      .createHash("sha256")
+      .update(JSON.stringify({ provider: "kokoro-full", version: 1, slug: safeSlug, text }))
+      .digest("hex")
+      .slice(0, 24);
+    return `${safeSlug}-${hash}`;
+  }
+
+  function fullAudioPath(key: string): string {
+    return path.join(ttsCacheDir, "articles", `${key}.wav`);
+  }
+
+  async function generateTtsWithChunkCache(text: string): Promise<Buffer> {
+    const cachePath = ttsCachePath(text);
+    try {
+      return await fs.promises.readFile(cachePath);
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") console.warn("[tts] cache read failed:", err);
+    }
+
+    const audio = await requestTts(text);
+    try {
+      await fs.promises.mkdir(path.dirname(cachePath), { recursive: true });
+      await fs.promises.writeFile(cachePath, audio);
+    } catch (err) {
+      console.warn("[tts] cache write failed:", err);
+    }
+    return audio;
+  }
+
+  function concatWavBuffers(buffers: Buffer[]): Buffer {
+    const pcmBuffers = buffers.map((buffer) => {
+      if (
+        buffer.length < 44 ||
+        buffer.toString("ascii", 0, 4) !== "RIFF" ||
+        buffer.toString("ascii", 8, 12) !== "WAVE"
+      ) {
+        throw new Error("Invalid WAV audio chunk");
+      }
+      return buffer.subarray(44);
+    });
+    const pcm = Buffer.concat(pcmBuffers);
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0);
+    header.writeUInt32LE(36 + pcm.length, 4);
+    header.write("WAVE", 8);
+    header.write("fmt ", 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(24000, 24);
+    header.writeUInt32LE(24000 * 2, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write("data", 36);
+    header.writeUInt32LE(pcm.length, 40);
+    return Buffer.concat([header, pcm]);
+  }
+
+  async function buildFullArticleAudio(key: string, text: string) {
+    const outputPath = fullAudioPath(key);
+    try {
+      fullAudioBuilds.set(key, { status: "pending" });
+      const chunks = splitTtsText(text);
+      const buffers: Buffer[] = [];
+      for (const chunk of chunks) {
+        buffers.push(await generateTtsWithChunkCache(chunk));
+      }
+      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.promises.writeFile(outputPath, concatWavBuffers(buffers));
+      fullAudioBuilds.set(key, { status: "ready" });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : "Full audio build failed";
+      fullAudioBuilds.set(key, { status: "failed", error });
+      console.error("[tts] full article audio build failed:", err);
+    }
+  }
+
   app.post("/api/tts", async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
@@ -527,6 +645,58 @@ ${articleUrls}
     } catch (err) {
       console.error("[tts] error:", err);
       res.status(500).json({ error: "TTS generation failed" });
+    }
+  });
+
+  app.post("/api/tts/article-audio/build", async (req, res) => {
+    const slug = typeof req.body?.slug === "string" ? req.body.slug.trim() : "";
+    const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    if (!slug || !text) {
+      res.status(400).json({ ok: false, error: "Missing slug or text" });
+      return;
+    }
+
+    const key = fullAudioKey(slug, text);
+    const outputPath = fullAudioPath(key);
+
+    try {
+      await fs.promises.access(outputPath, fs.constants.R_OK);
+      fullAudioBuilds.set(key, { status: "ready" });
+      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.wav` });
+      return;
+    } catch {
+      const current = fullAudioBuilds.get(key);
+      if (!current || current.status === "failed") {
+        void buildFullArticleAudio(key, text);
+      }
+      res.status(202).json({ ok: true, key, status: fullAudioBuilds.get(key)?.status ?? "pending" });
+    }
+  });
+
+  app.get("/api/tts/article-audio/:key/status", async (req, res) => {
+    const key = req.params.key.replace(/\.wav$/i, "");
+    const outputPath = fullAudioPath(key);
+    try {
+      await fs.promises.access(outputPath, fs.constants.R_OK);
+      fullAudioBuilds.set(key, { status: "ready" });
+      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.wav` });
+      return;
+    } catch {
+      const state = fullAudioBuilds.get(key) ?? { status: "pending" as const };
+      res.json({ ok: true, key, ...state });
+    }
+  });
+
+  app.get("/api/tts/article-audio/:key.wav", async (req, res) => {
+    const key = req.params.key;
+    const outputPath = fullAudioPath(key);
+    try {
+      await fs.promises.access(outputPath, fs.constants.R_OK);
+      res.set("Content-Type", "audio/wav");
+      res.set("Content-Disposition", `attachment; filename="${key}.wav"`);
+      res.sendFile(outputPath);
+    } catch {
+      res.status(404).json({ ok: false, error: "Audio is not ready" });
     }
   });
 

@@ -44,6 +44,28 @@ export function stripMarkdown(md: string): string {
     .trim();
 }
 
+/** Remove source/citation sections from article text before TTS playback. */
+export function stripCitationSectionsForTts(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .filter((block) => {
+      const normalized = block.trim().toLowerCase();
+      if (!normalized) return false;
+      return !(
+        /^(citations?|sources?|source notes?|claim notes?|references?|related links?)\b/.test(normalized) ||
+        /^source:\s/.test(normalized) ||
+        /^sources:\s/.test(normalized) ||
+        /^citation:\s/.test(normalized) ||
+        /^-\s*(source|citation):\s/.test(normalized)
+      );
+    })
+    .join("\n\n")
+    .replace(/\s*\b(?:source|citation):\s*https?:\/\/\S+/gi, "")
+    .replace(/\s*\(\s*(?:source|citation)\s*:?\s*https?:\/\/[^)]*\)/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function formatPublishedTimestamp(dateString: string) {
   const d = new Date(dateString);
   if (!Number.isFinite(d.getTime())) return dateString;
