@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { buildEventsDigestPost, finalizePostForPublish, synthesizePost } from "./agents";
+import { buildEventsDigestPost, finalizePostForPublish, rewritePostForCopyrightSafety, synthesizePost } from "./agents";
 import {
   classifyEditorialCategory,
   fetchQuotaSeedCandidate,
@@ -324,7 +324,7 @@ async function processTopic(
   }
 
   try {
-    const post = await synthesizePost(topic, sourcesForStory, previousCoverage);
+    let post = await synthesizePost(topic, sourcesForStory, previousCoverage);
     const fingerprint = buildStoryFingerprint(topic, sourcesForStory, post.headline);
     post.sourceUrls = fingerprint.sourceUrls;
     post.headlineHash = fingerprint.headlineHash;
@@ -333,7 +333,13 @@ async function processTopic(
 
     const copyrightRisk = findCopyrightRisk(post.bodyMarkdown, sourcesForStory);
     if (copyrightRisk) {
-      throw new Error(`Copyright safety check failed: ${copyrightRisk}`);
+      console.warn(`⚠️ Copyright safety check failed, attempting rewrite: ${copyrightRisk}`);
+      post = await rewritePostForCopyrightSafety(post, copyrightRisk);
+      const repairedRisk = findCopyrightRisk(post.bodyMarkdown, sourcesForStory);
+      if (repairedRisk) {
+        throw new Error(`Copyright safety check failed after rewrite: ${repairedRisk}`);
+      }
+      console.log("✅ Copyright safety rewrite passed.");
     }
     
     const hero = await pickHeroImageFromSources(sourcesForStory, topic);
