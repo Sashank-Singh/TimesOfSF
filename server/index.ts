@@ -16,13 +16,10 @@ import {
   fetchRecentPosts,
   fetchRun,
 } from "./db";
-import { loadInngestState } from "./inngest";
-import { getPipelineCronHealth } from "./pipelineSchedule";
 import { runPipeline } from "./pipeline";
 
-function shouldRunInternalPipelineTimer(inngestEnabled: boolean): boolean {
+function shouldRunInternalPipelineTimer(): boolean {
   if (config.disableInternalPipelineCron) return false;
-  if (inngestEnabled && !config.allowInternalCronWithInngest) return false;
   return true;
 }
 
@@ -137,7 +134,6 @@ async function resolveLegacyArticleTarget(articleIdOrSlug: unknown) {
 
 async function start() {
   await ensureSchema();
-  const inngestState = await loadInngestState();
 
   const app = express();
   const corsOrigins = config.corsAllowedOrigins;
@@ -221,55 +217,27 @@ async function start() {
   app.get("/health", async (_req, res) => {
     try {
       const activity = await fetchPipelineActivitySummary();
-      const internalActive = shouldRunInternalPipelineTimer(inngestState.enabled);
+      const internalActive = shouldRunInternalPipelineTimer();
       const coalesceMs = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
-      const cronHealth = inngestState.enabled ? getPipelineCronHealth(config.pipelineCron) : null;
       res.json({
         ok: true,
         env: config.appEnv,
         llmProvider: config.llmProvider,
-        inngestEnabled: inngestState.enabled,
-        inngestReason: inngestState.reason ?? null,
-        inngestSchedule: inngestState.enabled
-          ? cronHealth
-            ? { enabled: true, ...cronHealth }
-            : {
-                enabled: true,
-                pipelineCron: config.pipelineCron,
-                timezone: "UTC" as const,
-                nextPipelineRunAt: null,
-                msUntilNextPipelineRun: null,
-                humanApproxWait: null,
-                parseNote: `Unsupported cron shape for countdown; got "${config.pipelineCron}". Supported: */N * * * * and 0 * * * * (UTC).`,
-              }
-          : {
-              enabled: false,
-              pipelineCron: config.pipelineCron,
-              timezone: "UTC" as const,
-              nextPipelineRunAt: null,
-              msUntilNextPipelineRun: null,
-              humanApproxWait: null,
-              note:
-                "Inngest is off—no scheduled Inngest countdown. Use internalPipelineCron, GET /api/cron/pipeline, or POST /api/pipeline/run.",
-            },
-        allowInternalCronWithInngest: config.allowInternalCronWithInngest,
         internalPipelineCron: internalActive
           ? {
               active: true,
               intervalMs: Math.max(60_000, config.internalPipelineIntervalMs),
               coalesceMs,
               note:
-                "In-process timer calls runPipeline while the server stays awake. When Inngest is enabled, this timer is OFF by default so scheduling is not duplicated—use Inngest cron + /api/inngest. Set ALLOW_INTERNAL_CRON_WITH_INNGEST=true only if you intentionally want both. Manual GET /api/cron/pipeline and POST /api/pipeline/run still work.",
+                "In-process timer calls runPipeline while the Coolify server stays awake. Manual GET /api/cron/pipeline and POST /api/pipeline/run still work.",
             }
           : {
               active: false,
               intervalMs: null,
               coalesceMs: null,
-              note: inngestState.enabled
-                ? "Internal timer skipped because Inngest is enabled (single scheduler). Set ALLOW_INTERNAL_CRON_WITH_INNGEST=true to re-enable both."
-                : config.disableInternalPipelineCron
-                  ? "Internal timer disabled via DISABLE_INTERNAL_PIPELINE_CRON=true."
-                  : null,
+              note: config.disableInternalPipelineCron
+                ? "Internal timer disabled via DISABLE_INTERNAL_PIPELINE_CRON=true."
+                : null,
             },
         pipelineActivity: activity,
         cronPingConfigured: Boolean(config.cronSecret),
@@ -373,27 +341,6 @@ ${articleUrls}
     }
   });
 
-  app.post("/api/pipeline/trigger", async (_req, res) => {
-    if (!inngestState.enabled || !inngestState.inngest) {
-      res.status(503).json({
-        error: inngestState.reason ?? "Inngest is not available in this runtime.",
-      });
-      return;
-    }
-
-    try {
-      const event = await inngestState.inngest.send({
-        name: "news.pipeline.run",
-        data: {},
-      });
-      res.status(202).json({ ok: true, event });
-    } catch (error) {
-      res.status(500).json({
-        error: error instanceof Error ? error.message : "Failed to enqueue pipeline run",
-      });
-    }
-  });
-
   app.get("/api/posts", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
@@ -445,10 +392,6 @@ ${articleUrls}
       res.status(500).json({ error: "Failed to expand article" });
     }
   });
-
-  if (inngestState.enabled && inngestState.handler) {
-    app.use("/api/inngest", inngestState.handler);
-  }
 
   // Persistent Kokoro TTS worker — local ONNX inference, no cloud API
   const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_worker.py");
@@ -850,14 +793,11 @@ ${articleUrls}
     if (config.ownerAdminUiPath && config.ownerCliSecret) {
       console.log(`Owner article ingest UI: GET ${config.ownerAdminUiPath} (same origin as this server)`);
     }
-    if (!inngestState.enabled && inngestState.reason) {
-      console.log(`Inngest inactive: ${inngestState.reason}`);
-    }
-    if (shouldRunInternalPipelineTimer(inngestState.enabled)) {
+    if (shouldRunInternalPipelineTimer()) {
       const ms = Math.max(60_000, config.internalPipelineIntervalMs);
       const coalesce = config.pipelineCoalesceMs > 0 ? config.pipelineCoalesceMs : null;
       console.log(
-        `Internal pipeline scheduler: every ${ms / 1000}s; coalesce=${coalesce ? `${coalesce / 1000}s` : "off"}; inngestEnabled=${inngestState.enabled} allowInternalCronWithInngest=${config.allowInternalCronWithInngest}.`,
+        `Internal pipeline scheduler: every ${ms / 1000}s; coalesce=${coalesce ? `${coalesce / 1000}s` : "off"}.`,
       );
       const tick = () =>
         runPipeline({ coalesceWithinMs: coalesce }).catch((err) =>
@@ -865,10 +805,6 @@ ${articleUrls}
         );
       setInterval(tick, ms);
       setTimeout(tick, 30_000);
-    } else if (inngestState.enabled) {
-      console.log(
-        "Internal pipeline timer skipped: Inngest is the active scheduler (set ALLOW_INTERNAL_CRON_WITH_INNGEST=true to run both).",
-      );
     }
   });
 }
