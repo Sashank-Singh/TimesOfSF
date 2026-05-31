@@ -101,20 +101,12 @@ export const config = {
   fireworksBaseUrl: process.env.FIREWORKS_BASE_URL ?? "https://api.fireworks.ai/inference/v1",
   fireworksModel: process.env.FIREWORKS_MODEL ?? "accounts/fireworks/models/deepseek-v4-pro",
   databaseUrl: readEnv("DATABASE_URL"),
-  inngestEventKey: process.env.INNGEST_EVENT_KEY,
-  inngestSigningKey: process.env.INNGEST_SIGNING_KEY,
-  pipelineCron: process.env.PIPELINE_CRON ?? "*/10 * * * *",
-  /** When Inngest is disabled, still tick the pipeline on this interval (external cron substitute). */
+  /** Internal Coolify-friendly scheduler interval. Default: every 10 minutes. */
   internalPipelineIntervalMs: readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", 10 * 60 * 1000),
   disableInternalPipelineCron: process.env.DISABLE_INTERNAL_PIPELINE_CRON === "true",
   /**
-   * When Inngest is enabled, the in-process `setInterval` pipeline timer is OFF by default so only Inngest cron + manual triggers run `runPipeline`.
-   * Set ALLOW_INTERNAL_CRON_WITH_INNGEST=true to run both (can double-fire; not recommended).
-   */
-  allowInternalCronWithInngest: process.env.ALLOW_INTERNAL_CRON_WITH_INNGEST === "true",
-  /**
    * Internal timer + /api/cron/pipeline skip starting work if a pipeline row was created within this window.
-   * Prevents duplicate overlapping runs when both Inngest and the internal timer fire. HTTP /api/pipeline/run ignores this.
+   * Prevents duplicate overlapping runs when an external cron and the internal timer both fire. HTTP /api/pipeline/run ignores this.
    */
   pipelineCoalesceMs: readOptionalInt("PIPELINE_COALESCE_MS", 7 * 60 * 1000),
   /** Optional shared secret for GET /api/cron/pipeline?secret=… (UptimeRobot / Coolify scheduled tasks / GitHub Actions). */
