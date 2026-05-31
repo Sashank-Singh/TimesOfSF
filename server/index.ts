@@ -475,6 +475,7 @@ ${articleUrls}
     ? config.ttsCacheDir
     : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", config.ttsCacheDir);
   const END_MARKER = Buffer.from("\n---END---\n");
+  const TTS_WORKER_TIMEOUT_MS = 120_000;
   let ttsWorker: import("node:child_process").ChildProcess | null = null;
   const fullAudioBuilds = new Map<string, { status: "pending" | "ready" | "failed"; error?: string }>();
   let ttsQueue: Array<{
@@ -484,6 +485,24 @@ ${articleUrls}
   }> = [];
   let ttsBusy = false;
   let ttsBuf = Buffer.alloc(0);
+  let ttsTimer: NodeJS.Timeout | null = null;
+
+  function clearTtsTimer() {
+    if (ttsTimer) clearTimeout(ttsTimer);
+    ttsTimer = null;
+  }
+
+  function failCurrentTts(err: Error, restartWorker = true) {
+    clearTtsTimer();
+    ttsBusy = false;
+    const item = ttsQueue.shift();
+    item?.reject(err);
+    if (restartWorker && ttsWorker) {
+      ttsWorker.kill();
+      ttsWorker = null;
+    }
+    flushTtsQueue();
+  }
 
   function spawnTtsWorker() {
     try {
@@ -492,14 +511,16 @@ ${articleUrls}
 
       proc.stdout.on("data", (chunk: Buffer) => {
         ttsBuf = Buffer.concat([ttsBuf, chunk]);
-        const endIdx = ttsBuf.indexOf(END_MARKER);
-        if (endIdx >= 0) {
+        let endIdx = ttsBuf.indexOf(END_MARKER);
+        while (endIdx >= 0) {
           const response = ttsBuf.subarray(0, endIdx);
           ttsBuf = ttsBuf.subarray(endIdx + END_MARKER.length);
+          clearTtsTimer();
           ttsBusy = false;
           const item = ttsQueue.shift();
           item?.resolve(response);
           flushTtsQueue();
+          endIdx = ttsBuf.indexOf(END_MARKER);
         }
       });
 
@@ -509,14 +530,23 @@ ${articleUrls}
 
       proc.on("exit", (code) => {
         ttsWorker = null;
-        ttsBusy = false;
         if (ttsQueue.length > 0) {
-          ttsQueue.shift()?.reject(new Error(`TTS worker exited (${code})`));
-          flushTtsQueue();
+          failCurrentTts(new Error(`TTS worker exited (${code})`), false);
+        } else {
+          clearTtsTimer();
+          ttsBusy = false;
         }
       });
 
-      proc.on("error", () => { ttsWorker = null; ttsBusy = false; });
+      proc.on("error", (err) => {
+        ttsWorker = null;
+        if (ttsQueue.length > 0) {
+          failCurrentTts(err instanceof Error ? err : new Error("TTS worker failed"), false);
+        } else {
+          clearTtsTimer();
+          ttsBusy = false;
+        }
+      });
       ttsWorker = proc;
     } catch {
       ttsWorker = null;
@@ -527,12 +557,24 @@ ${articleUrls}
     if (!ttsWorker || ttsBusy || ttsQueue.length === 0) return;
     if (ttsWorker.exitCode !== null) { spawnTtsWorker(); return; }
     ttsBusy = true;
-    ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text }) + "\n");
+    clearTtsTimer();
+    ttsTimer = setTimeout(() => {
+      failCurrentTts(new Error("TTS worker timed out"));
+    }, TTS_WORKER_TIMEOUT_MS);
+    try {
+      ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text }) + "\n");
+    } catch (err) {
+      failCurrentTts(err instanceof Error ? err : new Error("Failed to write to TTS worker"));
+    }
   }
 
   function requestTts(text: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       if (!ttsWorker || ttsWorker.exitCode !== null) spawnTtsWorker();
+      if (!ttsWorker) {
+        reject(new Error("TTS worker is unavailable"));
+        return;
+      }
       ttsQueue.push({ text, resolve, reject });
       if (!ttsBusy) flushTtsQueue();
     });

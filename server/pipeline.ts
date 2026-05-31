@@ -447,7 +447,30 @@ export type RunPipelineOptions = {
   coalesceWithinMs?: number | null;
 };
 
+let activePipelineRun: Promise<PipelineRunResult[]> | null = null;
+
 export async function runPipeline(options?: RunPipelineOptions) {
+  if (activePipelineRun) {
+    console.log("⏭️ Pipeline skipped: another run is already active.");
+    return [
+      {
+        runId: `inflight_${Date.now()}`,
+        topic: null,
+        successfulSources: [],
+        failedSources: [],
+        published: false,
+        reason: "Skipped: another pipeline run is already active.",
+      },
+    ];
+  }
+
+  activePipelineRun = runPipelineUnlocked(options).finally(() => {
+    activePipelineRun = null;
+  });
+  return activePipelineRun;
+}
+
+async function runPipelineUnlocked(options?: RunPipelineOptions) {
   const coalesceMs = options?.coalesceWithinMs;
   if (typeof coalesceMs === "number" && coalesceMs > 0) {
     const latest = await fetchLatestPipelineRunCreatedAt();
