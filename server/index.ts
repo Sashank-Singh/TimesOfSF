@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -451,10 +452,15 @@ ${articleUrls}
 
   // Persistent TTS worker — keeps edge-tts import cached across requests
   const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts_worker.py");
+  const ttsCacheDir = path.isAbsolute(config.ttsCacheDir)
+    ? config.ttsCacheDir
+    : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", config.ttsCacheDir);
   const END_MARKER = Buffer.from("\n---END---\n");
   let ttsWorker: import("node:child_process").ChildProcess | null = null;
   let ttsQueue: Array<{
     text: string;
+    voice: string;
+    rate: string;
     resolve: (data: Buffer) => void;
     reject: (err: Error) => void;
   }> = [];
@@ -492,7 +498,12 @@ ${articleUrls}
         }
       });
 
-      proc.on("error", () => { ttsWorker = null; ttsBusy = false; });
+      proc.on("error", (err) => {
+        ttsWorker = null;
+        ttsBusy = false;
+        ttsQueue.shift()?.reject(err instanceof Error ? err : new Error("TTS worker failed"));
+        flushTtsQueue();
+      });
       ttsWorker = proc;
     } catch {
       ttsWorker = null;
@@ -503,26 +514,62 @@ ${articleUrls}
     if (!ttsWorker || ttsBusy || ttsQueue.length === 0) return;
     if (ttsWorker.exitCode !== null) { spawnTtsWorker(); return; }
     ttsBusy = true;
-    ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text }) + "\n");
+    ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text, voice: ttsQueue[0].voice, rate: ttsQueue[0].rate }) + "\n");
   }
 
-  function requestTts(text: string): Promise<Buffer> {
+  function requestTts(text: string, voice: string, rate: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       if (!ttsWorker || ttsWorker.exitCode !== null) spawnTtsWorker();
-      ttsQueue.push({ text, resolve, reject });
+      ttsQueue.push({ text, voice, rate, resolve, reject });
       if (!ttsBusy) flushTtsQueue();
     });
+  }
+
+  function ttsCachePath(text: string, voice: string, rate: string): string {
+    const key = crypto
+      .createHash("sha256")
+      .update(JSON.stringify({ provider: "edge-tts", version: 2, voice, rate, text }))
+      .digest("hex");
+    return path.join(ttsCacheDir, `${key}.mp3`);
   }
 
   app.post("/api/tts", async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
+    const voice = typeof req.body?.voice === "string" && req.body.voice.trim()
+      ? req.body.voice.trim()
+      : "en-US-JennyNeural";
+    const rate = typeof req.body?.rate === "string" && /^[+-]\d+%$/.test(req.body.rate.trim())
+      ? req.body.rate.trim()
+      : config.ttsRate;
     const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const cachePath = ttsCachePath(truncated, voice, rate);
 
     try {
-      const audio = await requestTts(truncated);
+      try {
+        const cached = await fs.promises.readFile(cachePath);
+        res.set("Content-Type", "audio/mpeg");
+        res.set("X-TTS-Cache", "HIT");
+        res.send(cached);
+        return;
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          console.warn("[tts] cache read failed:", err);
+        }
+      }
+
+      const audio = await requestTts(truncated, voice, rate);
+      let cacheStatus = "MISS";
+      try {
+        await fs.promises.mkdir(path.dirname(cachePath), { recursive: true });
+        await fs.promises.writeFile(cachePath, audio);
+      } catch (err) {
+        cacheStatus = "BYPASS";
+        console.warn("[tts] cache write failed:", err);
+      }
       res.set("Content-Type", "audio/mpeg");
+      res.set("X-TTS-Cache", cacheStatus);
       res.send(audio);
     } catch (err) {
       console.error("[tts] error:", err);
