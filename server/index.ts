@@ -1,8 +1,8 @@
 import express from "express";
 import cors from "cors";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
@@ -450,8 +450,8 @@ ${articleUrls}
     app.use("/api/inngest", inngestState.handler);
   }
 
-  // Persistent TTS worker — keeps edge-tts import cached across requests
-  const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "tts_worker.py");
+  // Persistent Kokoro TTS worker — local ONNX inference, no cloud API
+  const ttsWorkerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_worker.py");
   const ttsCacheDir = path.isAbsolute(config.ttsCacheDir)
     ? config.ttsCacheDir
     : path.join(path.dirname(fileURLToPath(import.meta.url)), "..", config.ttsCacheDir);
@@ -460,8 +460,6 @@ ${articleUrls}
   const fullAudioBuilds = new Map<string, { status: "pending" | "ready" | "failed"; error?: string }>();
   let ttsQueue: Array<{
     text: string;
-    voice: string;
-    rate: string;
     resolve: (data: Buffer) => void;
     reject: (err: Error) => void;
   }> = [];
@@ -499,12 +497,7 @@ ${articleUrls}
         }
       });
 
-      proc.on("error", (err) => {
-        ttsWorker = null;
-        ttsBusy = false;
-        ttsQueue.shift()?.reject(err instanceof Error ? err : new Error("TTS worker failed"));
-        flushTtsQueue();
-      });
+      proc.on("error", () => { ttsWorker = null; ttsBusy = false; });
       ttsWorker = proc;
     } catch {
       ttsWorker = null;
@@ -515,23 +508,23 @@ ${articleUrls}
     if (!ttsWorker || ttsBusy || ttsQueue.length === 0) return;
     if (ttsWorker.exitCode !== null) { spawnTtsWorker(); return; }
     ttsBusy = true;
-    ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text, voice: ttsQueue[0].voice, rate: ttsQueue[0].rate }) + "\n");
+    ttsWorker.stdin?.write(JSON.stringify({ text: ttsQueue[0].text }) + "\n");
   }
 
-  function requestTts(text: string, voice: string, rate: string): Promise<Buffer> {
+  function requestTts(text: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       if (!ttsWorker || ttsWorker.exitCode !== null) spawnTtsWorker();
-      ttsQueue.push({ text, voice, rate, resolve, reject });
+      ttsQueue.push({ text, resolve, reject });
       if (!ttsBusy) flushTtsQueue();
     });
   }
 
-  function ttsCachePath(text: string, voice: string, rate: string): string {
+  function ttsCachePath(text: string): string {
     const key = crypto
       .createHash("sha256")
-      .update(JSON.stringify({ provider: "edge-tts", version: 2, voice, rate, text }))
+      .update(JSON.stringify({ provider: "kokoro", version: 1, text }))
       .digest("hex");
-    return path.join(ttsCacheDir, `${key}.mp3`);
+    return path.join(ttsCacheDir, `${key}.wav`);
   }
 
   function splitTtsText(raw: string, limit = 900): string[] {
@@ -559,29 +552,29 @@ ${articleUrls}
     return chunks;
   }
 
-  function fullAudioKey(slug: string, text: string, voice: string, rate: string): string {
+  function fullAudioKey(slug: string, text: string): string {
     const safeSlug = slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "article";
     const hash = crypto
       .createHash("sha256")
-      .update(JSON.stringify({ provider: "edge-tts-full", version: 1, slug: safeSlug, voice, rate, text }))
+      .update(JSON.stringify({ provider: "kokoro-full", version: 1, slug: safeSlug, text }))
       .digest("hex")
       .slice(0, 24);
     return `${safeSlug}-${hash}`;
   }
 
   function fullAudioPath(key: string): string {
-    return path.join(ttsCacheDir, "articles", `${key}.mp3`);
+    return path.join(ttsCacheDir, "articles", `${key}.wav`);
   }
 
-  async function generateTtsWithChunkCache(text: string, voice: string, rate: string): Promise<Buffer> {
-    const cachePath = ttsCachePath(text, voice, rate);
+  async function generateTtsWithChunkCache(text: string): Promise<Buffer> {
+    const cachePath = ttsCachePath(text);
     try {
       return await fs.promises.readFile(cachePath);
     } catch (err: any) {
       if (err?.code !== "ENOENT") console.warn("[tts] cache read failed:", err);
     }
 
-    const audio = await requestTts(text, voice, rate);
+    const audio = await requestTts(text);
     try {
       await fs.promises.mkdir(path.dirname(cachePath), { recursive: true });
       await fs.promises.writeFile(cachePath, audio);
@@ -591,17 +584,46 @@ ${articleUrls}
     return audio;
   }
 
-  async function buildFullArticleAudio(key: string, text: string, voice: string, rate: string) {
+  function concatWavBuffers(buffers: Buffer[]): Buffer {
+    const pcmBuffers = buffers.map((buffer) => {
+      if (
+        buffer.length < 44 ||
+        buffer.toString("ascii", 0, 4) !== "RIFF" ||
+        buffer.toString("ascii", 8, 12) !== "WAVE"
+      ) {
+        throw new Error("Invalid WAV audio chunk");
+      }
+      return buffer.subarray(44);
+    });
+    const pcm = Buffer.concat(pcmBuffers);
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0);
+    header.writeUInt32LE(36 + pcm.length, 4);
+    header.write("WAVE", 8);
+    header.write("fmt ", 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
+    header.writeUInt16LE(1, 22);
+    header.writeUInt32LE(24000, 24);
+    header.writeUInt32LE(24000 * 2, 28);
+    header.writeUInt16LE(2, 32);
+    header.writeUInt16LE(16, 34);
+    header.write("data", 36);
+    header.writeUInt32LE(pcm.length, 40);
+    return Buffer.concat([header, pcm]);
+  }
+
+  async function buildFullArticleAudio(key: string, text: string) {
     const outputPath = fullAudioPath(key);
     try {
       fullAudioBuilds.set(key, { status: "pending" });
       const chunks = splitTtsText(text);
       const buffers: Buffer[] = [];
       for (const chunk of chunks) {
-        buffers.push(await generateTtsWithChunkCache(chunk, voice, rate));
+        buffers.push(await generateTtsWithChunkCache(chunk));
       }
       await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
-      await fs.promises.writeFile(outputPath, Buffer.concat(buffers));
+      await fs.promises.writeFile(outputPath, concatWavBuffers(buffers));
       fullAudioBuilds.set(key, { status: "ready" });
     } catch (err) {
       const error = err instanceof Error ? err.message : "Full audio build failed";
@@ -614,39 +636,11 @@ ${articleUrls}
     const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
 
-    const voice = typeof req.body?.voice === "string" && req.body.voice.trim()
-      ? req.body.voice.trim()
-      : "en-US-JennyNeural";
-    const rate = typeof req.body?.rate === "string" && /^[+-]\d+%$/.test(req.body.rate.trim())
-      ? req.body.rate.trim()
-      : config.ttsRate;
     const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
-    const cachePath = ttsCachePath(truncated, voice, rate);
 
     try {
-      try {
-        const cached = await fs.promises.readFile(cachePath);
-        res.set("Content-Type", "audio/mpeg");
-        res.set("X-TTS-Cache", "HIT");
-        res.send(cached);
-        return;
-      } catch (err: any) {
-        if (err?.code !== "ENOENT") {
-          console.warn("[tts] cache read failed:", err);
-        }
-      }
-
-      const audio = await requestTts(truncated, voice, rate);
-      let cacheStatus = "MISS";
-      try {
-        await fs.promises.mkdir(path.dirname(cachePath), { recursive: true });
-        await fs.promises.writeFile(cachePath, audio);
-      } catch (err) {
-        cacheStatus = "BYPASS";
-        console.warn("[tts] cache write failed:", err);
-      }
-      res.set("Content-Type", "audio/mpeg");
-      res.set("X-TTS-Cache", cacheStatus);
+      const audio = await requestTts(truncated);
+      res.set("Content-Type", "audio/wav");
       res.send(audio);
     } catch (err) {
       console.error("[tts] error:", err);
@@ -662,36 +656,30 @@ ${articleUrls}
       return;
     }
 
-    const voice = typeof req.body?.voice === "string" && req.body.voice.trim()
-      ? req.body.voice.trim()
-      : "en-US-JennyNeural";
-    const rate = typeof req.body?.rate === "string" && /^[+-]\d+%$/.test(req.body.rate.trim())
-      ? req.body.rate.trim()
-      : config.ttsRate;
-    const key = fullAudioKey(slug, text, voice, rate);
+    const key = fullAudioKey(slug, text);
     const outputPath = fullAudioPath(key);
 
     try {
       await fs.promises.access(outputPath, fs.constants.R_OK);
       fullAudioBuilds.set(key, { status: "ready" });
-      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.mp3` });
+      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.wav` });
       return;
     } catch {
       const current = fullAudioBuilds.get(key);
       if (!current || current.status === "failed") {
-        void buildFullArticleAudio(key, text, voice, rate);
+        void buildFullArticleAudio(key, text);
       }
       res.status(202).json({ ok: true, key, status: fullAudioBuilds.get(key)?.status ?? "pending" });
     }
   });
 
   app.get("/api/tts/article-audio/:key/status", async (req, res) => {
-    const key = req.params.key.replace(/\.mp3$/i, "");
+    const key = req.params.key.replace(/\.wav$/i, "");
     const outputPath = fullAudioPath(key);
     try {
       await fs.promises.access(outputPath, fs.constants.R_OK);
       fullAudioBuilds.set(key, { status: "ready" });
-      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.mp3` });
+      res.json({ ok: true, key, status: "ready", audioUrl: `/api/tts/article-audio/${encodeURIComponent(key)}.wav` });
       return;
     } catch {
       const state = fullAudioBuilds.get(key) ?? { status: "pending" as const };
@@ -699,17 +687,109 @@ ${articleUrls}
     }
   });
 
-  app.get("/api/tts/article-audio/:key.mp3", async (req, res) => {
+  app.get("/api/tts/article-audio/:key.wav", async (req, res) => {
     const key = req.params.key;
     const outputPath = fullAudioPath(key);
     try {
       await fs.promises.access(outputPath, fs.constants.R_OK);
-      res.set("Content-Type", "audio/mpeg");
-      res.set("Content-Disposition", `attachment; filename="${key}.mp3"`);
+      res.set("Content-Type", "audio/wav");
+      res.set("Content-Disposition", `attachment; filename="${key}.wav"`);
       res.sendFile(outputPath);
     } catch {
       res.status(404).json({ ok: false, error: "Audio is not ready" });
     }
+  });
+
+  // Streaming TTS endpoint — returns audio progressively as it generates.
+  // Browser <audio> starts playing as soon as the first sentence arrives (~3-5s).
+  app.get("/api/tts/stream", async (req, res) => {
+    const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
+    if (!text) { res.status(400).json({ error: "Missing text" }); return; }
+
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+    const streamerScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_streamer.py");
+
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    const proc = spawn("python3", [streamerScript, truncated], { stdio: ["pipe", "pipe", "pipe"] });
+
+    proc.stdout.on("data", (chunk: Buffer) => {
+      if (!res.destroyed) res.write(chunk);
+    });
+
+    proc.on("close", (code) => {
+      if (!res.destroyed) {
+        if (code !== 0 && !res.headersSent) {
+          res.status(500).json({ error: "TTS generation failed" });
+        } else {
+          res.end();
+        }
+      }
+    });
+
+    proc.on("error", () => {
+      if (!res.destroyed) {
+        if (!res.headersSent) res.status(500).json({ error: "Failed to start TTS" });
+        else res.end();
+      }
+    });
+  });
+
+  // Chunked TTS endpoint — per-sentence PCM chunks as NDJSON, for Web Audio API.
+  // Each line is JSON: {"pcm": "<base64>"} — first line has {"sampleRate": 24000}.
+  app.get("/api/tts/chunked", async (req, res) => {
+    const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
+    if (!text) { res.status(400).json({ error: "Missing text" }); return; }
+    const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
+
+    const chunkedScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_chunked.py");
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    const proc = spawn("python3", [chunkedScript], { stdio: ["pipe", "pipe", "pipe"] });
+
+    proc.stdin.write(truncated);
+    proc.stdin.end();
+
+    // Pipe stdout → response with proper backpressure.
+    // DO NOT kill on req close — pipe() manages stream lifecycle, and
+    // req.on("close") fires too early on proxy-kept-alive GET connections.
+    proc.stdout.pipe(res);
+
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+
+    // Safety timer — kill orphaned process after 10 minutes
+    const killTimer = setTimeout(() => { proc.kill(); }, 600_000);
+    proc.on("exit", () => clearTimeout(killTimer));
+
+    // If pipe already ended res, skip extra end
+    const maybeEnd = () => { if (!res.writableEnded) res.end(); };
+
+    proc.on("close", (code) => {
+      clearTimeout(killTimer);
+      if (res.writableEnded || res.destroyed) return;
+      if (code !== 0) {
+        const msg = stderr.trim() || `exit ${code}`;
+        console.error("[tts-chunked] error:", msg);
+        if (!res.headersSent) res.status(500).json({ error: `TTS error: ${msg}` });
+        else maybeEnd();
+      } else {
+        maybeEnd();
+      }
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(killTimer);
+      console.error("[tts-chunked] spawn error:", err);
+      if (!res.headersSent && !res.destroyed) {
+        res.status(500).json({ error: "Failed to start TTS" });
+      }
+    });
   });
 
   if (isProduction()) {

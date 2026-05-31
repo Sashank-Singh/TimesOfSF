@@ -10,3 +10,4 @@ coverage/
 .codex/
 venv/
 .claude/
+models_kokoro/

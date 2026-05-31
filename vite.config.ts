@@ -17,8 +17,21 @@ export default defineConfig(({mode}) => {
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // Do not modify — file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      // Proxy /api requests to the Express backend (port 8787).
+      proxy: {
+        '/api/tts': {
+          target: 'http://localhost:8787',
+          changeOrigin: true,
+          proxyTimeout: 600_000, // 10 min — TTS generation is slow
+          timeout: 600_000,
+        },
+        '/api': {
+          target: 'http://localhost:8787',
+          changeOrigin: true,
+        },
+      },
     },
   };
 });

@@ -1,11 +1,16 @@
 # Production image: Express API + Vite static (Coolify / Docker).
 FROM node:22-bookworm-slim
 
-# Python3 + edge-tts for server-side TTS (natural neural voices, no model files)
+# Python3 + kokoro-onnx for server-side TTS (local ONNX inference, no cloud API)
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates python3 python3-pip \
-  && pip3 install --break-system-packages edge-tts==7.2.8 \
+  && apt-get install -y --no-install-recommends curl ca-certificates python3 python3-pip espeak-ng \
+  && pip3 install --break-system-packages kokoro-onnx \
   && rm -rf /var/lib/apt/lists/*
+
+# Download Kokoro TTS model files
+RUN mkdir -p /app/models_kokoro \
+  && curl -fL "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.fp16.onnx" -o /app/models_kokoro/kokoro-v1.0.fp16.onnx \
+  && curl -fL "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin" -o /app/models_kokoro/voices-v1.0.bin
 
 WORKDIR /app
 

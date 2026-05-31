@@ -312,26 +312,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     wordSpansAppliedRef.current = true;
   }, [voiceActive, content]);
 
-  // Highlight the active word span
-  useEffect(() => {
-    const spans = wordElsRef.current;
-    const prevHighlighted = document.querySelectorAll(".vr-word-highlight");
-    prevHighlighted.forEach((el) => el.classList.remove("vr-word-highlight"));
-
-    if (!voiceActive || activeWord < 0 || activeWord >= spans.length) return;
-
-    const target = spans[activeWord];
-    if (target) {
-      target.classList.add("vr-word-highlight");
-
-      // Scroll to keep the word visible if needed
-      const rect = target.getBoundingClientRect();
-      if (rect.bottom > window.innerHeight || rect.top < 0) {
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }
-  }, [voiceActive, activeWord]);
-
   return (
     <motion.div
       ref={scrollRef}
