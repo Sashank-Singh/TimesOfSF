@@ -44,7 +44,7 @@ function extractionStrongEnough(textExcerpt: string, facts: string[]): boolean {
 
 /**
  * Ingest a single news URL, extract text (news-please or fallback), synthesize, and publish.
- * Does not use Inngest or the trending pipeline.
+ * Does not use the scheduled trending pipeline.
  */
 export async function publishArticleFromSubmittedUrl(
   rawUrl: string,

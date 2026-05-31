@@ -104,7 +104,7 @@ Full examples and comments live in `**[.env.example](.env.example)**`. Summary:
 
 ### Pipeline & scheduling
 
-Optional: `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`, `CRON_SECRET` (for `GET /api/cron/pipeline?secret=…`), `PIPELINE_CRON`, `DISABLE_INTERNAL_PIPELINE_CRON`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults.
+By default the server runs the pipeline with an internal timer every 10 minutes (`INTERNAL_PIPELINE_INTERVAL_MS=600000`). Optional: `CRON_SECRET` for `GET /api/cron/pipeline?secret=…`, `DISABLE_INTERNAL_PIPELINE_CRON` if using an external Coolify scheduled task instead, `PIPELINE_COALESCE_MS`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults.
 
 ### Owner-only tools
 
@@ -139,15 +139,14 @@ Operational / owner (see server code for auth and bodies):
 
 - `GET /health` — liveness + pipeline summary JSON  
 - `GET /api/cron/pipeline` — optional cron trigger (`CRON_SECRET`)  
-- `POST /api/pipeline/trigger` — enqueue pipeline (Inngest when configured)  
+- `POST /api/pipeline/run` — run the pipeline immediately  
 - `POST /api/admin/article-from-url` — publish from URL (`OWNER_CLI_SECRET`)  
-- `GET /api/inngest` — Inngest handler when enabled
 
 ---
 
 ## Tech stack
 
-React 19, Vite 6, Tailwind 4, Express, `@neondatabase/serverless`, Inngest (optional), Fireworks OpenAI-compatible API or `@google/genai`, TypeScript.
+React 19, Vite 6, Tailwind 4, Express, Postgres, Fireworks OpenAI-compatible API or `@google/genai`, TypeScript.
 
 ---
 
