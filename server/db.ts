@@ -96,7 +96,27 @@ export async function ensureSchema() {
     `;
     await sql`CREATE INDEX IF NOT EXISTS knowledge_state_category_idx ON knowledge_state (category, published_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS knowledge_state_entities_gin ON knowledge_state USING GIN (key_entities)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        source TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS newsletter_subscribers_created_idx ON newsletter_subscribers (created_at DESC)`;
   });
+}
+
+export async function saveNewsletterSubscriber(email: string, source?: string) {
+  const rows = await sql`
+    INSERT INTO newsletter_subscribers (email, source)
+    VALUES (${email}, ${source ?? null})
+    ON CONFLICT (email) DO UPDATE
+    SET source = COALESCE(newsletter_subscribers.source, EXCLUDED.source)
+    RETURNING id, created_at
+  `;
+  return rows[0] as { id: string | number; created_at: string | Date };
 }
 
 export async function saveEvents(events: Array<{title: string, url: string, date: string, source: string}>) {

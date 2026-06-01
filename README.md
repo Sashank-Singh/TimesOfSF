@@ -1,155 +1,227 @@
 # TimesOfSF
 
-A **San Francisco–focused news reader** with a **React** frontend and an **Express** backend. The server runs a content pipeline (RSS and related sources), stores articles in **Postgres** (e.g. Neon), and uses an **LLM** (Fireworks or Google Gemini) for synthesis and tooling.
+A San Francisco-focused news reader with a React frontend, an Express backend, a Postgres article store, and an automated LLM-powered news pipeline.
 
----
+In production, the Docker/Coolify app serves both the public SPA and `/api/*` from the same Express process.
 
 ## Architecture
 
+| Layer | Role |
+| --- | --- |
+| `src/` | Public React UI: articles, events, search, reader, TTS controls |
+| `server/` | Express API, article pipeline, SEO HTML injection, Kokoro TTS |
+| Postgres | Articles, pipeline runs, source attempts, events, newsletter subscribers, knowledge state |
+| Docker/Coolify | Production runtime for the single Express + static app container |
 
-| Layer                     | Role                                                           |
-| ------------------------- | -------------------------------------------------------------- |
-| **Vite + React** (`src/`) | Public UI: articles, events, search                            |
-| **Express** (`server/`)   | REST API, pipeline orchestration, static `dist/` in production |
-| **Postgres**              | Posts, runs, events, pipeline metadata                         |
+## Requirements
 
+- Node.js 22 for production parity with the Docker image
+- Postgres connection string in `DATABASE_URL`
+- Fireworks or Gemini API key
+- Python/Kokoro dependencies are installed by the Docker image for production TTS
 
-In **production** (Docker / Coolify), one process serves both the SPA and `/api/`* from the same origin. That avoids CORS for normal browsing.
+## Local Setup
 
----
+1. Install dependencies:
 
-## Prerequisites
+```bash
+npm ci
+```
 
-- **Node.js 22** (matches the Docker image)
-- **PostgreSQL** connection string (`DATABASE_URL`)
-- **LLM**: [Fireworks](https://fireworks.ai/) and/or [Google AI Studio / Gemini](https://aistudio.google.com/) — see [Environment](#environment)
+2. Create `.env` from `.env.example` and set at least:
 
----
+```env
+DATABASE_URL="postgresql://..."
+LLM_PROVIDER=fireworks
+FIREWORKS_API_KEY="..."
+OWNER_CLI_SECRET="change-me-min-12-chars"
+```
 
-## Quick start (local)
+3. Run the backend:
 
-1. **Clone and install**
-  ```bash
-   npm ci
-  ```
-2. **Configure environment**
-  Copy `.env.example` to `.env` and fill in at least:
-  - `DATABASE_URL`
-  - `FIREWORKS_API_KEY` *or* `GEMINI_API_KEY` (and optionally `LLM_PROVIDER=fireworks` or `gemini`)
-3. **Run the API** (default port **8787**)
-  ```bash
-   npm run server:dev
-  ```
-4. **Run the frontend** (default port **3000**)
-  In another terminal:
-   The dev client is configured to call the API at `http://localhost:8787` when `VITE_API_URL` is unset.
-5. **Production build (smoke test)**
-  ```bash
-   npm run build
-   NODE_ENV=production npm run server:start
-  ```
-   Open `http://localhost:8787` — static assets and `/api/*` are served together.
+```bash
+npm run server:dev
+```
 
----
+4. Run the frontend in another terminal:
+
+```bash
+npm run dev
+```
+
+The dev frontend calls `http://localhost:8787` when `VITE_API_URL` is unset.
+
+5. Smoke-test the production server locally:
+
+```bash
+npm run build
+NODE_ENV=production npm run server:start
+```
+
+Open `http://localhost:8787`.
 
 ## Scripts
 
-
-| Command                  | Purpose                                                                |
-| ------------------------ | ---------------------------------------------------------------------- |
-| `npm run dev`            | Vite dev server (frontend)                                             |
-| `npm run server:dev`     | Express with `tsx watch`                                               |
-| `npm run server:start`   | Production server entry                                                |
-| `npm run build`          | Vite → `dist/`                                                         |
-| `npm run lint`           | Typecheck app                                                          |
-| `npm run lint:server`    | Typecheck server                                                       |
-| `npm run admin:articles` | Owner CLI for article edits (needs `DATABASE_URL`, `OWNER_CLI_SECRET`) |
-
-
----
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Vite dev server |
+| `npm run server:dev` | Express dev server with `tsx watch` |
+| `npm run server:start` | Production Express entry |
+| `npm run build` | Build the Vite app into `dist/` |
+| `npm run lint` | Typecheck app and shared code |
+| `npm run lint:server` | Typecheck server code |
+| `npm run admin:articles` | Owner CLI for article edits |
 
 ## Environment
 
-Full examples and comments live in `**[.env.example](.env.example)**`. Summary:
+Full examples live in [.env.example](.env.example).
 
 ### Required
 
+| Variable | Notes |
+| --- | --- |
+| `DATABASE_URL` | Postgres URL, SSL recommended for hosted DBs |
+| `LLM_PROVIDER` | `fireworks` or `gemini` |
+| `FIREWORKS_API_KEY` or `GEMINI_API_KEY` | Required for article synthesis |
+| `OWNER_CLI_SECRET` | Owner/admin secret for protected operational routes |
 
-| Variable                                    | Notes                                                                                                          |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                              | Postgres (SSL recommended for hosted DBs)                                                                      |
-| `FIREWORKS_API_KEY` **or** `GEMINI_API_KEY` | At least one LLM key                                                                                           |
-| `LLM_PROVIDER`                              | Optional but recommended: `fireworks` or `gemini` (if both keys exist, Fireworks wins unless you set `gemini`) |
+### Deployment URLs
 
+| Variable | Notes |
+| --- | --- |
+| `APP_URL` | Public site URL used for metadata, sitemap, and canonical links |
+| `PORT` | Express port, default `8787` |
+| `VITE_API_URL` | Leave unset for default Coolify single-container deploy |
+| `CORS_ALLOWED_ORIGINS` | Only needed for split frontend/API deployments |
 
-### URLs and deploys
+For the default Coolify deployment, do not set `VITE_API_URL`; the browser should use same-origin `/api`.
 
+### Pipeline Scheduling
 
-| Variable               | Notes                                                                                                                                    |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_URL`              | Public site URL (links, metadata). On Coolify you can rely on `COOLIFY_URL` / `COOLIFY_FQDN` if unset                                    |
-| `PORT`                 | Listen port (default **8787**)                                                                                                           |
-| `VITE_API_URL`         | **Leave unset** for the default single-container deploy (same-origin `/api`). Set only if the browser must call another host             |
-| `CORS_ALLOWED_ORIGINS` | Comma-separated origins when the **static site and API are on different hosts** (e.g. `https://www.timesofsf.com,https://timesofsf.com`) |
+The app no longer depends on Inngest. Coolify/private-server production uses the internal timer by default:
 
+```env
+INTERNAL_PIPELINE_INTERVAL_MS=600000
+PIPELINE_COALESCE_MS=420000
+DISABLE_INTERNAL_PIPELINE_CRON=false
+```
 
-### Fireworks (optional tuning)
+Behavior:
 
+- The first pipeline tick starts about 30 seconds after server boot.
+- Later ticks run every `INTERNAL_PIPELINE_INTERVAL_MS`.
+- A single-flight guard prevents overlapping pipeline runs.
+- `PIPELINE_COALESCE_MS` skips near-duplicate timer/external-cron attempts.
+- A tick attempts to publish; it does not guarantee a new article every time.
 
-| Variable             | Default                                            |
-| -------------------- | -------------------------------------------------- |
-| `FIREWORKS_BASE_URL` | `https://api.fireworks.ai/inference/v1`            |
-| `FIREWORKS_MODEL`    | `accounts/fireworks/models/llama-v3p1-8b-instruct` |
+Optional external cron:
 
+```env
+CRON_SECRET="change-me-long-random-secret"
+```
 
-### Pipeline & scheduling
+Then call:
 
-By default the server runs the pipeline with an internal timer every 10 minutes (`INTERNAL_PIPELINE_INTERVAL_MS=600000`). Optional: `CRON_SECRET` for `GET /api/cron/pipeline?secret=…`, `DISABLE_INTERNAL_PIPELINE_CRON` if using an external Coolify scheduled task instead, `PIPELINE_COALESCE_MS`, `SERPER_API_KEY`, and others — see `server/config.ts` for the full list and defaults.
+```text
+GET /api/cron/pipeline?secret=...
+```
 
-### Owner-only tools
+Manual pipeline runs also accept `CRON_SECRET` or `OWNER_CLI_SECRET`.
 
+### TTS
 
-| Variable              | Purpose                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
-| `OWNER_CLI_SECRET`    | Required for `POST /api/admin/article-from-url` and `npm run admin:articles`                         |
-| `OWNER_ADMIN_UI_PATH` | Optional secret path (must start with `/`) for a small HTML ingest form; requires `OWNER_CLI_SECRET` |
+TTS uses local Kokoro in production. The Docker image installs `kokoro-onnx`, `espeak-ng`, and downloads model files.
 
+Recommended persistent cache on Coolify/private servers:
 
----
+```env
+TTS_CACHE_DIR="/var/lib/timesofsf/tts-cache"
+```
 
-## Docker & Coolify
+Audio is stored as WAV:
 
-The `**[Dockerfile](Dockerfile)`** builds the Vite app and runs `npm run server:start`. The image includes **curl** for Docker healthchecks.
+- Chunk cache: `TTS_CACHE_DIR/<hash>.wav`
+- Full-article cache: `TTS_CACHE_DIR/articles/<article-key>.wav`
 
-- **Health:** `GET /health`
-- **Do not** set `VITE_API_URL` at **image build** if you want the browser to use same-origin `/api` on your public domain.
-- Set **runtime** secrets in Coolify: `DATABASE_URL`, LLM keys, `APP_URL` (if needed), `NODE_ENV=production`.
+TTS routes have per-IP rate limits and size caps. The persistent worker has a timeout so a failed Python process cannot leave the queue stuck.
 
----
+`TTS_RATE` is legacy from Edge TTS and is not used by the current Kokoro path.
 
-## API overview
+## Protected Routes
 
-Public read endpoints used by the SPA:
+Use one of these auth styles:
 
-- `GET /api/posts` — recent articles  
-- `GET /api/events` — stored events  
-- `POST /api/posts/:id/expand` — expand article body (LLM)
+- `Authorization: Bearer <secret>`
+- `x-admin-secret: <OWNER_CLI_SECRET>`
+- `x-cron-secret: <CRON_SECRET>`
+- `?secret=<secret>` where supported
 
-Operational / owner (see server code for auth and bodies):
+| Route | Auth |
+| --- | --- |
+| `POST /api/admin/article-from-url` | `OWNER_CLI_SECRET` |
+| `POST /api/pipeline/run` | `OWNER_CLI_SECRET` or `CRON_SECRET` |
+| `GET /api/cron/pipeline` | `OWNER_CLI_SECRET` or `CRON_SECRET` |
+| `GET /api/runs/:runId` | `OWNER_CLI_SECRET` |
+| `POST /api/posts/:id/expand` | `OWNER_CLI_SECRET` |
 
-- `GET /health` — liveness + pipeline summary JSON  
-- `GET /api/cron/pipeline` — optional cron trigger (`CRON_SECRET`)  
-- `POST /api/pipeline/run` — run the pipeline immediately  
-- `POST /api/admin/article-from-url` — publish from URL (`OWNER_CLI_SECRET`)  
+Public routes used by the frontend:
 
----
+- `GET /api/posts`
+- `GET /api/events`
+- `POST /api/newsletter/subscribe`
+- `GET /health`
+- TTS playback/download routes, rate-limited
 
-## Tech stack
+## Coolify Notes
 
-React 19, Vite 6, Tailwind 4, Express, Postgres, Fireworks OpenAI-compatible API or `@google/genai`, TypeScript.
+The [Dockerfile](Dockerfile) builds the frontend and starts Express with:
 
----
+```bash
+npm run server:start
+```
+
+Set runtime environment variables in Coolify, not build-only variables:
+
+- `DATABASE_URL`
+- `LLM_PROVIDER`
+- `FIREWORKS_API_KEY` or `GEMINI_API_KEY`
+- `OWNER_CLI_SECRET`
+- `APP_URL`
+- `TTS_CACHE_DIR`
+- optional `CRON_SECRET`
+
+After deploy, check:
+
+```text
+https://your-domain.com/health
+```
+
+Expected scheduler shape:
+
+```json
+{
+  "internalPipelineCron": {
+    "active": true,
+    "intervalMs": 600000
+  }
+}
+```
+
+## Validation
+
+Run before pushing:
+
+```bash
+npm run lint
+npm run lint:server
+npm run build
+npm audit --audit-level=moderate
+```
+
+## Tech Stack
+
+React 19, Vite 6, Tailwind 4, Express, Postgres, Fireworks/Gemini, Kokoro TTS, TypeScript.
 
 ## License
 
-Private project (`"private": true` in `package.json`). Adjust this section if you open-source the repo.
+Private project.

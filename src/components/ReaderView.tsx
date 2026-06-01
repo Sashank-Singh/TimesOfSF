@@ -19,8 +19,6 @@ const categoryGradients: Record<string, string> = {
   Events: "from-rose-900/80 via-rose-800/60 to-transparent",
 };
 
-import { expandArticle } from "../services/newsService";
-
 const VoiceReader = React.lazy(() => import("./VoiceReader"));
 
 interface ReaderViewProps {
@@ -33,8 +31,7 @@ interface ReaderViewProps {
 
 function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
   const [showSummary, setShowSummary] = useState(false);
-  const [isExpanding, setIsExpanding] = useState(false);
-  const [content, setContent] = useState(article.content);
+  const content = article.content;
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [voiceActive, setVoiceActive] = useState(false);
@@ -557,28 +554,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                     )}
                   </section>
                 )}
-                
-                <div className="mt-16 p-8 border-2 border-ink bg-paper shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] group/expand">
-                  <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-mono font-bold uppercase tracking-widest">Deepen this report</h4>
-                      <p className="text-[10px] font-mono text-ink/40 uppercase tracking-tight">Synthesize a longer, feature-length version using AI analysis.</p>
-                    </div>
-                    <button 
-                      onClick={async () => {
-                        setIsExpanding(true);
-                        const expanded = await expandArticle(article.id);
-                        if (expanded) setContent(expanded);
-                        setIsExpanding(false);
-                      }}
-                      disabled={isExpanding}
-                      className="px-8 py-3 bg-accent text-paper text-[10px] font-bold uppercase tracking-widest hover:bg-ink transition-colors disabled:opacity-50 flex items-center gap-3"
-                    >
-                      {isExpanding ? "Synthesizing..." : "Expand Full Feature"}
-                      <ChevronDown size={14} className={cn("transition-transform", isExpanding && "animate-bounce")} />
-                    </button>
-                  </div>
-                </div>
                 
                 {/* Mobile/Tablet Additional Images */}
                 <div className="lg:hidden mt-20 space-y-12">

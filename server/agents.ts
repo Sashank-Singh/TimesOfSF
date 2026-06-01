@@ -1010,6 +1010,88 @@ export async function synthesizePost(
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+export async function rewritePostForCopyrightSafety(post: GeneratedPost, reason: string): Promise<GeneratedPost> {
+  const prompt = `
+    You are the Times of SF senior editor doing a copyright-safety rewrite.
+    The article below was rejected by an automated overlap checker:
+    ${reason}
+
+    Rewrite the article body from scratch while preserving the same facts, analytical meaning, markdown headings, [[Entity]] brackets, and any [CHART:N] tokens.
+    Use different sentence structures, different clause order, and different vocabulary throughout.
+    Do not add new facts. Do not remove the Source Notes section.
+    Avoid reusing any 5+ word sequence from the current article.
+
+    Return ONLY valid JSON:
+    {
+      "dek": "rewritten dek",
+      "shortPost": "rewritten short social summary",
+      "bodyMarkdown": "rewritten markdown body"
+    }
+
+    Current dek:
+    ${post.dek}
+
+    Current shortPost:
+    ${post.shortPost}
+
+    Current bodyMarkdown:
+    ${post.bodyMarkdown}
+  `;
+
+  let raw = "";
+  if (config.llmProvider === "fireworks") {
+    if (!config.fireworksApiKey) throw new Error("FIREWORKS_API_KEY is not configured.");
+    const response = await fetch(`${config.fireworksBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.fireworksApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.fireworksModel,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a careful rewrite editor. Return only valid JSON. Preserve facts, but substantially rewrite the prose.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.35,
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Fireworks rewrite failed with ${response.status}: ${errorText}`);
+    }
+    const data = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    raw = data.choices?.[0]?.message?.content ?? "";
+  } else {
+    if (!geminiAi) throw new Error("GEMINI_API_KEY not configured.");
+    const result = await geminiAi.models.generateContent({
+      model: config.geminiModel,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: { responseMimeType: "application/json" },
+    });
+    raw = result.text ?? "";
+  }
+
+  if (!raw.trim()) throw new Error("Rewrite response was empty.");
+  const parsed = parseModelJson(raw, "Copyright rewrite JSON") as Record<string, unknown>;
+  const bodyMarkdown = typeof parsed.bodyMarkdown === "string" && parsed.bodyMarkdown.trim()
+    ? parsed.bodyMarkdown.trim()
+    : post.bodyMarkdown;
+  const dek = typeof parsed.dek === "string" && parsed.dek.trim() ? parsed.dek.trim() : post.dek;
+  const shortPost = typeof parsed.shortPost === "string" && parsed.shortPost.trim()
+    ? parsed.shortPost.trim()
+    : post.shortPost;
+
+  return finalizePostForPublish({ ...post, dek, shortPost, bodyMarkdown });
+}
+
 export async function expandContent(
   headline: string, 
   currentContent: string, 
