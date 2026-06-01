@@ -102,25 +102,154 @@ export async function ensureSchema() {
         email TEXT NOT NULL UNIQUE,
         source TEXT,
         preferences JSONB NOT NULL DEFAULT '[]'::jsonb,
+        unsubscribe_token TEXT UNIQUE,
+        unsubscribed_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `;
     await sql`ALTER TABLE newsletter_subscribers ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '[]'::jsonb`;
+    await sql`ALTER TABLE newsletter_subscribers ADD COLUMN IF NOT EXISTS unsubscribe_token TEXT UNIQUE`;
+    await sql`ALTER TABLE newsletter_subscribers ADD COLUMN IF NOT EXISTS unsubscribed_at TIMESTAMPTZ`;
+    await sql`
+      UPDATE newsletter_subscribers
+      SET unsubscribe_token = md5(random()::text || clock_timestamp()::text || email)
+      WHERE unsubscribe_token IS NULL
+    `;
     await sql`CREATE INDEX IF NOT EXISTS newsletter_subscribers_created_idx ON newsletter_subscribers (created_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS newsletter_subscribers_unsubscribe_token_idx ON newsletter_subscribers (unsubscribe_token)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS newsletter_deliveries (
+        id BIGSERIAL PRIMARY KEY,
+        subscriber_id BIGINT NOT NULL REFERENCES newsletter_subscribers(id) ON DELETE CASCADE,
+        post_id BIGINT NOT NULL REFERENCES generated_posts(id) ON DELETE CASCADE,
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (subscriber_id, post_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS newsletter_deliveries_sent_idx ON newsletter_deliveries (sent_at DESC)`;
   });
 }
 
 export async function saveNewsletterSubscriber(email: string, source?: string, preferences: string[] = []) {
+  const unsubscribeToken = crypto.randomBytes(24).toString("hex");
   const rows = await sql`
-    INSERT INTO newsletter_subscribers (email, source, preferences)
-    VALUES (${email}, ${source ?? null}, ${sql.json(preferences)})
+    INSERT INTO newsletter_subscribers (email, source, preferences, unsubscribe_token)
+    VALUES (${email}, ${source ?? null}, ${sql.json(preferences)}, ${unsubscribeToken})
     ON CONFLICT (email) DO UPDATE
     SET
       source = COALESCE(newsletter_subscribers.source, EXCLUDED.source),
-      preferences = EXCLUDED.preferences
+      preferences = EXCLUDED.preferences,
+      unsubscribe_token = COALESCE(newsletter_subscribers.unsubscribe_token, EXCLUDED.unsubscribe_token),
+      unsubscribed_at = NULL
     RETURNING id, created_at
   `;
   return rows[0] as { id: string | number; created_at: string | Date };
+}
+
+export async function unsubscribeNewsletter(token: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE newsletter_subscribers
+    SET unsubscribed_at = NOW()
+    WHERE unsubscribe_token = ${token}
+      AND unsubscribed_at IS NULL
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
+export type NewsletterPost = {
+  id: number;
+  headline: string;
+  slug: string;
+  dek: string;
+  category: string | null;
+  publishedAt: string | Date;
+};
+
+export type NewsletterBatch = {
+  subscriberId: number;
+  email: string;
+  unsubscribeToken: string;
+  preferences: string[];
+  posts: NewsletterPost[];
+};
+
+export async function fetchPendingNewsletterBatches(limit = 25): Promise<NewsletterBatch[]> {
+  const rows = await sql`
+    WITH eligible AS (
+      SELECT
+        s.id AS subscriber_id,
+        s.email,
+        s.unsubscribe_token,
+        s.preferences,
+        p.id AS post_id,
+        p.headline,
+        p.slug,
+        p.dek,
+        p.category,
+        p.created_at AS published_at
+      FROM newsletter_subscribers s
+      JOIN generated_posts p
+        ON p.created_at >= s.created_at
+       AND p.created_at >= NOW() - INTERVAL '14 days'
+       AND p.category IN (SELECT jsonb_array_elements_text(s.preferences))
+      LEFT JOIN newsletter_deliveries d
+        ON d.subscriber_id = s.id
+       AND d.post_id = p.id
+      WHERE s.unsubscribed_at IS NULL
+        AND jsonb_array_length(s.preferences) > 0
+        AND d.id IS NULL
+      ORDER BY s.id ASC, p.created_at DESC
+    )
+    SELECT
+      subscriber_id,
+      email,
+      unsubscribe_token,
+      preferences,
+      jsonb_agg(
+        jsonb_build_object(
+          'id', post_id,
+          'headline', headline,
+          'slug', slug,
+          'dek', dek,
+          'category', category,
+          'publishedAt', published_at
+        )
+        ORDER BY published_at DESC
+      ) FILTER (WHERE post_id IS NOT NULL) AS posts
+    FROM eligible
+    GROUP BY subscriber_id, email, unsubscribe_token, preferences
+    ORDER BY subscriber_id ASC
+    LIMIT ${limit}
+  `;
+
+  return rows.map((row: any) => ({
+    subscriberId: Number(row.subscriber_id),
+    email: row.email,
+    unsubscribeToken: row.unsubscribe_token,
+    preferences: Array.isArray(row.preferences) ? row.preferences : [],
+    posts: (Array.isArray(row.posts) ? row.posts : []).map((post: any) => ({
+      id: Number(post.id),
+      headline: post.headline,
+      slug: post.slug,
+      dek: post.dek,
+      category: post.category ?? null,
+      publishedAt: post.publishedAt,
+    })),
+  }));
+}
+
+export async function markNewsletterDelivered(subscriberId: number, postIds: number[]) {
+  if (postIds.length === 0) return;
+  await sql.begin(async (sql) => {
+    for (const postId of postIds) {
+      await sql`
+        INSERT INTO newsletter_deliveries (subscriber_id, post_id)
+        VALUES (${subscriberId}, ${postId})
+        ON CONFLICT (subscriber_id, post_id) DO NOTHING
+      `;
+    }
+  });
 }
 
 export async function saveEvents(events: Array<{title: string, url: string, date: string, source: string}>) {

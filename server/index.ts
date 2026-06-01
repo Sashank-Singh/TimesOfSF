@@ -18,10 +18,15 @@ import {
   fetchRun,
 } from "./db";
 import { runPipeline } from "./pipeline";
+import { isNewsletterSenderConfigured, runNewsletterSender } from "./newsletter";
 
 function shouldRunInternalPipelineTimer(): boolean {
   if (config.disableInternalPipelineCron) return false;
   return true;
+}
+
+function shouldRunNewsletterTimer(): boolean {
+  return isNewsletterSenderConfigured();
 }
 
 const TTS_INLINE_MAX_CHARS = 8_000;
@@ -353,6 +358,14 @@ async function start() {
             },
         pipelineActivity: activity,
         cronPingConfigured: Boolean(config.cronSecret),
+        newsletterSender: {
+          active: isNewsletterSenderConfigured(),
+          intervalMs: Math.max(60_000, config.newsletterIntervalMs),
+          batchLimit: config.newsletterBatchLimit,
+          note: isNewsletterSenderConfigured()
+            ? "Sends new matching articles to subscribers using their selected topic preferences."
+            : "Set RESEND_API_KEY and NEWSLETTER_FROM to enable category newsletter delivery.",
+        },
         extraction: {
           readabilityEnabled: !config.disableNewsPlease,
           note: config.disableNewsPlease
@@ -437,6 +450,19 @@ ${articleUrls}
     }
   });
 
+  app.post("/api/cron/newsletter", requireOwnerOrCron, async (_req, res) => {
+    try {
+      const result = await runNewsletterSender();
+      res.status(result.sent > 0 ? 201 : 202).json({ ok: true, ...result });
+    } catch (error) {
+      console.error("newsletter sender:", error);
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown newsletter failure",
+      });
+    }
+  });
+
   app.post("/api/pipeline/run", requireOwnerOrCron, async (_req, res) => {
     try {
       const result = await runPipeline();
@@ -509,6 +535,23 @@ ${articleUrls}
     } catch (error) {
       console.error("newsletter subscribe:", error);
       res.status(500).json({ ok: false, error: "Could not subscribe right now." });
+    }
+  });
+
+  app.get("/api/newsletter/unsubscribe", async (req, res) => {
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+    if (!/^[a-f0-9]{32,64}$/i.test(token)) {
+      res.status(400).type("html").send("<h1>Invalid unsubscribe link</h1>");
+      return;
+    }
+
+    try {
+      const { unsubscribeNewsletter } = await import("./db");
+      await unsubscribeNewsletter(token);
+      res.type("html").send("<h1>You are unsubscribed</h1><p>You will no longer receive Times of SF topic emails.</p>");
+    } catch (error) {
+      console.error("newsletter unsubscribe:", error);
+      res.status(500).type("html").send("<h1>Could not unsubscribe right now</h1>");
     }
   });
 
@@ -988,6 +1031,20 @@ ${articleUrls}
         );
       setInterval(tick, ms);
       setTimeout(tick, 30_000);
+    }
+    if (shouldRunNewsletterTimer()) {
+      const ms = Math.max(60_000, config.newsletterIntervalMs);
+      console.log(`Newsletter sender: every ${ms / 1000}s; batchLimit=${config.newsletterBatchLimit}.`);
+      const tick = () =>
+        runNewsletterSender()
+          .then((result) => {
+            if (result.sent > 0) console.log(`Newsletter sender delivered ${result.sent} batch(es).`);
+          })
+          .catch((err) => console.error("Newsletter sender failed:", err));
+      setInterval(tick, ms);
+      setTimeout(tick, 60_000);
+    } else {
+      console.log("Newsletter sender disabled: set RESEND_API_KEY and NEWSLETTER_FROM to enable delivery.");
     }
   });
 }
