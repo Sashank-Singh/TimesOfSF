@@ -168,7 +168,7 @@ Public routes used by the frontend:
 
 - `GET /api/posts`
 - `GET /api/events`
-- `POST /api/newsletter/subscribe`
+- `POST /api/newsletter/subscribe` with `{ email, preferences, source }`; `preferences` accepts one or more article categories such as `Tech`, `Civics`, `Funding`, `Culture`, `Transit`, `Food`, or `Events`. `Politics`/`Political` are saved as `Civics`.
 - `GET /health`
 - TTS playback/download routes, rate-limited
 

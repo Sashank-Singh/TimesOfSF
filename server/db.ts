@@ -101,19 +101,23 @@ export async function ensureSchema() {
         id BIGSERIAL PRIMARY KEY,
         email TEXT NOT NULL UNIQUE,
         source TEXT,
+        preferences JSONB NOT NULL DEFAULT '[]'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `;
+    await sql`ALTER TABLE newsletter_subscribers ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '[]'::jsonb`;
     await sql`CREATE INDEX IF NOT EXISTS newsletter_subscribers_created_idx ON newsletter_subscribers (created_at DESC)`;
   });
 }
 
-export async function saveNewsletterSubscriber(email: string, source?: string) {
+export async function saveNewsletterSubscriber(email: string, source?: string, preferences: string[] = []) {
   const rows = await sql`
-    INSERT INTO newsletter_subscribers (email, source)
-    VALUES (${email}, ${source ?? null})
+    INSERT INTO newsletter_subscribers (email, source, preferences)
+    VALUES (${email}, ${source ?? null}, ${sql.json(preferences)})
     ON CONFLICT (email) DO UPDATE
-    SET source = COALESCE(newsletter_subscribers.source, EXCLUDED.source)
+    SET
+      source = COALESCE(newsletter_subscribers.source, EXCLUDED.source),
+      preferences = EXCLUDED.preferences
     RETURNING id, created_at
   `;
   return rows[0] as { id: string | number; created_at: string | Date };
