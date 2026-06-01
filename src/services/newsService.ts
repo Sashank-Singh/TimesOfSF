@@ -163,11 +163,11 @@ export async function fetchEvents(): Promise<EventInfo[]> {
   return await res.json();
 }
 
-export async function subscribeToNewsletter(email: string): Promise<void> {
+export async function subscribeToNewsletter(email: string, preferences: string[]): Promise<void> {
   const res = await fetch(`${getApiBase()}/api/newsletter/subscribe`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, source: "footer" }),
+    body: JSON.stringify({ email, preferences, source: "footer" }),
   });
 
   if (!res.ok) {
