@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
 import { config, isProduction } from "./config";
+import { ALL_EDITORIAL_CATEGORIES } from "./types";
 import {
   ensureSchema,
   fetchPipelineActivitySummary,
@@ -26,6 +27,23 @@ function shouldRunInternalPipelineTimer(): boolean {
 const TTS_INLINE_MAX_CHARS = 8_000;
 const TTS_FULL_ARTICLE_MAX_CHARS = 60_000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
+const NEWSLETTER_CATEGORY_SET = new Set<string>(ALL_EDITORIAL_CATEGORIES);
+const NEWSLETTER_CATEGORY_ALIASES: Record<string, string> = {
+  civic: "Civics",
+  civics: "Civics",
+  political: "Civics",
+  politics: "Civics",
+};
+
+function normalizeNewsletterPreference(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const alias = NEWSLETTER_CATEGORY_ALIASES[trimmed.toLowerCase()];
+  if (alias) return alias;
+  const matched = ALL_EDITORIAL_CATEGORIES.find((category) => category.toLowerCase() === trimmed.toLowerCase());
+  return matched ?? null;
+}
 
 function timingSafeSecret(ok: string | undefined, got: string | undefined): boolean {
   if (!ok || !got) return false;
@@ -116,6 +134,23 @@ function sitemapLastmod(value: unknown): string {
 function absolutePublicUrl(pathname: string): string {
   const base = config.appUrl.replace(/\/+$/, "");
   return `${base}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+}
+
+function originVariants(rawUrl: string): string[] {
+  try {
+    const url = new URL(rawUrl);
+    const origins = new Set([url.origin]);
+    if (url.hostname.startsWith("www.")) {
+      url.hostname = url.hostname.slice(4);
+      origins.add(url.origin);
+    } else {
+      url.hostname = `www.${url.hostname}`;
+      origins.add(url.origin);
+    }
+    return [...origins];
+  } catch {
+    return [];
+  }
 }
 
 function articlePath(slug: string): string {
@@ -212,11 +247,7 @@ async function start() {
   const app = express();
   let corsOrigins = config.corsAllowedOrigins;
   if (corsOrigins.length === 0 && isProduction()) {
-    try {
-      corsOrigins = [new URL(config.appUrl).origin];
-    } catch {
-      corsOrigins = [];
-    }
+    corsOrigins = originVariants(config.appUrl);
   }
   app.use(
     cors(
@@ -455,14 +486,25 @@ ${articleUrls}
   app.post("/api/newsletter/subscribe", rateLimit("newsletter-subscribe", 5, 60_000), async (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     const source = typeof req.body?.source === "string" ? req.body.source.trim().slice(0, 80) : "footer";
+    const preferences: string[] = Array.from(
+      new Set(
+        (Array.isArray(req.body?.preferences) ? req.body.preferences : [])
+          .map(normalizeNewsletterPreference)
+          .filter((preference): preference is string => !!preference && NEWSLETTER_CATEGORY_SET.has(preference)),
+      ),
+    );
     if (!EMAIL_RE.test(email) || email.length > 254) {
       res.status(400).json({ ok: false, error: "Enter a valid email address." });
+      return;
+    }
+    if (preferences.length === 0) {
+      res.status(400).json({ ok: false, error: "Choose at least one newsletter topic." });
       return;
     }
 
     try {
       const { saveNewsletterSubscriber } = await import("./db");
-      await saveNewsletterSubscriber(email, source || "footer");
+      await saveNewsletterSubscriber(email, source || "footer", preferences);
       res.status(201).json({ ok: true });
     } catch (error) {
       console.error("newsletter subscribe:", error);
