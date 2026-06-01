@@ -136,6 +136,23 @@ function absolutePublicUrl(pathname: string): string {
   return `${base}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
 }
 
+function originVariants(rawUrl: string): string[] {
+  try {
+    const url = new URL(rawUrl);
+    const origins = new Set([url.origin]);
+    if (url.hostname.startsWith("www.")) {
+      url.hostname = url.hostname.slice(4);
+      origins.add(url.origin);
+    } else {
+      url.hostname = `www.${url.hostname}`;
+      origins.add(url.origin);
+    }
+    return [...origins];
+  } catch {
+    return [];
+  }
+}
+
 function articlePath(slug: string): string {
   return `/articles/${encodeURIComponent(slug)}`;
 }
@@ -230,11 +247,7 @@ async function start() {
   const app = express();
   let corsOrigins = config.corsAllowedOrigins;
   if (corsOrigins.length === 0 && isProduction()) {
-    try {
-      corsOrigins = [new URL(config.appUrl).origin];
-    } catch {
-      corsOrigins = [];
-    }
+    corsOrigins = originVariants(config.appUrl);
   }
   app.use(
     cors(

@@ -89,10 +89,12 @@ function readCorsAllowedOrigins(): string[] {
   return [...new Set(raw.split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean))];
 }
 
+const appUrl = readPublicAppUrl(port);
+
 export const config = {
   appEnv: process.env.NODE_ENV ?? "development",
   port,
-  appUrl: readPublicAppUrl(port),
+  appUrl,
   llmProvider,
   llmApiKey: readProviderApiKey(llmProvider),
   geminiApiKey: process.env.GEMINI_API_KEY,

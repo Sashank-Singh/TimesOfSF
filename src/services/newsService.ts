@@ -3,9 +3,14 @@ import { Article, EventInfo } from "../types";
 /** Vite build-time API origin (may be stale or same as the page). Resolved at fetch time via getApiBase(). */
 const VITE_API_URL_RAW = import.meta.env.VITE_API_URL?.trim().replace(/\/+$/, "") ?? "";
 
+function stripWww(hostname: string): string {
+  return hostname.toLowerCase().replace(/^www\./, "");
+}
+
 /**
  * Base URL for `/api/*` calls. Prefer same-origin relative URLs when the page and API share a host
- * (Coolify single service) so CORS and mis-set VITE_API_URL cannot break the site.
+ * (Coolify single service) so CORS and mis-set VITE_API_URL cannot break the site. Treat apex/www
+ * variants of the same domain as same-origin capable because both domains route to this Express app.
  */
 export function getApiBase(): string {
   if (import.meta.env.DEV) {
@@ -16,7 +21,10 @@ export function getApiBase(): string {
   if (/onrender\.com/i.test(raw)) return "";
   if (typeof window !== "undefined" && window.location?.origin) {
     try {
-      if (new URL(raw).origin === window.location.origin) return "";
+      const configured = new URL(raw);
+      const current = new URL(window.location.origin);
+      if (configured.origin === current.origin) return "";
+      if (stripWww(configured.hostname) === stripWww(current.hostname)) return "";
     } catch {
       return "";
     }
