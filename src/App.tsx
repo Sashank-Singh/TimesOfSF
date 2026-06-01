@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { Article, EventInfo } from './types';
+import { Article, ArticleCategory, EventInfo } from './types';
 import { fetchArticles, fetchEvents, subscribeToNewsletter } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
@@ -10,6 +10,16 @@ import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 import { SeoHead } from './components/SeoHead';
 import { articlePath } from './lib/site';
+
+const NEWSLETTER_CATEGORIES: Array<{ value: ArticleCategory; label: string }> = [
+  { value: "Tech", label: "Tech" },
+  { value: "Civics", label: "Politics / Civics" },
+  { value: "Funding", label: "Funding" },
+  { value: "Culture", label: "Culture" },
+  { value: "Transit", label: "Transit" },
+  { value: "Food", label: "Food" },
+  { value: "Events", label: "Events" },
+];
 
 function readArticleSlugFromLocation(location: Location): string | null {
   const path = location.pathname.replace(/\/+$/, "") || "/";
@@ -45,8 +55,17 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [apiError, setApiError] = useState(false);
   const [newsletterEmail, setNewsletterEmail] = useState("");
+  const [newsletterPreferences, setNewsletterPreferences] = useState<ArticleCategory[]>(["Tech", "Civics"]);
   const [newsletterLoading, setNewsletterLoading] = useState(false);
   const deepLinkedRef = useRef(false);
+
+  const toggleNewsletterPreference = (category: ArticleCategory) => {
+    setNewsletterPreferences((current) =>
+      current.includes(category)
+        ? current.filter((item) => item !== category)
+        : [...current, category],
+    );
+  };
 
   const handleNewsletterSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -55,12 +74,16 @@ export default function App() {
       toast.error("Enter your email first.");
       return;
     }
+    if (newsletterPreferences.length === 0) {
+      toast.error("Choose at least one newsletter topic.");
+      return;
+    }
 
     try {
       setNewsletterLoading(true);
-      await subscribeToNewsletter(email);
+      await subscribeToNewsletter(email, newsletterPreferences);
       setNewsletterEmail("");
-      toast.success("Thank you for subscribing to our morning briefing.");
+      toast.success("Thank you for subscribing. Your topic preferences are saved.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not subscribe right now.");
     } finally {
@@ -649,23 +672,47 @@ export default function App() {
              <p className="max-w-sm text-ink/60 text-sm leading-relaxed mb-8 italic">
                Independent. Local. Essential. The Times of SF is dedicated to chronicling the vibrant soul of the Bay Area through rigorous journalism and elegant design.
              </p>
-             <form onSubmit={handleNewsletterSubmit} className="flex items-center gap-4 mb-8">
-               <input 
-                 type="email" 
-                 placeholder="your@email.com" 
-                 value={newsletterEmail}
-                 onChange={(event) => setNewsletterEmail(event.target.value)}
-                 disabled={newsletterLoading}
-                 required
-                 className="bg-transparent border-b border-ink/20 py-2 text-sm focus:border-accent outline-none flex-grow max-w-[200px]"
-               />
-               <button 
-                 type="submit"
-                 disabled={newsletterLoading}
-                 className="text-[10px] font-mono font-bold uppercase tracking-widest px-6 py-2 bg-ink text-paper hover:bg-accent transition-colors"
-                >
-                 {newsletterLoading ? "Joining..." : "Join the Newsletter"}
-               </button>
+             <form onSubmit={handleNewsletterSubmit} className="mb-8 max-w-xl space-y-4">
+               <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                 <input
+                   type="email"
+                   placeholder="your@email.com"
+                   value={newsletterEmail}
+                   onChange={(event) => setNewsletterEmail(event.target.value)}
+                   disabled={newsletterLoading}
+                   required
+                   className="bg-transparent border-b border-ink/20 py-2 text-sm focus:border-accent outline-none flex-grow max-w-[260px]"
+                 />
+                 <button
+                   type="submit"
+                   disabled={newsletterLoading}
+                   className="text-[10px] font-mono font-bold uppercase tracking-widest px-6 py-2 bg-ink text-paper hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                   {newsletterLoading ? "Joining..." : "Join the Newsletter"}
+                 </button>
+               </div>
+               <div className="flex flex-wrap gap-2" aria-label="Newsletter topics">
+                 {NEWSLETTER_CATEGORIES.map((category) => {
+                   const selected = newsletterPreferences.includes(category.value);
+                   return (
+                     <button
+                       key={category.value}
+                       type="button"
+                       aria-pressed={selected}
+                       disabled={newsletterLoading}
+                       onClick={() => toggleNewsletterPreference(category.value)}
+                       className={cn(
+                         "border px-3 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                         selected
+                           ? "border-ink bg-ink text-paper"
+                           : "border-ink/20 text-ink/60 hover:border-accent hover:text-accent",
+                       )}
+                     >
+                       {category.label}
+                     </button>
+                   );
+                 })}
+               </div>
              </form>
           </div>
           <div>
@@ -680,7 +727,7 @@ export default function App() {
           <div>
             <h4 className="text-xs font-mono uppercase tracking-widest mb-6 opacity-40">Connect</h4>
             <ul className="space-y-3 text-sm font-medium">
-              <li onClick={() => toast.info("Newsletter preferences coming soon")} className="hover:text-accent cursor-pointer transition-colors">Newsletter</li>
+              <li onClick={() => toast.info("Choose your newsletter topics in the signup form.")} className="hover:text-accent cursor-pointer transition-colors">Newsletter</li>
               <li className="hover:text-accent cursor-pointer transition-colors">Instagram</li>
               <li className="hover:text-accent cursor-pointer transition-colors">Twitter (X)</li>
               <li onClick={() => { setSelectedCategory(null); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Archive</li>
