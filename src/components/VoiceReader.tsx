@@ -1,13 +1,11 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Play, Pause, StopCircle, Loader2, ChevronUp, ChevronDown, RotateCcw, RotateCw } from "lucide-react";
 import { cn } from "../lib/utils";
-import { getApiBase } from "../services/newsService";
 
 export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paused" | "error";
 
 interface VoiceReaderProps {
   text: string;
-  slug: string;
   title?: string;
   onWordChange?: (wordIndex: number) => void;
   onStatusChange?: (status: VoiceReaderStatus) => void;
@@ -17,7 +15,6 @@ interface VoiceReaderProps {
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 const SKIP_SECONDS = 10;
-const TTS_ARTICLE_BUILD_URL = `${getApiBase()}/api/tts/article-audio/build`;
 
 function fmtTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return "0:00";
@@ -37,12 +34,10 @@ function decodePcm(b64: string): Float32Array {
   return out;
 }
 
-export function VoiceReader({ text, slug, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
+export function VoiceReader({ text, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
   // ── state ──
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [fullAudioStatus, setFullAudioStatus] = useState<"idle" | "pending" | "ready" | "failed">("idle");
-  const [fullAudioUrl, setFullAudioUrl] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -76,66 +71,6 @@ export function VoiceReader({ text, slug, title, onWordChange, onStatusChange, o
   useEffect(() => { statusRef.current = status; }, [status]);
 
   const totalWords = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
-
-  useEffect(() => {
-    if (!slug || !text.trim()) {
-      setFullAudioStatus("idle");
-      setFullAudioUrl(null);
-      return;
-    }
-
-    let cancelled = false;
-    let pollTimer: number | undefined;
-
-    const poll = async (key: string) => {
-      try {
-        const resp = await fetch(`${getApiBase()}/api/tts/article-audio/${encodeURIComponent(key)}/status`);
-        if (!resp.ok) throw new Error(`Audio status failed (${resp.status})`);
-        const data = await resp.json();
-        if (cancelled) return;
-        if (data.status === "ready" && data.audioUrl) {
-          setFullAudioStatus("ready");
-          setFullAudioUrl(`${getApiBase()}${data.audioUrl}`);
-          return;
-        }
-        if (data.status === "failed") {
-          setFullAudioStatus("failed");
-          return;
-        }
-        pollTimer = window.setTimeout(() => void poll(key), 3000);
-      } catch {
-        if (!cancelled) setFullAudioStatus("failed");
-      }
-    };
-
-    (async () => {
-      try {
-        setFullAudioStatus("pending");
-        setFullAudioUrl(null);
-        const resp = await fetch(TTS_ARTICLE_BUILD_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ slug, text }),
-        });
-        if (!resp.ok) throw new Error(`Audio build failed (${resp.status})`);
-        const data = await resp.json();
-        if (cancelled) return;
-        if (data.status === "ready" && data.audioUrl) {
-          setFullAudioStatus("ready");
-          setFullAudioUrl(`${getApiBase()}${data.audioUrl}`);
-          return;
-        }
-        if (data.key) void poll(data.key);
-      } catch {
-        if (!cancelled) setFullAudioStatus("failed");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (pollTimer) window.clearTimeout(pollTimer);
-    };
-  }, [slug, text]);
 
   // ── helpers ──
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
@@ -288,6 +223,9 @@ export function VoiceReader({ text, slug, title, onWordChange, onStatusChange, o
               }
             } catch { /* skip malformed */ }
           }
+        }
+        if (totalSamplesRef.current === 0) {
+          throw new Error("TTS engine returned no audio data — model may not be ready");
         }
         streamDoneRef.current = true;
       } catch (err: unknown) {
@@ -713,15 +651,6 @@ export function VoiceReader({ text, slug, title, onWordChange, onStatusChange, o
             </div>
 
             <div className="flex items-center gap-1">
-              {fullAudioStatus === "ready" && fullAudioUrl && (
-                <a
-                  href={fullAudioUrl}
-                  download
-                  className="hidden sm:flex h-8 px-3 items-center rounded-full text-[11px] font-medium text-white/60 hover:text-white hover:bg-white/10 transition-all"
-                >
-                  WAV
-                </a>
-              )}
 
               <div className="sm:hidden relative">
                 <button

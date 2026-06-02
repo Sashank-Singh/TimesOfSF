@@ -164,36 +164,6 @@ export default function App() {
     }
   }, [selectedArticle]);
 
-  const [searchLoading, setSearchLoading] = useState(false);
-
-  // AI-Powered Search Enhancement
-  useEffect(() => {
-    if (!searchQuery || searchQuery.length < 3) return;
-
-    let activeSearch = true;
-    const aiSearch = async () => {
-      setSearchLoading(true);
-      try {
-        const data = await fetchArticles(searchQuery);
-        if (!activeSearch) return;
-        
-        setArticles(prev => {
-          const existingIds = new Set(prev.map(a => a.id));
-          const newArticles = data.filter(a => !existingIds.has(a.id));
-          return [...newArticles, ...prev];
-        });
-        toast.success(`Stories found for "${searchQuery}"`);
-      } catch (err) {
-        // fail silently for secondary search
-      } finally {
-        if (activeSearch) setSearchLoading(false);
-      }
-    };
-
-    const timer = setTimeout(aiSearch, 1500);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
-
   useEffect(() => {
     const TODAY = new Date();
     const RECENT_CUTOFF = new Date(TODAY);
@@ -423,12 +393,10 @@ export default function App() {
                 autoFocus
                 className="w-full bg-ink/5 border-b-2 border-ink py-4 px-4 text-xl font-serif outline-none focus:border-accent transition-colors"
               />
-              {searchLoading ? (
+              {searchQuery.length >= 3 && (
                 <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                   <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                   <Search className="opacity-30" size={16} />
                 </div>
-              ) : (
-                <Search className="absolute right-4 top-1/2 -translate-y-1/2 opacity-30" />
               )}
             </div>
 

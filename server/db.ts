@@ -401,7 +401,48 @@ export async function fetchPostSlugDatesForSitemap(limit = 2000) {
   return rows.map((r: any) => ({ slug: r.slug, publishedAt: r.publishedAt }));
 }
 
-export async function fetchRecentPosts(limit = 1000) {
+export async function fetchRecentPosts(limit = 1000, searchQuery?: string) {
+  if (searchQuery && searchQuery.trim().length > 0) {
+    const q = `%${searchQuery.trim()}%`;
+    const rows = await sql`
+      SELECT
+        id,
+        topic,
+        headline,
+        slug,
+        dek,
+        image_url as "imageUrl",
+        image_credit as "imageCredit",
+        body_markdown,
+        short_post,
+        credits,
+        citations,
+        source_urls as "sourceUrls",
+        headline_hash as "headlineHash",
+        canonical_key as "canonicalKey",
+        story_fingerprint as "storyFingerprint",
+        tldr,
+        entities,
+        data_blocks as "dataBlocks",
+        category,
+        created_at as "publishedAt",
+        created_at
+      FROM generated_posts
+      WHERE headline ILIKE ${q}
+         OR dek ILIKE ${q}
+         OR body_markdown ILIKE ${q}
+         OR short_post ILIKE ${q}
+      ORDER BY
+        CASE
+          WHEN headline ILIKE ${q} THEN 0
+          ELSE 1
+        END,
+        created_at DESC
+      LIMIT ${limit}
+    `;
+    return rows as any[];
+  }
+
   const rows = await sql`
     SELECT
       id,
