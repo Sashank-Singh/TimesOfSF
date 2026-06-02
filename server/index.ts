@@ -226,7 +226,7 @@ function buildArticleHeadTags(post: any): string {
       name: "Times of San Francisco",
       logo: {
         "@type": "ImageObject",
-        url: absolutePublicUrl("/favicon.svg"),
+        url: absolutePublicUrl("/web-app-manifest-512x512.png"),
       },
     },
     mainEntityOfPage: url,
