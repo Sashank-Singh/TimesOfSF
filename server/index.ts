@@ -171,7 +171,7 @@ function buildArticleHeadTags(post: any): string {
   const rawImage = typeof post.image_url === "string" ? post.image_url.trim() : "";
   const image = rawImage
     ? (rawImage.startsWith("http") ? rawImage : absolutePublicUrl(rawImage))
-    : absolutePublicUrl("/favicon.svg");
+    : absolutePublicUrl("/web-app-manifest-512x512.png");
   const published = post.created_at instanceof Date
     ? post.created_at.toISOString()
     : typeof post.created_at === "string"
@@ -193,7 +193,7 @@ function buildArticleHeadTags(post: any): string {
       name: "Times of San Francisco",
       logo: {
         "@type": "ImageObject",
-        url: absolutePublicUrl("/favicon.svg"),
+        url: absolutePublicUrl("/web-app-manifest-512x512.png"),
       },
     },
     mainEntityOfPage: url,

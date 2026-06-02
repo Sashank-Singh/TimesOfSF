@@ -146,7 +146,7 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
       url: origin,
       logo: {
         "@type": "ImageObject",
-        url: absoluteUrl("/favicon.svg"),
+        url: absoluteUrl("/web-app-manifest-512x512.png"),
       },
       areaServed: {
         "@type": "City",
