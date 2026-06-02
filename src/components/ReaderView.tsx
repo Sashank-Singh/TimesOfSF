@@ -309,6 +309,27 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     wordSpansAppliedRef.current = true;
   }, [voiceActive, content]);
 
+  // Highlight the active word span during TTS playback
+  useEffect(() => {
+    const spans = wordElsRef.current;
+    const prevHighlighted = document.querySelectorAll(".vr-word-highlight");
+    prevHighlighted.forEach((el) => el.classList.remove("vr-word-highlight"));
+
+    if (!voiceActive || activeWord < 0 || activeWord >= spans.length) return;
+
+    const target = spans[activeWord];
+    if (target) {
+      target.classList.add("vr-word-highlight");
+
+      // Scroll only when word is fully off-screen, not just partially clipped
+      const rect = target.getBoundingClientRect();
+      const margin = 60;
+      if (rect.bottom > window.innerHeight + margin || rect.top < -margin) {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+  }, [voiceActive, activeWord]);
+
   return (
     <motion.div
       ref={scrollRef}
@@ -457,9 +478,11 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                {article.imageUrl && !heroImageFailed ? (
                  <img
                    src={article.imageUrl}
-                   alt={article.title}
+                   alt={`${article.title} — ${article.category}`}
                    className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
                    referrerPolicy="no-referrer"
+                   fetchPriority="high"
+                   decoding="async"
                    onError={() => setHeroImageFailed(true)}
                  />
                ) : (
@@ -487,11 +510,13 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                         {article.additionalImages.map((img, idx) => (
                           <div key={idx} className="group flex flex-col gap-3">
                             <div className="aspect-[4/3] overflow-hidden bg-ink/5 rounded-lg shadow-md">
-                              <img 
-                                src={img.url} 
-                                alt={img.caption} 
-                                className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" 
-                                referrerPolicy="no-referrer" 
+                              <img
+                                src={img.url}
+                                alt={img.caption}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500"
+                                referrerPolicy="no-referrer"
+                                loading="lazy"
+                                decoding="async"
                                 onError={(e) => {
                                   (e.target as HTMLImageElement).style.display = "none";
                                 }}
@@ -561,11 +586,13 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   {article.additionalImages?.map((img, idx) => (
                     <figure key={idx} className="space-y-4">
                       <div className="aspect-video bg-ink/5 overflow-hidden">
-                        <img 
-                          src={img.url} 
-                          alt={img.caption} 
-                          className="w-full h-full object-cover grayscale brightness-90 transition-all duration-500" 
-                          referrerPolicy="no-referrer" 
+                        <img
+                          src={img.url}
+                          alt={img.caption}
+                          className="w-full h-full object-cover grayscale brightness-90 transition-all duration-500"
+                          referrerPolicy="no-referrer"
+                          loading="lazy"
+                          decoding="async"
                           onError={(e) => {
                             (e.target as HTMLImageElement).style.display = "none";
                           }}
@@ -599,7 +626,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             <React.Suspense fallback={null}>
               <VoiceReader
                 text={plainText}
-                slug={article.slug}
                 title={article.title}
                 onWordChange={setActiveWord}
                 onClose={() => setVoiceActive(false)}

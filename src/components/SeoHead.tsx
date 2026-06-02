@@ -20,6 +20,9 @@ export type SeoHeadProps = {
 
 const JSON_LD_ID = "timesofsf-jsonld";
 
+/** Default OG image — used as fallback when no article image is available. */
+const DEFAULT_OG_IMAGE = "/default-og.svg";
+
 function upsertMeta(attr: "name" | "property", key: string, content: string) {
   const sel = `meta[${attr}="${CSS.escape(key)}"]`;
   let el = document.head.querySelector(sel) as HTMLMetaElement | null;
@@ -139,7 +142,7 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
     if (!origin) return null;
 
     const publisher = {
-      "@type": "Organization",
+      "@type": "NewsMediaOrganization",
       "@id": `${origin}/#organization`,
       name: SITE_NAME,
       alternateName: SITE_SHORT_NAME,
@@ -153,13 +156,42 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
         name: "San Francisco",
         containedInPlace: { "@type": "State", name: "California" },
       },
+      foundingDate: "2025",
+      inLanguage: "en-US",
     };
 
     if (article) {
       const pageUrl = absoluteUrl(articlePath(article.slug));
-      const imageUrl = article.imageUrl?.startsWith("http") ? article.imageUrl : absoluteUrl(article.imageUrl || "/");
+      const imageUrl = article.imageUrl?.startsWith("http")
+        ? article.imageUrl
+        : absoluteUrl(article.imageUrl || DEFAULT_OG_IMAGE);
+      const categoryUrl = origin;
+      const wordCount = article.content ? article.content.split(/\s+/).filter(Boolean).length : 0;
+      const readTimeMin = Math.max(1, Math.round(wordCount / 200));
+      const entityMentions = (article.entities ?? []).slice(0, 10).map((e) => ({
+        "@type": "Thing",
+        name: e.name,
+        ...(e.definition ? { description: e.definition } : {}),
+      }));
       const graph: Record<string, unknown>[] = [
         publisher,
+        {
+          "@type": "BreadcrumbList",
+          "@id": `${pageUrl}#breadcrumb`,
+          itemListElement: [
+            {
+              "@type": "ListItem",
+              position: 1,
+              name: `${article.category} news`,
+              item: categoryUrl,
+            },
+            {
+              "@type": "ListItem",
+              position: 2,
+              name: article.title,
+            },
+          ],
+        },
         {
           "@type": "NewsArticle",
           "@id": `${pageUrl}#article`,
@@ -168,12 +200,21 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
           image: [imageUrl],
           datePublished: article.publishedAt,
           dateModified: article.publishedAt,
+          wordCount,
+          timeRequired: `PT${readTimeMin}M`,
           author: {
             "@type": "Person",
             name: article.author || SITE_SHORT_NAME,
           },
           publisher: { "@id": `${origin}/#organization` },
           articleSection: article.category,
+          keywords: [article.category, ...(article.entities ?? []).slice(0, 5).map((e) => e.name)],
+          about: {
+            "@type": "Thing",
+            name: article.category,
+            sameAs: `${origin}/${article.category.toLowerCase()}`,
+          },
+          ...(entityMentions.length > 0 ? { mentions: entityMentions } : {}),
           inLanguage: "en-US",
           isAccessibleForFree: true,
           mainEntityOfPage: { "@type": "WebPage", "@id": pageUrl },
@@ -216,6 +257,14 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
           description: SITE_DEFAULT_DESCRIPTION,
           publisher: { "@id": `${origin}/#organization` },
           inLanguage: "en-US",
+          potentialAction: {
+            "@type": "SearchAction",
+            target: {
+              "@type": "EntryPoint",
+              urlTemplate: `${origin}/?q={search_term_string}`,
+            },
+            "query-input": "required name=search_term_string",
+          },
         },
         faqPageSchema(),
         {
@@ -237,7 +286,7 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
     upsertMeta("property", "og:description", description);
     upsertMeta("property", "og:type", article ? "article" : "website");
     upsertMeta("property", "og:locale", "en_US");
-    upsertMeta("name", "twitter:card", article ? "summary_large_image" : "summary_large_image");
+    upsertMeta("name", "twitter:card", "summary_large_image");
     upsertMeta("name", "twitter:title", title);
     upsertMeta("name", "twitter:description", description);
 
@@ -246,13 +295,34 @@ export function SeoHead({ article, articles, mode, categoryLabel }: SeoHeadProps
       upsertMeta("property", "og:url", canonical);
     }
 
+    // OG image — article image, or default fallback
+    let ogImage = "";
     if (article?.imageUrl?.startsWith("http")) {
-      upsertMeta("property", "og:image", article.imageUrl);
-      upsertMeta("name", "twitter:image", article.imageUrl);
+      ogImage = article.imageUrl;
     } else if (article?.imageUrl && origin) {
-      const ogImg = absoluteUrl(article.imageUrl);
-      upsertMeta("property", "og:image", ogImg);
-      upsertMeta("name", "twitter:image", ogImg);
+      ogImage = absoluteUrl(article.imageUrl);
+    } else if (origin) {
+      ogImage = absoluteUrl(DEFAULT_OG_IMAGE);
+    }
+    if (ogImage) {
+      upsertMeta("property", "og:image", ogImage);
+      upsertMeta("name", "twitter:image", ogImage);
+      // Default OG image dimensions (SVG designed at 1200x630)
+      upsertMeta("property", "og:image:width", "1200");
+      upsertMeta("property", "og:image:height", "630");
+    }
+
+    // Article-specific OpenGraph metadata
+    if (article && article.publishedAt) {
+      upsertMeta("property", "article:published_time", article.publishedAt);
+      upsertMeta("property", "article:modified_time", article.publishedAt);
+      upsertMeta("property", "article:section", article.category);
+      if (article.author) upsertMeta("property", "article:author", article.author);
+      // Add entity names as article:tags
+      const tags = new Set<string>();
+      tags.add(article.category);
+      (article.entities ?? []).slice(0, 5).forEach((e) => { if (e.name) tags.add(e.name); });
+      tags.forEach((tag) => upsertMeta("property", "article:tag", tag));
     }
 
     if (jsonLd) injectJsonLd(jsonLd);

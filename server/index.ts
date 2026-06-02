@@ -178,25 +178,51 @@ function buildArticleHeadTags(post: any): string {
   const rawImage = typeof post.image_url === "string" ? post.image_url.trim() : "";
   const image = rawImage
     ? (rawImage.startsWith("http") ? rawImage : absolutePublicUrl(rawImage))
-    : absolutePublicUrl("/favicon.svg");
+    : absolutePublicUrl("/default-og.svg");
   const published = post.created_at instanceof Date
     ? post.created_at.toISOString()
     : typeof post.created_at === "string"
       ? post.created_at
       : new Date().toISOString();
+  const category = typeof post.category === "string" && post.category.trim() ? post.category.trim() : "News";
+  const bodyText: string = typeof post.body_markdown === "string" ? post.body_markdown : "";
+  const wordCount = bodyText.split(/\s+/).filter(Boolean).length;
+  const readTimeMin = Math.max(1, Math.round(wordCount / 200));
 
-  const jsonLd = JSON.stringify({
+  // Parse entities from the post if available
+  let entities: Array<{ name: string; definition?: string }> = [];
+  try {
+    const raw = post.entities;
+    if (Array.isArray(raw)) entities = raw.slice(0, 10);
+    else if (typeof raw === "string") {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) entities = parsed.slice(0, 10);
+    }
+  } catch { /* ignore */ }
+
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: `${category} news`, item: absolutePublicUrl("/") },
+      { "@type": "ListItem", position: 2, name: post.headline },
+    ],
+  };
+
+  const articleLd: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "NewsArticle",
     headline: post.headline,
     description,
     datePublished: published,
     dateModified: published,
+    wordCount,
+    timeRequired: `PT${readTimeMin}M`,
     url,
     image: [image],
     author: { "@type": "Organization", name: "Times of SF" },
     publisher: {
-      "@type": "Organization",
+      "@type": "NewsMediaOrganization",
       name: "Times of San Francisco",
       logo: {
         "@type": "ImageObject",
@@ -204,7 +230,30 @@ function buildArticleHeadTags(post: any): string {
       },
     },
     mainEntityOfPage: url,
-  }).replace(/</g, "\\u003c");
+    articleSection: category,
+    keywords: [category, ...entities.map((e) => e.name)],
+    about: { "@type": "Thing", name: category },
+    inLanguage: "en-US",
+    isAccessibleForFree: true,
+    speakable: {
+      "@type": "SpeakableSpecification",
+      cssSelector: ["#article-headline", ".article-lead", ".tldr-answer-engine"],
+    },
+  };
+
+  if (entities.length > 0) {
+    articleLd.mentions = entities.map((e) => ({
+      "@type": "Thing",
+      name: e.name,
+      ...(e.definition ? { description: e.definition } : {}),
+    }));
+  }
+
+  const jsonLd = JSON.stringify({ "@graph": [articleLd, breadcrumbLd] }).replace(/</g, "\\u003c");
+
+  const tagMetas = entities.slice(0, 5).map((e) =>
+    `<meta property="article:tag" content="${escapeHtml(e.name)}" />`
+  );
 
   return [
     `<title>${escapeHtml(title)}</title>`,
@@ -212,10 +261,17 @@ function buildArticleHeadTags(post: any): string {
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
     `<meta property="og:site_name" content="Times of San Francisco" />`,
     `<meta property="og:type" content="article" />`,
+    `<meta property="og:locale" content="en_US" />`,
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
     `<meta property="og:url" content="${escapeHtml(url)}" />`,
     `<meta property="og:image" content="${escapeHtml(image)}" />`,
+    `<meta property="og:image:width" content="1200" />`,
+    `<meta property="og:image:height" content="630" />`,
+    `<meta property="article:published_time" content="${escapeHtml(published)}" />`,
+    `<meta property="article:modified_time" content="${escapeHtml(published)}" />`,
+    `<meta property="article:section" content="${escapeHtml(category)}" />`,
+    ...tagMetas,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
@@ -232,6 +288,7 @@ function injectArticleMetadata(indexHtml: string, post: any): string {
   html = html.replace(/<link\s+rel="canonical"[\s\S]*?>/i, "");
   html = html.replace(/<meta\s+property="og:[^"]+"[\s\S]*?>/gi, "");
   html = html.replace(/<meta\s+name="twitter:[^"]+"[\s\S]*?>/gi, "");
+  html = html.replace(/<meta\s+property="article:[^"]+"[\s\S]*?>/gi, "");
   return html.replace("</head>", `    ${articleTags}\n  </head>`);
 }
 
@@ -478,7 +535,8 @@ ${articleUrls}
   app.get("/api/posts", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
-      const posts = await fetchRecentPosts(limit);
+      const searchQuery = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
+      const posts = await fetchRecentPosts(limit, searchQuery);
       res.json(posts);
     } catch (error) {
       res.status(500).json({
