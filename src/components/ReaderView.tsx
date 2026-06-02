@@ -309,27 +309,6 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
     wordSpansAppliedRef.current = true;
   }, [voiceActive, content]);
 
-  // Highlight the active word span during TTS playback
-  useEffect(() => {
-    const spans = wordElsRef.current;
-    const prevHighlighted = document.querySelectorAll(".vr-word-highlight");
-    prevHighlighted.forEach((el) => el.classList.remove("vr-word-highlight"));
-
-    if (!voiceActive || activeWord < 0 || activeWord >= spans.length) return;
-
-    const target = spans[activeWord];
-    if (target) {
-      target.classList.add("vr-word-highlight");
-
-      // Scroll only when word is fully off-screen, not just partially clipped
-      const rect = target.getBoundingClientRect();
-      const margin = 60;
-      if (rect.bottom > window.innerHeight + margin || rect.top < -margin) {
-        target.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }
-  }, [voiceActive, activeWord]);
-
   return (
     <motion.div
       ref={scrollRef}

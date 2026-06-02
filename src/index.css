@@ -184,9 +184,3 @@
 .vr-word {
   transition: background-color 0.06s ease, color 0.06s ease;
 }
-.vr-word-highlight {
-  background-color: rgba(250, 204, 21, 0.35) !important;
-  color: #000 !important;
-  border-radius: 2px;
-  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.15);
-}
