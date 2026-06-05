@@ -128,6 +128,28 @@ GET /api/cron/pipeline?secret=...
 
 Manual pipeline runs also accept `CRON_SECRET` or `OWNER_CLI_SECRET`.
 
+### Newsletter Delivery
+
+Newsletter signup stores the email and selected categories in Postgres. Actual email delivery is disabled until a Resend sender is configured:
+
+```env
+RESEND_API_KEY="re_..."
+NEWSLETTER_FROM="Times of SF <news@timesofsf.com>"
+NEWSLETTER_REPLY_TO="hello@timesofsf.com"
+NEWSLETTER_INTERVAL_MS=600000
+NEWSLETTER_BATCH_LIMIT=25
+DISABLE_NEWSLETTER_SENDER=false
+```
+
+Behavior:
+
+- Subscribers receive only new articles published after they subscribed.
+- Articles are filtered against each subscriber's selected categories.
+- `newsletter_deliveries` records each subscriber/article pair so stories are not resent.
+- Each email includes a tokenized unsubscribe link.
+- The internal sender runs every `NEWSLETTER_INTERVAL_MS` when Resend is configured.
+- `POST /api/cron/newsletter` can manually run delivery with `CRON_SECRET` or `OWNER_CLI_SECRET`.
+
 ### TTS
 
 TTS uses local Kokoro in production. The Docker image installs `kokoro-onnx`, `espeak-ng`, and downloads model files.
@@ -161,6 +183,7 @@ Use one of these auth styles:
 | `POST /api/admin/article-from-url` | `OWNER_CLI_SECRET` |
 | `POST /api/pipeline/run` | `OWNER_CLI_SECRET` or `CRON_SECRET` |
 | `GET /api/cron/pipeline` | `OWNER_CLI_SECRET` or `CRON_SECRET` |
+| `POST /api/cron/newsletter` | `OWNER_CLI_SECRET` or `CRON_SECRET` |
 | `GET /api/runs/:runId` | `OWNER_CLI_SECRET` |
 | `POST /api/posts/:id/expand` | `OWNER_CLI_SECRET` |
 

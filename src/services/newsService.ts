@@ -132,7 +132,10 @@ function dbPostToArticle(post: any): Article {
 }
 
 export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
-  const res = await fetch(`${getApiBase()}/api/posts`);
+  const params = new URLSearchParams();
+  params.set("limit", "100");
+  if (searchQuery && searchQuery.trim().length > 0) params.set("q", searchQuery.trim());
+  const res = await fetch(`${getApiBase()}/api/posts?${params.toString()}`);
   if (!res.ok) {
     if (!import.meta.env.DEV && res.status === 404) {
       console.warn(
@@ -144,18 +147,7 @@ export async function fetchArticles(searchQuery?: string): Promise<Article[]> {
   const posts = await res.json();
   if (!Array.isArray(posts)) return [];
 
-  const articles = posts.map(dbPostToArticle);
-
-  if (searchQuery) {
-    const q = searchQuery.toLowerCase();
-    return articles.filter(a =>
-      a.title.toLowerCase().includes(q) ||
-      a.content.toLowerCase().includes(q) ||
-      a.excerpt.toLowerCase().includes(q),
-    );
-  }
-
-  return articles;
+  return posts.map(dbPostToArticle);
 }
 
 export async function fetchEvents(): Promise<EventInfo[]> {

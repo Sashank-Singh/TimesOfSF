@@ -18,6 +18,7 @@ import {
   fetchRun,
 } from "./db";
 import { runPipeline } from "./pipeline";
+import { isNewsletterSenderConfigured, runNewsletterSender } from "./newsletter";
 
 function shouldRunInternalPipelineTimer(): boolean {
   if (config.disableInternalPipelineCron) return false;
@@ -177,19 +178,45 @@ function buildArticleHeadTags(post: any): string {
     : typeof post.created_at === "string"
       ? post.created_at
       : new Date().toISOString();
+  const category = typeof post.category === "string" && post.category.trim() ? post.category.trim() : "News";
+  const bodyText: string = typeof post.body_markdown === "string" ? post.body_markdown : "";
+  const wordCount = bodyText.split(/\s+/).filter(Boolean).length;
+  const readTimeMin = Math.max(1, Math.round(wordCount / 200));
 
-  const jsonLd = JSON.stringify({
+  // Parse entities from the post if available
+  let entities: Array<{ name: string; definition?: string }> = [];
+  try {
+    const raw = post.entities;
+    if (Array.isArray(raw)) entities = raw.slice(0, 10);
+    else if (typeof raw === "string") {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) entities = parsed.slice(0, 10);
+    }
+  } catch { /* ignore */ }
+
+  const breadcrumbLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: `${category} news`, item: absolutePublicUrl("/") },
+      { "@type": "ListItem", position: 2, name: post.headline },
+    ],
+  };
+
+  const articleLd: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "NewsArticle",
     headline: post.headline,
     description,
     datePublished: published,
     dateModified: published,
+    wordCount,
+    timeRequired: `PT${readTimeMin}M`,
     url,
     image: [image],
     author: { "@type": "Organization", name: "Times of SF" },
     publisher: {
-      "@type": "Organization",
+      "@type": "NewsMediaOrganization",
       name: "Times of San Francisco",
       logo: {
         "@type": "ImageObject",
@@ -197,7 +224,30 @@ function buildArticleHeadTags(post: any): string {
       },
     },
     mainEntityOfPage: url,
-  }).replace(/</g, "\\u003c");
+    articleSection: category,
+    keywords: [category, ...entities.map((e) => e.name)],
+    about: { "@type": "Thing", name: category },
+    inLanguage: "en-US",
+    isAccessibleForFree: true,
+    speakable: {
+      "@type": "SpeakableSpecification",
+      cssSelector: ["#article-headline", ".article-lead", ".tldr-answer-engine"],
+    },
+  };
+
+  if (entities.length > 0) {
+    articleLd.mentions = entities.map((e) => ({
+      "@type": "Thing",
+      name: e.name,
+      ...(e.definition ? { description: e.definition } : {}),
+    }));
+  }
+
+  const jsonLd = JSON.stringify({ "@graph": [articleLd, breadcrumbLd] }).replace(/</g, "\\u003c");
+
+  const tagMetas = entities.slice(0, 5).map((e) =>
+    `<meta property="article:tag" content="${escapeHtml(e.name)}" />`
+  );
 
   return [
     `<title>${escapeHtml(title)}</title>`,
@@ -205,10 +255,17 @@ function buildArticleHeadTags(post: any): string {
     `<link rel="canonical" href="${escapeHtml(url)}" />`,
     `<meta property="og:site_name" content="Times of San Francisco" />`,
     `<meta property="og:type" content="article" />`,
+    `<meta property="og:locale" content="en_US" />`,
     `<meta property="og:title" content="${escapeHtml(title)}" />`,
     `<meta property="og:description" content="${escapeHtml(description)}" />`,
     `<meta property="og:url" content="${escapeHtml(url)}" />`,
     `<meta property="og:image" content="${escapeHtml(image)}" />`,
+    `<meta property="og:image:width" content="1200" />`,
+    `<meta property="og:image:height" content="630" />`,
+    `<meta property="article:published_time" content="${escapeHtml(published)}" />`,
+    `<meta property="article:modified_time" content="${escapeHtml(published)}" />`,
+    `<meta property="article:section" content="${escapeHtml(category)}" />`,
+    ...tagMetas,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
@@ -225,6 +282,7 @@ function injectArticleMetadata(indexHtml: string, post: any): string {
   html = html.replace(/<link\s+rel="canonical"[\s\S]*?>/i, "");
   html = html.replace(/<meta\s+property="og:[^"]+"[\s\S]*?>/gi, "");
   html = html.replace(/<meta\s+name="twitter:[^"]+"[\s\S]*?>/gi, "");
+  html = html.replace(/<meta\s+property="article:[^"]+"[\s\S]*?>/gi, "");
   return html.replace("</head>", `    ${articleTags}\n  </head>`);
 }
 
@@ -351,6 +409,14 @@ async function start() {
             },
         pipelineActivity: activity,
         cronPingConfigured: Boolean(config.cronSecret),
+        newsletterSender: {
+          active: isNewsletterSenderConfigured(),
+          intervalMs: Math.max(60_000, config.newsletterIntervalMs),
+          batchLimit: config.newsletterBatchLimit,
+          note: isNewsletterSenderConfigured()
+            ? "Sends new matching articles to subscribers using their selected topic preferences."
+            : "Set RESEND_API_KEY and NEWSLETTER_FROM to enable category newsletter delivery.",
+        },
         extraction: {
           readabilityEnabled: !config.disableNewsPlease,
           note: config.disableNewsPlease
@@ -435,6 +501,19 @@ ${articleUrls}
     }
   });
 
+  app.post("/api/cron/newsletter", requireOwnerOrCron, async (_req, res) => {
+    try {
+      const result = await runNewsletterSender();
+      res.status(result.sent > 0 ? 201 : 202).json({ ok: true, ...result });
+    } catch (error) {
+      console.error("newsletter sender:", error);
+      res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown newsletter failure",
+      });
+    }
+  });
+
   app.post("/api/pipeline/run", requireOwnerOrCron, async (_req, res) => {
     try {
       const result = await runPipeline();
@@ -450,7 +529,8 @@ ${articleUrls}
   app.get("/api/posts", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
-      const posts = await fetchRecentPosts(limit);
+      const searchQuery = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
+      const posts = await fetchRecentPosts(limit, searchQuery);
       res.json(posts);
     } catch (error) {
       res.status(500).json({
@@ -507,6 +587,23 @@ ${articleUrls}
     } catch (error) {
       console.error("newsletter subscribe:", error);
       res.status(500).json({ ok: false, error: "Could not subscribe right now." });
+    }
+  });
+
+  app.get("/api/newsletter/unsubscribe", async (req, res) => {
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+    if (!/^[a-f0-9]{32,64}$/i.test(token)) {
+      res.status(400).type("html").send("<h1>Invalid unsubscribe link</h1>");
+      return;
+    }
+
+    try {
+      const { unsubscribeNewsletter } = await import("./db");
+      await unsubscribeNewsletter(token);
+      res.type("html").send("<h1>You are unsubscribed</h1><p>You will no longer receive Times of SF topic emails.</p>");
+    } catch (error) {
+      console.error("newsletter unsubscribe:", error);
+      res.status(500).type("html").send("<h1>Could not unsubscribe right now</h1>");
     }
   });
 
@@ -940,6 +1037,20 @@ ${articleUrls}
         );
       setInterval(tick, ms);
       setTimeout(tick, 30_000);
+    }
+    if (shouldRunNewsletterTimer()) {
+      const ms = Math.max(60_000, config.newsletterIntervalMs);
+      console.log(`Newsletter sender: every ${ms / 1000}s; batchLimit=${config.newsletterBatchLimit}.`);
+      const tick = () =>
+        runNewsletterSender()
+          .then((result) => {
+            if (result.sent > 0) console.log(`Newsletter sender delivered ${result.sent} batch(es).`);
+          })
+          .catch((err) => console.error("Newsletter sender failed:", err));
+      setInterval(tick, ms);
+      setTimeout(tick, 60_000);
+    } else {
+      console.log("Newsletter sender disabled: set RESEND_API_KEY and NEWSLETTER_FROM to enable delivery.");
     }
   });
 }

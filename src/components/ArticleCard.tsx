@@ -14,7 +14,7 @@ const categoryGradients: Record<string, string> = {
   Events: "from-rose-900/80 via-rose-800/60 to-transparent",
 };
 
-function ArticleImage({ imageUrl, title, category }: { imageUrl?: string; title: string; category: string }) {
+function ArticleImage({ imageUrl, title, category, priority }: { imageUrl?: string; title: string; category: string; priority?: boolean }) {
   const [imgFailed, setImgFailed] = useState(false);
   if (!imageUrl || imgFailed) {
     return (
@@ -26,9 +26,12 @@ function ArticleImage({ imageUrl, title, category }: { imageUrl?: string; title:
   return (
     <img
       src={imageUrl}
-      alt={title}
+      alt={`${title} — ${category}`}
       className="w-full h-full object-cover transition-all duration-1000 group-hover:scale-[1.02]"
       referrerPolicy="no-referrer"
+      loading={priority ? "eager" : "lazy"}
+      decoding="async"
+      fetchPriority={priority ? "high" : "auto"}
       onError={() => setImgFailed(true)}
     />
   );
@@ -58,7 +61,7 @@ export function ArticleCard({ article, onClick, featured, isBookmarked, onBookma
       >
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
           <div className="lg:col-span-6 overflow-hidden relative rounded-xl shadow-lg aspect-[16/9] max-h-[400px]">
-            <ArticleImage imageUrl={article.imageUrl} title={article.title} category={article.category} />
+            <ArticleImage imageUrl={article.imageUrl} title={article.title} category={article.category} priority />
             {isToday && (
               <div className="absolute top-6 left-6 bg-accent text-white px-4 py-1.5 text-[10px] font-mono font-bold uppercase tracking-widest shadow-2xl">
                 Today's Feature
