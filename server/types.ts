@@ -34,6 +34,7 @@ export type PreferredSourceName =
   | "Official Document"
   | "Company Statement"
   | "Public Data"
+  | "GitHub"
   /** Owner-submitted article URL (not from RSS pipeline). */
   | "Submitted Link";
 
@@ -68,7 +69,8 @@ export type EditorialCategory =
   | "Culture"
   | "Transit"
   | "Food"
-  | "Events";
+  | "Events"
+  | "GitHub Top";
 
 export const ALL_EDITORIAL_CATEGORIES: EditorialCategory[] = [
   "Tech",
@@ -78,6 +80,7 @@ export const ALL_EDITORIAL_CATEGORIES: EditorialCategory[] = [
   "Transit",
   "Food",
   "Events",
+  "GitHub Top",
 ];
 
 export interface TrendCandidate {

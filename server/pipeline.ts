@@ -9,6 +9,7 @@ import {
   type ExistingPostSummary,
 } from "./editorial";
 import type { EventInfo } from "./events";
+import { buildGitHubTopPost, fetchGitHubTopRepos, type GitHubTopRepo } from "./githubTop";
 import {
   completeRun,
   createRun,
@@ -439,6 +440,66 @@ async function publishEventsDigestArticle(
   }
 }
 
+async function publishGitHubTopArticle(
+  repos: GitHubTopRepo[],
+  existingPosts: Awaited<ReturnType<typeof fetchRecentPosts>>,
+): Promise<PipelineRunResult | null> {
+  if (!repos.length) return null;
+
+  const post = buildGitHubTopPost(repos);
+  const syntheticTopic: TrendCandidate = {
+    topic: post.topic,
+    normalizedTopic: normalizeHeadline(post.topic),
+    signalCount: repos.length,
+    signalSources: ["GitHub"],
+    sampleHeadlines: repos.map((repo) => `${repo.owner}/${repo.name}`),
+    editorialCategory: "GitHub Top",
+    quotaSeed: true,
+  };
+
+  const duplicate = findDuplicateStory(syntheticTopic, [], existingPosts, post.headline);
+  if (duplicate) {
+    console.log(`⏭️ Skipping GitHub Top digest (${duplicate.reason}).`);
+    return null;
+  }
+
+  const runId = makeRunId();
+  await createRun(runId, syntheticTopic);
+
+  const fingerprint = buildStoryFingerprint(syntheticTopic, [], post.headline);
+  post.sourceUrls = post.sourceUrls?.length ? post.sourceUrls : fingerprint.sourceUrls;
+  post.headlineHash = fingerprint.headlineHash;
+  post.canonicalKey = fingerprint.canonicalKey;
+  post.storyFingerprint = fingerprint.storyFingerprint;
+
+  try {
+    const postId = await saveGeneratedPost(runId, post);
+    const published: PipelineRunResult = {
+      runId,
+      topic: syntheticTopic,
+      successfulSources: [],
+      failedSources: [],
+      published: true,
+      postId: postId?.toString(),
+      publishedHeadline: post.headline,
+    };
+    await completeRun(published);
+    return published;
+  } catch (error) {
+    const failed: PipelineRunResult = {
+      runId,
+      topic: syntheticTopic,
+      successfulSources: [],
+      failedSources: [],
+      published: false,
+      reason: `GitHub Top digest failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+    await completeRun(failed);
+    return failed;
+  }
+}
+
+
 export type RunPipelineOptions = {
   /**
    * When set (>0), skip if `pipeline_runs` shows an attempt newer than this window.
@@ -510,7 +571,7 @@ async function runPipelineUnlocked(options?: RunPipelineOptions) {
   const staleLanes = getStaleCategories(existingSummary, DAY_MS);
   const quotaCandidates: TrendCandidate[] = [];
 
-  const lanesToSeed = staleLanes.filter((lane) => lane !== "Events");
+  const lanesToSeed = staleLanes.filter((lane) => lane !== "Events" && lane !== "GitHub Top");
   const seedResults = await Promise.all(lanesToSeed.map((lane) => fetchQuotaSeedCandidate(lane)));
   for (const seed of seedResults) {
     if (seed && !topicAlreadyPublished(seed, existingSummary)) {
@@ -650,6 +711,19 @@ async function runPipelineUnlocked(options?: RunPipelineOptions) {
     } else {
       console.log(`📭 No strong missed stories found in residue scan.`);
     }
+  }
+
+  try {
+    existing = await fetchRecentPosts();
+    existingSummary = toSummary(existing);
+
+    if (getStaleCategories(existingSummary, DAY_MS).includes("GitHub Top")) {
+      const topRepos = await fetchGitHubTopRepos(5);
+      const digestResult = await publishGitHubTopArticle(topRepos, existing);
+      if (digestResult) results.push(digestResult);
+    }
+  } catch (err) {
+    console.error("Pipeline failed to publish GitHub Top digest:", err);
   }
 
   try {

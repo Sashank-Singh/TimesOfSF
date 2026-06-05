@@ -12,6 +12,7 @@ const categoryGradients: Record<string, string> = {
   Transit: "from-sky-900/80 via-sky-800/60 to-transparent",
   Food: "from-amber-900/80 via-amber-800/60 to-transparent",
   Events: "from-rose-900/80 via-rose-800/60 to-transparent",
+  "GitHub Top": "from-zinc-950/85 via-neutral-800/70 to-transparent",
 };
 
 function ArticleImage({ imageUrl, title, category, priority }: { imageUrl?: string; title: string; category: string; priority?: boolean }) {
