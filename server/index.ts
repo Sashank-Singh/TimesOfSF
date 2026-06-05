@@ -25,6 +25,10 @@ function shouldRunInternalPipelineTimer(): boolean {
   return true;
 }
 
+function shouldRunNewsletterTimer(): boolean {
+  return isNewsletterSenderConfigured();
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i;
 const NEWSLETTER_CATEGORY_SET = new Set<string>(ALL_EDITORIAL_CATEGORIES);
 const NEWSLETTER_CATEGORY_ALIASES: Record<string, string> = {
