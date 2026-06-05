@@ -197,6 +197,8 @@ export default function App() {
       } else {
         result = result.filter(a => a.category === selectedCategory);
       }
+    } else {
+      result = result.filter(a => a.category !== 'GitHub Top');
     }
     if (searchQuery) {
       result = result.filter(a => 
