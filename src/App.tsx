@@ -19,6 +19,7 @@ const NEWSLETTER_CATEGORIES: Array<{ value: ArticleCategory; label: string }> = 
   { value: "Transit", label: "Transit" },
   { value: "Food", label: "Food" },
   { value: "Events", label: "Events" },
+  { value: "GitHub Top", label: "GitHub Top" },
 ];
 
 function readArticleSlugFromLocation(location: Location): string | null {
@@ -240,7 +241,7 @@ export default function App() {
     }
   };
 
-  const categories = ['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'];
+  const categories = ['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events', 'GitHub Top'];
 
   const seoMode =
     selectedArticle != null
@@ -407,7 +408,7 @@ export default function App() {
               >
                 Front Page
               </button>
-              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food'].map(cat => (
+              {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'GitHub Top'].map(cat => (
                 <button 
                   key={cat}
                   onClick={() => { setSelectedCategory(cat); setIsMenuOpen(false); }}
@@ -496,7 +497,7 @@ export default function App() {
           <nav className="relative">
             <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
               <div className="flex items-center gap-6 md:gap-10 flex-nowrap min-w-max md:min-w-0">
-                {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
+                {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events', 'GitHub Top'].map(cat => (
                   <button 
                     key={cat}
                     onClick={() => { setSelectedCategory(cat); window.scrollTo(0,0); }}
@@ -690,6 +691,7 @@ export default function App() {
               <li onClick={() => { setSelectedCategory('Culture'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Culture</li>
               <li onClick={() => { setSelectedCategory('Tech'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Tech & Future</li>
               <li onClick={() => { setSelectedCategory('Food'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Food & Drink</li>
+              <li onClick={() => { setSelectedCategory('GitHub Top'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">GitHub Top</li>
             </ul>
           </div>
           <div>

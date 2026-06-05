@@ -36,7 +36,7 @@ export interface Article {
   date: string;
   /** ISO 8601 — when this article was published on Times of SF */
   publishedAt: string;
-  category: "Civics" | "Culture" | "Tech" | "Funding" | "Transit" | "Food" | "Events";
+  category: "Civics" | "Culture" | "Tech" | "Funding" | "Transit" | "Food" | "Events" | "GitHub Top";
   excerpt: string;
   content: string;
   imageUrl: string;

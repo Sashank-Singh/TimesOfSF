@@ -87,7 +87,7 @@ function toIsoTimestamp(raw: unknown): string {
 }
 
 function dbPostToArticle(post: any): Article {
-  const desks: Article["category"][] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events"];
+  const desks: Article["category"][] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events", "GitHub Top"];
   const fromDb = typeof post.category === "string" && desks.includes(post.category as Article["category"])
     ? (post.category as Article["category"])
     : null;
@@ -100,6 +100,7 @@ function dbPostToArticle(post: any): Article {
     transit: "Transit", transportation: "Transit", infrastructure: "Transit", muni: "Transit", bart: "Transit", train: "Transit", bus: "Transit", traffic: "Transit", caltrain: "Transit",
     food: "Food", restaurant: "Food", dining: "Food", chef: "Food", menu: "Food", opening: "Food", cafe: "Food", eat: "Food",
     events: "Events", meetup: "Events", summit: "Events", conference: "Events",
+    github: "GitHub Top", repo: "GitHub Top", repository: "GitHub Top", opensource: "GitHub Top", "open source": "GitHub Top",
   };
   const topicLower = (post.topic || "").toLowerCase();
   const category =

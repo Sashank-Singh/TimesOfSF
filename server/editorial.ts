@@ -35,7 +35,7 @@ type LaneFeed = {
 };
 
 /** Priority feeds used to synthesize “quota” stories when a lane has been quiet for 24h. */
-export const LANE_QUOTA_FEEDS: Record<Exclude<EditorialCategory, "Events">, LaneFeed[]> = {
+export const LANE_QUOTA_FEEDS: Record<Exclude<EditorialCategory, "Events" | "GitHub Top">, LaneFeed[]> = {
   Tech: [{ url: "https://techcrunch.com/feed/" }, { url: "https://www.theverge.com/rss/index.xml" }],
   Funding: [
     { url: "https://techcrunch.com/category/startups/feed/" },
@@ -251,7 +251,7 @@ async function fetchFeedXml(url: string) {
 }
 
 /** Pull one fresh headline for a lane to satisfy daily desk quotas. */
-export async function fetchQuotaSeedCandidate(category: Exclude<EditorialCategory, "Events">): Promise<TrendCandidate | null> {
+export async function fetchQuotaSeedCandidate(category: Exclude<EditorialCategory, "Events" | "GitHub Top">): Promise<TrendCandidate | null> {
   const feeds = LANE_QUOTA_FEEDS[category];
   for (const feed of feeds) {
     try {
@@ -297,7 +297,7 @@ export async function fetchQuotaSeedCandidate(category: Exclude<EditorialCategor
   return null;
 }
 
-function inferLaneDefaultSource(category: Exclude<EditorialCategory, "Events">, feedUrl: string): PreferredSourceName {
+function inferLaneDefaultSource(category: Exclude<EditorialCategory, "Events" | "GitHub Top">, feedUrl: string): PreferredSourceName {
   if (feedUrl.includes("techcrunch.com")) return "TechCrunch";
   if (feedUrl.includes("theverge.com")) return "The Verge";
   if (feedUrl.includes("bloomberg.com")) return "Bloomberg";

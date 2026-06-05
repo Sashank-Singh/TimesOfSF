@@ -86,9 +86,11 @@ function buildPrompt(
 ): string {
   const desk: EditorialCategory = topic.editorialCategory ?? classifyEditorialCategory(topic);
   const deskNotes =
-    desk === "Food"
-      ? "Desk focus: Bay Area food & hospitality stories tied to founders, startups, investors, and tech-industry culture—not generic tourist spots."
-      : desk === "Funding"
+    desk === "GitHub Top"
+      ? "Desk focus: fast-rising GitHub repositories, what they do, the developer problem they solve, and why they are drawing attention."
+      : desk === "Food"
+        ? "Desk focus: Bay Area food & hospitality stories tied to founders, startups, investors, and tech-industry culture—not generic tourist spots."
+        : desk === "Funding"
         ? "Desk focus: venture financings, M&A, IPOs, cap tables, and macro implications for builders."
         : desk === "Transit"
           ? "Desk focus: SF Bay mobility—Muni, BART, Caltrain, bridges, traffic policy, and infrastructure delivery."
@@ -142,7 +144,7 @@ function buildPrompt(
     "credits must ONLY list outlets you actually cite or link to inside bodyMarkdown. Omit every unused RSS packet.",
     "OUTPUT RULES: Reply with ONE JSON object only. Escape double-quotes inside strings as \\\" and use \\n for newlines—never output raw multi-line strings inside JSON.",
     `Return JSON keys: headline, slug, dek, bodyMarkdown, shortPost, credits, citations, entities, dataBlocks, editorialCategory, tldr.`,
-    `editorialCategory must be one of: Tech, Funding, Civics, Culture, Transit, Food, Events — prefer "${desk}" unless sources clearly belong elsewhere.`,
+    `editorialCategory must be one of: Tech, Funding, Civics, Culture, Transit, Food, Events, GitHub Top — prefer "${desk}" unless sources clearly belong elsewhere.`,
     "credits: include sourceName, articleUrl, sourceType, publishedAt when known, confidence, factBullets — one row per outlet you truly used.",
     "citations must be an array of {claim, sourceName, sourceUrl, quoteOrFact} aligned only with reporting referenced in the article.",
     citationGuide,
@@ -185,7 +187,7 @@ function buildPreviousCoverageSection(previous?: PreviousCoverage[]): string[] {
 
 function normalizePost(topic: TrendCandidate, parsed: any): GeneratedPost {
   const parsedDesk = typeof parsed.editorialCategory === "string" ? parsed.editorialCategory.trim() : "";
-  const allowedDesks: EditorialCategory[] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events"];
+  const allowedDesks: EditorialCategory[] = ["Tech", "Funding", "Civics", "Culture", "Transit", "Food", "Events", "GitHub Top"];
   const editorialCategory = allowedDesks.includes(parsedDesk as EditorialCategory)
     ? (parsedDesk as EditorialCategory)
     : (topic.editorialCategory ?? classifyEditorialCategory(topic));
@@ -509,7 +511,7 @@ async function synthesizeWithFireworks(
         {
           role: "system",
           content:
-            "You are a grounded newsroom writer. Return only valid JSON including editorialCategory (one of: Tech, Funding, Civics, Culture, Transit, Food, Events). Never truncate JSON.",
+            "You are a grounded newsroom writer. Return only valid JSON including editorialCategory (one of: Tech, Funding, Civics, Culture, Transit, Food, Events, GitHub Top). Never truncate JSON.",
         },
         {
           role: "user",

@@ -36,7 +36,7 @@ export function buildOwnerArticleIngestPageHtml(): string {
       <label><span>Desk (optional)</span>
         <select name="desk">
           <option value="">Auto from model</option>
-          <option>Tech</option><option>Funding</option><option>Civics</option><option>Culture</option><option>Transit</option><option>Food</option><option>Events</option>
+          <option>Tech</option><option>Funding</option><option>Civics</option><option>Culture</option><option>Transit</option><option>Food</option><option>Events</option><option>GitHub Top</option>
         </select>
       </label>
       <label><span>OWNER_CLI_SECRET</span><input type="password" name="secret" required autocomplete="off" id="secret" /></label>
