@@ -274,6 +274,74 @@ function buildArticleHeadTags(post: any): string {
   ].join("\n    ");
 }
 
+
+function arrayFromJsonish(value: unknown): any[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function agentDigestPost(post: any) {
+  const citations = arrayFromJsonish(post.citations)
+    .slice(0, 8)
+    .map((citation) => ({
+      claim: typeof citation?.claim === "string" ? citation.claim : undefined,
+      sourceName: typeof citation?.sourceName === "string" ? citation.sourceName : undefined,
+      sourceUrl: typeof citation?.sourceUrl === "string" ? citation.sourceUrl : undefined,
+      quoteOrFact: typeof citation?.quoteOrFact === "string" ? citation.quoteOrFact : undefined,
+    }))
+    .filter((citation) => citation.sourceUrl || citation.sourceName || citation.claim);
+  const sourceUrls = arrayFromJsonish(post.sourceUrls)
+    .filter((url) => typeof url === "string")
+    .slice(0, 12);
+  const tldr = typeof post.tldr === "object" && post.tldr ? post.tldr : null;
+
+  return {
+    id: String(post.id),
+    title: String(post.headline ?? ""),
+    url: absolutePublicUrl(articlePath(String(post.slug ?? ""))),
+    category: post.category ?? "News",
+    publishedAt: post.publishedAt ?? post.created_at ?? null,
+    summary: String(post.short_post || post.dek || "").trim(),
+    dek: String(post.dek || "").trim(),
+    tldr,
+    citations,
+    sourceUrls,
+  };
+}
+
+function buildLlmsTxt(): string {
+  const base = config.appUrl.replace(/\/+$/, "");
+  return [
+    "# Times of San Francisco",
+    "",
+    "Times of San Francisco is a San Francisco-focused news reader covering civics, culture, tech, funding, transit, food, and local events.",
+    "",
+    "## AI Agent Access",
+    "",
+    "- Use the JSON digest instead of scraping full article pages when you need latest summarized news.",
+    `- Latest summarized news: ${base}/api/agent-digest?limit=20`,
+    `- Sitemap: ${base}/sitemap.xml`,
+    `- Homepage: ${base}/`,
+    "",
+    "## Digest Format",
+    "",
+    "The agent digest returns article title, URL, category, publish time, summary, TLDR data when available, citations, and source URLs.",
+    "",
+    "## Usage",
+    "",
+    "Respect robots.txt, cite Times of San Francisco article URLs when using summaries, and follow citation links for source verification.",
+    "",
+  ].join("\n");
+}
+
 function injectArticleMetadata(indexHtml: string, post: any): string {
   const articleTags = buildArticleHeadTags(post);
   let html = indexHtml;
@@ -447,12 +515,38 @@ async function start() {
         [
           "User-agent: *",
           "Allow: /",
+          "Allow: /api/agent-digest",
           "Disallow: /api/",
           "",
           `Sitemap: ${base}/sitemap.xml`,
           "",
         ].join("\n"),
       );
+  });
+
+  app.get("/llms.txt", (_req, res) => {
+    res.type("text/plain").send(buildLlmsTxt());
+  });
+
+  app.get("/api/agent-digest", async (req, res) => {
+    try {
+      const rawLimit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 20;
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 50) : 20;
+      const posts = await fetchRecentPosts(limit);
+      res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+      res.json({
+        site: "Times of San Francisco",
+        description: "Summarized San Francisco news for AI agents and answer engines.",
+        updatedAt: new Date().toISOString(),
+        canonical: absolutePublicUrl("/api/agent-digest"),
+        llmsTxt: absolutePublicUrl("/llms.txt"),
+        count: posts.length,
+        articles: posts.map(agentDigestPost),
+      });
+    } catch (error) {
+      console.error("agent-digest:", error);
+      res.status(500).json({ error: "Failed to build agent digest" });
+    }
   });
 
   app.get("/sitemap.xml", async (_req, res) => {
