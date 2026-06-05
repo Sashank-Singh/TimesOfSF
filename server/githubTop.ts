@@ -59,6 +59,10 @@ function whyRepoIsTop(repo: GitHubRepo): string {
   return `It ranked near the top of new GitHub repositories because it combined ${parts.join(", ")}${topics.length ? ` and strong topic signals around ${topics.join(", ")}` : ""}.`;
 }
 
+function githubOpenGraphImage(repo: GitHubTopRepo): string {
+  return `https://opengraph.githubassets.com/timesofsf-${new Date().toISOString().slice(0, 10)}/${repo.owner}/${repo.name}`;
+}
+
 function normalizeRepo(repo: GitHubRepo): GitHubTopRepo {
   const [owner, name] = repo.full_name.split("/");
   return {
@@ -124,6 +128,7 @@ export function buildGitHubTopPost(repos: GitHubTopRepo[]): GeneratedPost {
       `- **Problem it solves:** ${repo.problemSolved}`,
       `- **Why it is top:** ${repo.whyTop}`,
       `- **Signals:** ${repo.stars.toLocaleString()} stars, ${repo.forks.toLocaleString()} forks, ${repo.openIssues.toLocaleString()} open issues, primary language ${repo.language}.`,
+      `- **Repository:** [Open ${repo.owner}/${repo.name} on GitHub](${repo.url})`,
       repo.topics.length ? `- **Topics:** ${repo.topics.join(", ")}` : "",
       "",
     ].filter(Boolean)),
@@ -135,6 +140,8 @@ export function buildGitHubTopPost(repos: GitHubTopRepo[]): GeneratedPost {
     headline,
     slug,
     dek: "A daily look at five fast-rising GitHub repositories, what they do, and why developers are paying attention.",
+    imageUrl: repos[0] ? githubOpenGraphImage(repos[0]) : undefined,
+    imageCredit: repos[0] ? `GitHub / ${repos[0].owner}/${repos[0].name}` : undefined,
     bodyMarkdown,
     shortPost: `Today’s GitHub Top 5 highlights ${repos.map((repo) => `${repo.owner}/${repo.name}`).join(", ")}.`,
     topic: headline,
@@ -145,6 +152,7 @@ export function buildGitHubTopPost(repos: GitHubTopRepo[]): GeneratedPost {
       factBullets: [
         `${repo.owner}/${repo.name} has ${repo.stars.toLocaleString()} stars and ${repo.forks.toLocaleString()} forks.`,
         `Primary language: ${repo.language}.`,
+        `Direct repository link: ${repo.url}.`,
       ],
       sourceType: "data_source",
       confidence: "high" as const,
