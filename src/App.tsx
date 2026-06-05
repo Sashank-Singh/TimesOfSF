@@ -5,7 +5,7 @@ import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
 import { EventsPanel } from './components/EventsPanel';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
+import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon, Moon, Sun } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 import { SeoHead } from './components/SeoHead';
@@ -47,6 +47,10 @@ export default function App() {
   
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("timesofsf-theme");
+    return saved === "dark" ? "dark" : "light";
+  });
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('sf-bookmarks');
     return saved ? JSON.parse(saved) : [];
@@ -91,6 +95,11 @@ export default function App() {
       setNewsletterLoading(false);
     }
   };
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("timesofsf-theme", theme);
+  }, [theme]);
 
   useEffect(() => {
     const p = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -469,6 +478,15 @@ export default function App() {
                   title="Search"
                  >
                    <Search size={16} />
+                 </button>
+                 <button
+                  type="button"
+                  onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+                  className="icon-btn p-2 border border-ink/20 hover:bg-ink hover:text-paper transition-all opacity-100"
+                  aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+                  title={theme === "dark" ? "Light mode" : "Dark mode"}
+                 >
+                   {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
                  </button>
                  <button 
                   onClick={() => setIsAuthModalOpen(true)}
