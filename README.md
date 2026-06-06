@@ -102,6 +102,7 @@ The app no longer depends on Inngest. Coolify/private-server production uses the
 
 ```env
 INTERNAL_PIPELINE_INTERVAL_MS=600000
+MAIN_POST_FRESHNESS_MS=600000
 PIPELINE_COALESCE_MS=420000
 DISABLE_INTERNAL_PIPELINE_CRON=false
 ```
@@ -110,6 +111,8 @@ Behavior:
 
 - The first pipeline tick starts about 30 seconds after server boot.
 - Later ticks run every `INTERNAL_PIPELINE_INTERVAL_MS`.
+- Main news desks become eligible for another quota-seeded article after `MAIN_POST_FRESHNESS_MS`; default is 10 minutes.
+- `GitHub Top` and `Events` remain daily digests.
 - A single-flight guard prevents overlapping pipeline runs.
 - `PIPELINE_COALESCE_MS` skips near-duplicate timer/external-cron attempts.
 - A tick attempts to publish; it does not guarantee a new article every time.

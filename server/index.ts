@@ -467,6 +467,7 @@ async function start() {
           ? {
               active: true,
               intervalMs: Math.max(60_000, config.internalPipelineIntervalMs),
+              mainPostFreshnessMs: Math.max(60_000, config.mainPostFreshnessMs),
               coalesceMs,
               note:
                 "In-process timer calls runPipeline while the Coolify server stays awake. Manual GET /api/cron/pipeline and POST /api/pipeline/run still work.",

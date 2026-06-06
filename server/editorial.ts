@@ -250,46 +250,53 @@ async function fetchFeedXml(url: string) {
   return response.text();
 }
 
-/** Pull one fresh headline for a lane to satisfy daily desk quotas. */
-export async function fetchQuotaSeedCandidate(category: Exclude<EditorialCategory, "Events" | "GitHub Top">): Promise<TrendCandidate | null> {
+/** Pull one fresh headline for a lane to satisfy frequent desk quotas. */
+export async function fetchQuotaSeedCandidate(
+  category: Exclude<EditorialCategory, "Events" | "GitHub Top">,
+  existing: ExistingPostSummary[] = [],
+): Promise<TrendCandidate | null> {
   const feeds = LANE_QUOTA_FEEDS[category];
   for (const feed of feeds) {
     try {
       const xml = await fetchFeedXml(feed.url);
       const parsed = parser.parse(xml);
       const items = toArray<RssItem>(parsed?.rss?.channel?.item ?? parsed?.feed?.entry ?? []);
-      const item = items.find((it) => it.title?.trim() && it.link?.trim());
-      if (!item?.title || !item.link) continue;
 
-      const title = item.title.trim();
-      const normalizedTopic = deriveNormalizedTopic(title);
-      if (!normalizedTopic || normalizedTopic.length < 8) continue;
+      for (const item of items.slice(0, 10)) {
+        if (!item?.title?.trim() || !item.link?.trim()) continue;
 
-      const sourceName =
-        feed.url.includes("news.google.com") ? inferPublisherFromGoogleNewsTitle(title) : inferLaneDefaultSource(category, feed.url);
+        const title = item.title.trim();
+        const normalizedTopic = deriveNormalizedTopic(title);
+        if (!normalizedTopic || normalizedTopic.length < 8) continue;
 
-      const meta = getSourceMetadata(sourceName);
-      const primary = withSourceMetadata(
-        {
-          sourceName,
-          articleUrl: item.link.trim(),
-          headline: title,
-          publishedAt: item.pubDate,
-          summary: item.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
-        },
-        meta,
-      );
+        const sourceName =
+          feed.url.includes("news.google.com") ? inferPublisherFromGoogleNewsTitle(title) : inferLaneDefaultSource(category, feed.url);
 
-      return {
-        topic: title.replace(/\s+-\s*[^-]+$/, "").trim(),
-        normalizedTopic,
-        signalCount: 1,
-        signalSources: [sourceName],
-        sampleHeadlines: [title],
-        primarySource: primary,
-        editorialCategory: category,
-        quotaSeed: true,
-      };
+        const meta = getSourceMetadata(sourceName);
+        const primary = withSourceMetadata(
+          {
+            sourceName,
+            articleUrl: item.link.trim(),
+            headline: title,
+            publishedAt: item.pubDate,
+            summary: item.description?.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+          },
+          meta,
+        );
+
+        const candidate = {
+          topic: title.replace(/\s+-\s*[^-]+$/, "").trim(),
+          normalizedTopic,
+          signalCount: 1,
+          signalSources: [sourceName],
+          sampleHeadlines: [title],
+          primarySource: primary,
+          editorialCategory: category,
+          quotaSeed: true,
+        } satisfies TrendCandidate;
+
+        if (!topicAlreadyPublished(candidate, existing)) return candidate;
+      }
     } catch {
       continue;
     }

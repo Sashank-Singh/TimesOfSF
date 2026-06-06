@@ -556,6 +556,7 @@ async function runPipelineUnlocked(options?: RunPipelineOptions) {
   }
 
   const DAY_MS = 24 * 60 * 60 * 1000;
+  const mainPostFreshnessMs = Math.max(60_000, config.mainPostFreshnessMs);
   let existing = await fetchRecentPosts();
 
   const toSummary = (rows: typeof existing): ExistingPostSummary[] =>
@@ -568,11 +569,11 @@ async function runPipelineUnlocked(options?: RunPipelineOptions) {
 
   let existingSummary = toSummary(existing);
 
-  const staleLanes = getStaleCategories(existingSummary, DAY_MS);
+  const staleLanes = getStaleCategories(existingSummary, mainPostFreshnessMs);
   const quotaCandidates: TrendCandidate[] = [];
 
   const lanesToSeed = staleLanes.filter((lane) => lane !== "Events" && lane !== "GitHub Top");
-  const seedResults = await Promise.all(lanesToSeed.map((lane) => fetchQuotaSeedCandidate(lane)));
+  const seedResults = await Promise.all(lanesToSeed.map((lane) => fetchQuotaSeedCandidate(lane, existingSummary)));
   for (const seed of seedResults) {
     if (seed && !topicAlreadyPublished(seed, existingSummary)) {
       quotaCandidates.push(seed);
@@ -589,7 +590,7 @@ async function runPipelineUnlocked(options?: RunPipelineOptions) {
   const merged = prioritizeCandidates([...quotaCandidates, ...organicFresh]);
 
   console.log(
-    `[pipeline] staleDesks=${staleLanes.length} quotaSeeds=${quotaCandidates.length} organicFresh=${organicFresh.length} merged=${merged.length}`,
+    `[pipeline] staleDesks=${staleLanes.length} freshness=${Math.round(mainPostFreshnessMs / 1000)}s quotaSeeds=${quotaCandidates.length} organicFresh=${organicFresh.length} merged=${merged.length}`,
   );
 
   const results: PipelineRunResult[] = [];

@@ -90,6 +90,7 @@ function readCorsAllowedOrigins(): string[] {
 }
 
 const appUrl = readPublicAppUrl(port);
+const internalPipelineIntervalMs = readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", 10 * 60 * 1000);
 
 export const config = {
   appEnv: process.env.NODE_ENV ?? "development",
@@ -104,7 +105,9 @@ export const config = {
   fireworksModel: process.env.FIREWORKS_MODEL ?? "accounts/fireworks/models/deepseek-v4-pro",
   databaseUrl: readEnv("DATABASE_URL"),
   /** Internal Coolify-friendly scheduler interval. Default: every 10 minutes. */
-  internalPipelineIntervalMs: readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", 10 * 60 * 1000),
+  internalPipelineIntervalMs,
+  /** Main news desks are eligible for another quota seed after this window. Default: every pipeline tick. */
+  mainPostFreshnessMs: readOptionalInt("MAIN_POST_FRESHNESS_MS", internalPipelineIntervalMs),
   disableInternalPipelineCron: process.env.DISABLE_INTERNAL_PIPELINE_CRON === "true",
   /**
    * Internal timer + /api/cron/pipeline skip starting work if a pipeline row was created within this window.
