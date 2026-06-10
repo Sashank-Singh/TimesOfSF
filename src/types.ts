@@ -38,6 +38,8 @@ export interface Article {
   publishedAt: string;
   category: "Civics" | "Culture" | "Tech" | "Funding" | "Transit" | "Food" | "Events";
   excerpt: string;
+  /** 2–3 sentence whole-story summary (from short_post at publish time). */
+  summary?: string;
   content: string;
   imageUrl: string;
   imageCredit?: string;

@@ -3,7 +3,7 @@ import { Article, ArticleEntity } from "../types";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, Headphones } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { formatPublishedTimestamp, cn, stripCitationSectionsForTts, stripMarkdown } from "../lib/utils";
+import { formatPublishedTimestamp, cn, stripCitationSectionsForTts, stripMarkdown, buildEditorialSummary } from "../lib/utils";
 
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
@@ -30,7 +30,11 @@ interface ReaderViewProps {
 }
 
 function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
-  const [showSummary, setShowSummary] = useState(false);
+  const [showSummary, setShowSummary] = useState(true);
+  const editorialSummary = useMemo(
+    () => buildEditorialSummary({ summary: article.summary, excerpt: article.excerpt, tldr: article.tldr }),
+    [article.summary, article.excerpt, article.tldr],
+  );
   const content = article.content;
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -382,7 +386,12 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                   {article.title}
                </h1>
                <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
-                <span className="article-lead italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">{article.excerpt}</span>
+                {article.excerpt &&
+                  article.excerpt.trim().toLowerCase() !== editorialSummary.trim().toLowerCase() && (
+                  <span className="article-lead italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">
+                    {article.excerpt}
+                  </span>
+                )}
                   <div className="flex flex-col items-center gap-1 font-mono uppercase tracking-[0.1em]">
                     <span className="flex items-center gap-4">
                       <span>By {article.author}</span>
@@ -401,55 +410,34 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
             </header>
 
             {/* Summary Section */}
-            <div className="max-w-xl mx-auto mb-12 md:mb-20 border border-ink/10 p-6 bg-ink/[0.02]">
-              <button 
-                onClick={() => setShowSummary(!showSummary)}
-                className="w-full flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-widest"
-              >
-                <span>Editorial Summary</span>
-                {showSummary ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
-              <AnimatePresence>
-                {showSummary && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="mt-4 pt-6 border-t border-ink/5 flex flex-col gap-6">
-                      <p className="text-sm font-serif italic text-ink/70 leading-relaxed">
-                        {article.excerpt} This AI-assisted report is generated from linked source material. Review the source list and claim notes below before relying on any specific detail.
+            {editorialSummary && (
+              <div className="max-w-xl mx-auto mb-12 md:mb-20 border border-ink/10 p-6 bg-ink/[0.02]">
+                <button
+                  type="button"
+                  onClick={() => setShowSummary(!showSummary)}
+                  className="w-full flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-widest text-ink/50"
+                  aria-expanded={showSummary}
+                >
+                  <span>In Brief</span>
+                  {showSummary ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                <AnimatePresence initial={false}>
+                  {showSummary && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.3 }}
+                      className="overflow-hidden"
+                    >
+                      <p className="tldr-answer-engine mt-4 pt-6 border-t border-ink/5 text-[15px] font-serif leading-relaxed text-ink/75">
+                        {editorialSummary}
                       </p>
-                      
-                      {article.tldr && (
-                        <ul className="tldr-answer-engine space-y-4">
-                          <li className="flex gap-4">
-                            <div className="shrink-0 pt-1">
-                              <span className="text-[10px] font-mono font-bold text-accent uppercase tracking-widest px-2 py-1 bg-accent/5 rounded-sm">The Stakes</span>
-                            </div>
-                            <p className="text-xs leading-relaxed text-ink/70 font-medium">{article.tldr.whyItMatters}</p>
-                          </li>
-                          <li className="flex gap-4">
-                            <div className="shrink-0 pt-1">
-                              <span className="text-[10px] font-mono font-bold text-ink/40 uppercase tracking-widest px-2 py-1 bg-ink/5 rounded-sm">The Backdrop</span>
-                            </div>
-                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whoIsAffected}</p>
-                          </li>
-                          <li className="flex gap-4">
-                            <div className="shrink-0 pt-1">
-                              <span className="text-[10px] font-mono font-bold text-ink/20 uppercase tracking-widest px-2 py-1 bg-ink/5 rounded-sm">The Horizon</span>
-                            </div>
-                            <p className="text-xs leading-relaxed text-ink/60">{article.tldr.whatIsNext}</p>
-                          </li>
-                        </ul>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
 
             {/* Main content area */}
 

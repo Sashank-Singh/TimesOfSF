@@ -66,6 +66,48 @@ export function stripCitationSectionsForTts(text: string): string {
     .trim();
 }
 
+type EditorialTldr = {
+  whyItMatters?: string;
+  whoIsAffected?: string;
+  whatIsNext?: string;
+};
+
+/** One readable paragraph for the Editorial Summary box. */
+export function buildEditorialSummary(input: {
+  summary?: string;
+  excerpt?: string;
+  tldr?: EditorialTldr;
+}): string {
+  const excerptNorm = input.excerpt?.trim().toLowerCase() ?? "";
+  const summary = input.summary?.trim();
+
+  const tldrParts = [
+    input.tldr?.whyItMatters,
+    input.tldr?.whoIsAffected,
+    input.tldr?.whatIsNext,
+  ]
+    .map((s) => s?.trim())
+    .filter(Boolean) as string[];
+
+  const tldrMerged =
+    tldrParts.length > 0 ? tldrParts.join(" ").replace(/\s+/g, " ").trim() : "";
+
+  const candidates = [summary, tldrMerged, input.excerpt?.trim()].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    if (candidate.length < 40) continue;
+    if (excerptNorm && candidate.toLowerCase() === excerptNorm) continue;
+    return candidate;
+  }
+
+  for (const candidate of candidates) {
+    if (excerptNorm && candidate.toLowerCase() === excerptNorm) continue;
+    return candidate;
+  }
+
+  return "";
+}
+
 export function formatPublishedTimestamp(dateString: string) {
   const d = new Date(dateString);
   if (!Number.isFinite(d.getTime())) return dateString;

@@ -116,6 +116,7 @@ function dbPostToArticle(post: any): Article {
     publishedAt,
     category,
     excerpt: post.dek || post.short_post || "",
+    summary: post.short_post || undefined,
     content: post.body_markdown,
     imageUrl: post.imageUrl || undefined,
     imageCredit: post.imageCredit ?? undefined,
