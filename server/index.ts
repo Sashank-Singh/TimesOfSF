@@ -9,11 +9,28 @@ import { buildOwnerArticleIngestPageHtml } from "./ownerAdminHtml";
 import { config, isProduction } from "./config";
 import { ALL_EDITORIAL_CATEGORIES } from "./types";
 import {
+  EVERGREEN_GUIDES_SEO,
+  injectListPageMetadata,
+  resolveCategoryFromSlug,
+  type ListPageKind,
+} from "./seoPages";
+import {
+  buildArticleMarkdown,
+  buildArticlePlainText,
+  buildArticleSeoBootstrap,
+  buildLlmsFullTxt,
+  buildLlmsTxt,
+  buildRobotsTxt,
+  buildRssFeed,
+  citationHeadTags,
+} from "./aiDiscovery";
+import {
   ensureSchema,
   fetchPipelineActivitySummary,
   fetchPostById,
   fetchPostBySlug,
   fetchPostSlugDatesForSitemap,
+  fetchPostsForSeoList,
   fetchRecentPosts,
   fetchRun,
 } from "./db";
@@ -184,6 +201,12 @@ function buildArticleHeadTags(post: any): string {
     : typeof post.created_at === "string"
       ? post.created_at
       : new Date().toISOString();
+  const updatedRaw = post.updated_at ?? post.updatedAt;
+  const modified = updatedRaw instanceof Date
+    ? updatedRaw.toISOString()
+    : typeof updatedRaw === "string" && updatedRaw
+      ? updatedRaw
+      : published;
   const category = typeof post.category === "string" && post.category.trim() ? post.category.trim() : "News";
   const bodyText: string = typeof post.body_markdown === "string" ? post.body_markdown : "";
   const wordCount = bodyText.split(/\s+/).filter(Boolean).length;
@@ -204,7 +227,7 @@ function buildArticleHeadTags(post: any): string {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     itemListElement: [
-      { "@type": "ListItem", position: 1, name: `${category} news`, item: absolutePublicUrl("/") },
+      { "@type": "ListItem", position: 1, name: `${category} news`, item: absolutePublicUrl(`/category/${encodeURIComponent(category.toLowerCase())}`) },
       { "@type": "ListItem", position: 2, name: post.headline },
     ],
   };
@@ -215,7 +238,7 @@ function buildArticleHeadTags(post: any): string {
     headline: post.headline,
     description,
     datePublished: published,
-    dateModified: published,
+    dateModified: modified,
     wordCount,
     timeRequired: `PT${readTimeMin}M`,
     url,
@@ -235,9 +258,12 @@ function buildArticleHeadTags(post: any): string {
     about: { "@type": "Thing", name: category },
     inLanguage: "en-US",
     isAccessibleForFree: true,
+    copyrightHolder: { "@type": "NewsMediaOrganization", name: "Times of San Francisco" },
+    license: absolutePublicUrl("/llms.txt"),
+    usageInfo: "Free to quote with attribution and a link to the canonical article URL.",
     speakable: {
       "@type": "SpeakableSpecification",
-      cssSelector: ["#article-headline", ".article-lead", ".tldr-answer-engine"],
+      cssSelector: ["#article-headline", ".article-lead", ".tldr-answer-engine", ".article-body"],
     },
   };
 
@@ -269,19 +295,23 @@ function buildArticleHeadTags(post: any): string {
     `<meta property="og:image:width" content="1200" />`,
     `<meta property="og:image:height" content="630" />`,
     `<meta property="article:published_time" content="${escapeHtml(published)}" />`,
-    `<meta property="article:modified_time" content="${escapeHtml(published)}" />`,
+    `<meta property="article:modified_time" content="${escapeHtml(modified)}" />`,
     `<meta property="article:section" content="${escapeHtml(category)}" />`,
     ...tagMetas,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
     `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
     `<meta name="twitter:image" content="${escapeHtml(image)}" />`,
+    citationHeadTags(url),
+    `<link rel="alternate" type="text/markdown" href="${escapeHtml(url)}.md" title="Markdown for AI citation" />`,
+    `<link rel="alternate" type="text/plain" href="${escapeHtml(url)}.txt" title="Plain text for AI citation" />`,
     `<script type="application/ld+json">${jsonLd}</script>`,
   ].join("\n    ");
 }
 
 function injectArticleMetadata(indexHtml: string, post: any): string {
   const articleTags = buildArticleHeadTags(post);
+  const bootstrap = buildArticleSeoBootstrap(post);
   let html = indexHtml;
   html = html.replace(/<title>[\s\S]*?<\/title>/i, "");
   html = html.replace(/<meta\s+name="description"[\s\S]*?>/i, "");
@@ -289,7 +319,13 @@ function injectArticleMetadata(indexHtml: string, post: any): string {
   html = html.replace(/<meta\s+property="og:[^"]+"[\s\S]*?>/gi, "");
   html = html.replace(/<meta\s+name="twitter:[^"]+"[\s\S]*?>/gi, "");
   html = html.replace(/<meta\s+property="article:[^"]+"[\s\S]*?>/gi, "");
-  return html.replace("</head>", `    ${articleTags}\n  </head>`);
+  html = html.replace("</head>", `    ${articleTags}\n  </head>`);
+  if (html.includes('<div id="root"></div>')) {
+    html = html.replace('<div id="root"></div>', `${bootstrap}\n    <div id="root"></div>`);
+  } else {
+    html = html.replace("<body>", `<body>${bootstrap}`);
+  }
+  return html;
 }
 
 async function resolveLegacyArticleTarget(articleIdOrSlug: unknown) {
@@ -446,40 +482,108 @@ async function start() {
   });
 
   app.get("/robots.txt", (_req, res) => {
-    const base = config.appUrl.replace(/\/+$/, "");
-    res
-      .type("text/plain")
-      .send(
-        [
-          "User-agent: *",
-          "Allow: /",
-          "Disallow: /api/",
-          "",
-          `Sitemap: ${base}/sitemap.xml`,
-          "",
-        ].join("\n"),
-      );
+    res.type("text/plain").send(buildRobotsTxt());
   });
+
+  app.get("/llms.txt", async (_req, res) => {
+    try {
+      const posts = await fetchRecentPosts(40);
+      res.type("text/plain; charset=utf-8").send(buildLlmsTxt(posts as any));
+    } catch (error) {
+      console.error("llms.txt:", error);
+      res.status(500).type("text/plain").send("llms.txt failed");
+    }
+  });
+
+  app.get("/llms-full.txt", async (_req, res) => {
+    try {
+      const posts = await fetchRecentPosts(80);
+      res.type("text/plain; charset=utf-8").send(buildLlmsFullTxt(posts as any));
+    } catch (error) {
+      console.error("llms-full.txt:", error);
+      res.status(500).type("text/plain").send("llms-full.txt failed");
+    }
+  });
+
+  app.get(["/feed.xml", "/rss.xml"], async (_req, res) => {
+    try {
+      const posts = await fetchRecentPosts(50);
+      res.type("application/rss+xml; charset=utf-8").send(buildRssFeed(posts as any));
+    } catch (error) {
+      console.error("feed.xml:", error);
+      res.status(500).type("text/plain").send("feed failed");
+    }
+  });
+
+  app.get("/articles/:slug.md", async (req, res) => {
+    try {
+      const post = await fetchPostBySlug(req.params.slug);
+      if (!post) return res.status(404).type("text/plain").send("Article not found");
+      res.type("text/markdown; charset=utf-8").set("X-Robots-Tag", "all").send(buildArticleMarkdown(post as any));
+    } catch (error) {
+      console.error("article.md:", error);
+      res.status(500).type("text/plain").send("failed");
+    }
+  });
+
+  app.get("/articles/:slug.txt", async (req, res) => {
+    try {
+      const post = await fetchPostBySlug(req.params.slug);
+      if (!post) return res.status(404).type("text/plain").send("Article not found");
+      res.type("text/plain; charset=utf-8").set("X-Robots-Tag", "all").send(buildArticlePlainText(post as any));
+    } catch (error) {
+      console.error("article.txt:", error);
+      res.status(500).type("text/plain").send("failed");
+    }
+  });
+
 
   app.get("/sitemap.xml", async (_req, res) => {
     try {
       const rows = (await fetchPostSlugDatesForSitemap(2000)) as {
         slug: string;
         publishedAt: string | Date | null;
+        updatedAt?: string | Date | null;
       }[];
       const base = config.appUrl.replace(/\/+$/, "");
-      const home = `  <url><loc>${escapeXml(`${base}/`)}</loc><changefreq>hourly</changefreq><priority>1.0</priority></url>`;
+      const staticUrls: Array<[string, string, string, string | null]> = [
+        ["/", "hourly", "1.0", null],
+        ["/events", "daily", "0.9", null],
+        ["/digest", "daily", "0.85", null],
+        ["/feed.xml", "hourly", "0.7", null],
+        ["/llms.txt", "daily", "0.6", null],
+        ["/llms-full.txt", "daily", "0.5", null],
+        ...ALL_EDITORIAL_CATEGORIES.map((c): [string, string, string, string | null] => [
+          `/category/${c.toLowerCase()}`,
+          "hourly",
+          "0.9",
+          null,
+        ]),
+        ...EVERGREEN_GUIDES_SEO.map((g): [string, string, string, string | null] => [
+          `/guides/${g.slug}`,
+          "weekly",
+          "0.75",
+          g.updatedAt,
+        ]),
+      ];
+      const staticXml = staticUrls
+        .map(([locPath, freq, priority, lastmod]) => {
+          const loc = `${base}${locPath === "/" ? "/" : locPath}`;
+          const lm = lastmod ? `<lastmod>${escapeXml(String(lastmod).slice(0, 10))}</lastmod>` : "";
+          return `  <url><loc>${escapeXml(loc)}</loc>${lm}<changefreq>${freq}</changefreq><priority>${priority}</priority></url>`;
+        })
+        .join("\n");
       const articleUrls = rows
         .filter((r) => r.slug && String(r.slug).trim())
         .map((r) => {
           const loc = `${base}/articles/${encodeURIComponent(String(r.slug).trim())}`;
-          const lastmod = sitemapLastmod(r.publishedAt);
+          const lastmod = sitemapLastmod(r.updatedAt ?? r.publishedAt);
           return `  <url><loc>${escapeXml(loc)}</loc><lastmod>${escapeXml(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`;
         })
         .join("\n");
       const body = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${home}
+${staticXml}
 ${articleUrls}
 </urlset>`;
       res.type("application/xml").send(body);
@@ -1023,37 +1127,106 @@ ${articleUrls}
     const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
     const indexHtml = path.join(distDir, "index.html");
     if (fs.existsSync(indexHtml)) {
-      app.get("/", async (req, res, next) => {
-        const deepLinkTarget = req.query.articleId ?? req.query.id;
-        if (!deepLinkTarget) {
-          next();
-          return;
-        }
+      const readIndex = () => fs.promises.readFile(indexHtml, "utf8");
 
+      const sendListPage = async (res: express.Response, page: ListPageKind, category?: string) => {
         try {
-          const post = await resolveLegacyArticleTarget(deepLinkTarget);
-          if (!post) {
-            res.sendFile(indexHtml);
-            return;
-          }
-
-          const html = injectArticleMetadata(await fs.promises.readFile(indexHtml, "utf8"), post);
+          const items = await fetchPostsForSeoList({ category, limit: 24 });
+          const html = injectListPageMetadata(await readIndex(), page, items);
           res.type("html").send(html);
         } catch (error) {
-          console.error("legacy article html:", error);
+          console.error("list page html:", error);
           res.sendFile(indexHtml);
         }
+      };
+
+      app.get("/", async (req, res) => {
+        const deepLinkTarget = req.query.articleId ?? req.query.id;
+        if (deepLinkTarget) {
+          try {
+            const post = await resolveLegacyArticleTarget(deepLinkTarget);
+            if (!post) {
+              res.sendFile(indexHtml);
+              return;
+            }
+            const html = injectArticleMetadata(await readIndex(), post);
+            res.type("html").send(html);
+          } catch (error) {
+            console.error("legacy article html:", error);
+            res.sendFile(indexHtml);
+          }
+          return;
+        }
+        await sendListPage(res, { kind: "home" });
+      });
+
+      app.get("/category/:slug", async (req, res) => {
+        const category = resolveCategoryFromSlug(req.params.slug);
+        if (!category) {
+          res.sendFile(indexHtml);
+          return;
+        }
+        await sendListPage(res, { kind: "category", category }, category);
+      });
+
+      app.get("/events", async (_req, res) => {
+        await sendListPage(res, { kind: "events" });
+      });
+
+      app.get("/digest", async (_req, res) => {
+        await sendListPage(res, { kind: "digest" });
+      });
+
+      app.get("/guides/:slug", async (req, res) => {
+        const guide = EVERGREEN_GUIDES_SEO.find((g) => g.slug === req.params.slug.toLowerCase());
+        if (!guide) {
+          res.sendFile(indexHtml);
+          return;
+        }
+        await sendListPage(res, {
+          kind: "guide",
+          slug: guide.slug,
+          title: guide.title,
+          description: guide.description,
+          updatedAt: guide.updatedAt,
+        });
       });
 
       app.get("/articles/:slug", async (req, res) => {
         try {
-          const post = await fetchPostBySlug(req.params.slug);
+          let slugParam = req.params.slug;
+          let format: "html" | "md" | "txt" = "html";
+          if (slugParam.endsWith(".md")) {
+            format = "md";
+            slugParam = slugParam.slice(0, -3);
+          } else if (slugParam.endsWith(".txt")) {
+            format = "txt";
+            slugParam = slugParam.slice(0, -4);
+          }
+
+          const post = await fetchPostBySlug(slugParam);
           if (!post) {
-            res.sendFile(indexHtml);
+            if (format === "html") res.sendFile(indexHtml);
+            else res.status(404).type("text/plain").send("Article not found");
             return;
           }
 
-          const html = injectArticleMetadata(await fs.promises.readFile(indexHtml, "utf8"), post);
+          if (format === "md") {
+            res
+              .type("text/markdown; charset=utf-8")
+              .set("X-Robots-Tag", "all")
+              .send(buildArticleMarkdown(post as any));
+            return;
+          }
+          if (format === "txt") {
+            res
+              .type("text/plain; charset=utf-8")
+              .set("X-Robots-Tag", "all")
+              .send(buildArticlePlainText(post as any));
+            return;
+          }
+
+          const html = injectArticleMetadata(await readIndex(), post);
           res.type("html").send(html);
         } catch (error) {
           console.error("article html:", error);

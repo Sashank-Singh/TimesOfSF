@@ -106,6 +106,7 @@ function dbPostToArticle(post: any): Article {
     fromDb ?? Object.entries(categoryMap).find(([key]) => topicLower.includes(key))?.[1] ?? "Tech";
 
   const publishedAt = toIsoTimestamp(post.created_at ?? post.publishedAt);
+  const updatedAt = toIsoTimestamp(post.updated_at ?? post.updatedAt ?? publishedAt);
 
   return {
     id: post.id.toString(),
@@ -114,6 +115,7 @@ function dbPostToArticle(post: any): Article {
     author: "Times of SF Agent",
     date: publishedAt,
     publishedAt,
+    updatedAt,
     category,
     excerpt: post.dek || post.short_post || "",
     summary: post.short_post || undefined,

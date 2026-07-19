@@ -1,15 +1,34 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Article, ArticleCategory, EventInfo } from './types';
 import { fetchArticles, fetchEvents, subscribeToNewsletter } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
 import { EventsPanel } from './components/EventsPanel';
+import { DigestView } from './components/DigestView';
+import { GuidePage } from './components/GuidePage';
+import { TopicHub } from './components/TopicHub';
+import { NewsletterCta } from './components/NewsletterCta';
+import { SponsorSlot } from './components/SponsorSlot';
+import { JobsBoard } from './components/JobsBoard';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
 import { SeoHead } from './components/SeoHead';
 import { articlePath } from './lib/site';
+import {
+  ARTICLE_CATEGORIES,
+  CATEGORY_SEO,
+  categoryPath,
+  digestPath,
+  eventsPath,
+  guidePath,
+  listPathFromRoute,
+  parseAppPath,
+  type AppRoute,
+} from './lib/routes';
+import { getGuideBySlug, EVERGREEN_GUIDES } from './content/evergreen';
+import { BOOSTED_EVENTS } from './content/monetization';
 
 const NEWSLETTER_CATEGORIES: Array<{ value: ArticleCategory; label: string }> = [
   { value: "Tech", label: "Tech" },
@@ -21,19 +40,17 @@ const NEWSLETTER_CATEGORIES: Array<{ value: ArticleCategory; label: string }> = 
   { value: "Events", label: "Events" },
 ];
 
-function readArticleSlugFromLocation(location: Location): string | null {
-  const path = location.pathname.replace(/\/+$/, "") || "/";
-  const articleMatch = path.match(/^\/articles\/([^/]+)$/);
-  if (articleMatch) {
-    try {
-      return decodeURIComponent(articleMatch[1]).toLowerCase();
-    } catch {
-      return articleMatch[1].toLowerCase();
-    }
-  }
-
+function routeFromLocation(location: Location): AppRoute {
+  const parsed = parseAppPath(location.pathname);
+  if (parsed.kind === "article") return parsed;
   const params = new URLSearchParams(location.search);
-  return params.get('articleId')?.toLowerCase() ?? params.get('id')?.toLowerCase() ?? null;
+  const legacy = params.get("articleId") ?? params.get("id");
+  if (legacy) return { kind: "article", slug: legacy.toLowerCase() };
+  return parsed;
+}
+
+function stripSeoBootstrap() {
+  // Keep #seo-ssr in the DOM for AI crawlers that execute JS; it is visually hidden via CSS.
 }
 
 export default function App() {
@@ -44,8 +61,22 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("q") ?? "";
+    } catch {
+      return "";
+    }
+  });
+  const [appRoute, setAppRoute] = useState<AppRoute>(() => routeFromLocation(window.location));
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(() => {
+    const route = routeFromLocation(window.location);
+    if (route.kind === "category") return route.category;
+    if (route.kind === "events") return "Events";
+    if (route.kind === "bookmarks") return "Bookmarks";
+    return null;
+  });
+  const listPathRef = useRef(listPathFromRoute(routeFromLocation(window.location)));
   const [bookmarkedIds, setBookmarkedIds] = useState<string[]>(() => {
     const saved = localStorage.getItem('sf-bookmarks');
     return saved ? JSON.parse(saved) : [];
@@ -58,6 +89,55 @@ export default function App() {
   const [newsletterPreferences, setNewsletterPreferences] = useState<ArticleCategory[]>(["Tech", "Civics"]);
   const [newsletterLoading, setNewsletterLoading] = useState(false);
   const deepLinkedRef = useRef(false);
+
+  const applyListRoute = useCallback((route: AppRoute, push = true) => {
+    const next: AppRoute =
+      route.kind === "article" || route.kind === "unknown" ? { kind: "home" } : route;
+    setAppRoute(next);
+    const path = listPathFromRoute(next);
+    listPathRef.current = path;
+    if (next.kind === "category") setSelectedCategory(next.category);
+    else if (next.kind === "events") setSelectedCategory("Events");
+    else if (next.kind === "bookmarks") setSelectedCategory("Bookmarks");
+    else if (next.kind === "home") setSelectedCategory(null);
+    else setSelectedCategory(null);
+
+    if (push) window.history.pushState({}, "", path);
+    else window.history.replaceState({}, "", path);
+  }, []);
+
+  const navigateTo = useCallback((path: string) => {
+    const route = parseAppPath(path);
+    if (route.kind === "article") {
+      window.history.pushState({}, "", path);
+      setAppRoute(route);
+      return;
+    }
+    applyListRoute(route, true);
+    window.scrollTo(0, 0);
+  }, [applyListRoute]);
+
+  const openCategory = useCallback((category: string | null) => {
+    if (!category) {
+      applyListRoute({ kind: "home" });
+      setSearchQuery("");
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (category === "Bookmarks") {
+      applyListRoute({ kind: "bookmarks" });
+      window.scrollTo(0, 0);
+      return;
+    }
+    if (category === "Events") {
+      applyListRoute({ kind: "events" });
+      window.scrollTo(0, 0);
+      return;
+    }
+    applyListRoute({ kind: "category", category: category as ArticleCategory, slug: category.toLowerCase() });
+    window.scrollTo(0, 0);
+  }, [applyListRoute]);
+
 
   const toggleNewsletterPreference = (category: ArticleCategory) => {
     setNewsletterPreferences((current) =>
@@ -92,11 +172,27 @@ export default function App() {
   };
 
   useEffect(() => {
+    stripSeoBootstrap();
     const p = window.location.pathname.replace(/\/+$/, "") || "/";
     if (p === "/admin/from-link") {
       window.history.replaceState({}, "", "/");
+      applyListRoute({ kind: "home" }, false);
     }
-  }, []);
+  }, [applyListRoute]);
+
+  useEffect(() => {
+    const onPop = () => {
+      const route = routeFromLocation(window.location);
+      if (route.kind === "article") {
+        setAppRoute(route);
+        return;
+      }
+      applyListRoute(route, false);
+      setSelectedArticle(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [applyListRoute]);
 
   useEffect(() => {
     let active = true;
@@ -116,30 +212,28 @@ export default function App() {
         setEvents(eventsData);
         setApiError(false);
 
-        // Deep linking: check URL path or legacy query params for article slug/id
-        const articleParam = readArticleSlugFromLocation(window.location);
-        
-        if (articleParam) {
-          const article = data.find(a => 
-            a.slug?.toLowerCase() === articleParam || 
-            a.id?.toLowerCase() === articleParam
+        const route = routeFromLocation(window.location);
+        if (route.kind === "article") {
+          const article = data.find(a =>
+            a.slug?.toLowerCase() === route.slug ||
+            a.id?.toLowerCase() === route.slug
           );
           if (article) {
-            console.log("Deep link success: Opening", article.title);
             setSelectedArticle(article);
+            setAppRoute(route);
           } else {
-            console.warn("Deep link failed: Could not find article with slug", articleParam);
-            const attemptedArticleRoute = window.location.pathname.startsWith('/articles/');
-            if (attemptedArticleRoute) {
-              window.history.replaceState({}, '', '/');
-              toast.error('That article link is no longer available.');
-            }
+            toast.error('That article link is no longer available.');
+            applyListRoute({ kind: "home" }, false);
           }
+        } else {
+          applyListRoute(route, false);
         }
       } catch (err) {
         if (active) {
           setApiError(true);
           toast.error("Could not reach live news wire.");
+          const route = routeFromLocation(window.location);
+          if (route.kind !== "article") applyListRoute(route, false);
         }
       } finally {
         clearTimeout(safetyTimeout);
@@ -159,8 +253,11 @@ export default function App() {
     if (selectedArticle) {
       deepLinkedRef.current = true;
       window.history.replaceState({}, '', articlePath(selectedArticle.slug));
+      setAppRoute({ kind: "article", slug: selectedArticle.slug });
     } else if (deepLinkedRef.current) {
-      window.history.replaceState({}, '', '/');
+      deepLinkedRef.current = false;
+      window.history.replaceState({}, '', listPathRef.current || '/');
+      setAppRoute(parseAppPath(listPathRef.current || '/'));
     }
   }, [selectedArticle]);
 
@@ -202,18 +299,16 @@ export default function App() {
   }, [bookmarkedIds]);
 
   useEffect(() => {
-    // Sync with URL path / legacy URL parameters for deep-linking
-    const articleId = readArticleSlugFromLocation(window.location);
-    
-    if (articleId && articles.length > 0) {
-      const found = articles.find(a => a.id === articleId || a.slug === articleId);
-      if (found) {
-        setSelectedArticle(found);
-      } else if (window.location.pathname.startsWith('/articles/')) {
-        window.history.replaceState({}, '', '/');
+    const route = routeFromLocation(window.location);
+    if (route.kind === "article" && articles.length > 0) {
+      const found = articles.find(a => a.id === route.slug || a.slug === route.slug);
+      if (found) setSelectedArticle(found);
+      else {
+        toast.error('That article link is no longer available.');
+        applyListRoute({ kind: "home" }, false);
       }
     }
-  }, [articles]);
+  }, [articles, applyListRoute]);
 
   const handleBookmark = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -240,16 +335,11 @@ export default function App() {
     }
   };
 
-  const categories = ['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'];
-
-  const seoMode =
-    selectedArticle != null
-      ? "article"
-      : selectedCategory === "Events"
-        ? "events"
-        : selectedCategory && selectedCategory !== "Bookmarks"
-          ? "category"
-          : "home";
+  const categories = ARTICLE_CATEGORIES;
+  const activeRoute: AppRoute = selectedArticle
+    ? { kind: "article", slug: selectedArticle.slug }
+    : appRoute;
+  const activeGuide = appRoute.kind === "guide" ? getGuideBySlug(appRoute.slug) : null;
 
   if (loading) {
     return (
@@ -298,9 +388,9 @@ export default function App() {
       <SeoHead
         article={selectedArticle}
         articles={articles}
-        mode={seoMode}
-        categoryLabel={selectedCategory}
+        route={activeRoute}
       />
+      <NewsletterCta variant="exit" />
       <a
         href="#main-stream"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[300] focus:rounded focus:bg-ink focus:px-4 focus:py-2 focus:text-paper focus:outline-none"
@@ -479,12 +569,13 @@ export default function App() {
              </div>
 
              {/* Big Title on its own line */}
-             <h1 
-              onClick={() => { setSelectedCategory(null); setSearchQuery(""); window.scrollTo(0,0); }}
+             <div
+              role="banner"
+              onClick={() => openCategory(null)}
               className="text-[clamp(1rem,6vw,95px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
             >
                 Times of San Francisco
-             </h1>
+             </div>
 
              <div className="text-center mt-1 md:mt-2">
                <span className="inline-block text-[9px] md:text-[11px] font-mono font-medium uppercase tracking-[0.3em] md:tracking-[0.4em] text-ink opacity-60">
@@ -496,21 +587,30 @@ export default function App() {
           <nav className="relative">
             <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
               <div className="flex items-center gap-6 md:gap-10 flex-nowrap min-w-max md:min-w-0">
-                {['Civics', 'Culture', 'Tech', 'Funding', 'Transit', 'Food', 'Events'].map(cat => (
+                {categories.map(cat => (
                   <button 
                     key={cat}
-                    onClick={() => { setSelectedCategory(cat); window.scrollTo(0,0); }}
+                    onClick={() => openCategory(cat)}
                     className={cn(
                       "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
-                      selectedCategory === cat ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                      (selectedCategory === cat || (cat === "Events" && appRoute.kind === "events")) ? "border-accent text-accent" : "border-transparent hover:border-accent"
                     )}
                   >
                     {cat}
                   </button>
                 ))}
+                <button
+                  onClick={() => navigateTo(digestPath())}
+                  className={cn(
+                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
+                    appRoute.kind === "digest" ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                  )}
+                >
+                  Digest
+                </button>
                 <div className="w-px h-4 bg-ink/10 mx-2" />
                 <button 
-                  onClick={() => { setSelectedCategory('Bookmarks'); window.scrollTo(0,0); }}
+                  onClick={() => openCategory('Bookmarks')}
                   className={cn(
                     "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
                     selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
@@ -529,14 +629,67 @@ export default function App() {
 
       {/* Main Content */}
       <main id="main-stream" tabIndex={-1} className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12 lg:py-16 outline-none">
-        {selectedCategory === 'Events' ? (
+        {!selectedArticle && (appRoute.kind === "home" || appRoute.kind === "category") && (
+          <SponsorSlot placement={appRoute.kind === "home" ? "homepage" : "category"} />
+        )}
+
+        {appRoute.kind === "digest" && !selectedArticle ? (
+          <DigestView
+            articles={articles}
+            onOpenArticle={setSelectedArticle}
+            onNavigate={navigateTo}
+          />
+        ) : appRoute.kind === "guide" && !selectedArticle ? (
+          activeGuide ? (
+            <GuidePage guide={activeGuide} onNavigate={navigateTo} />
+          ) : (
+            <div className="py-24 text-center">
+              <p className="text-xl italic font-serif text-ink/40">Guide not found.</p>
+              <button type="button" onClick={() => navigateTo(digestPath())} className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent">
+                Back to digest
+              </button>
+            </div>
+          )
+        ) : appRoute.kind === "topic" && !selectedArticle ? (
+          <TopicHub
+            topicSlug={appRoute.slug}
+            articles={articles}
+            onOpenArticle={setSelectedArticle}
+          />
+        ) : appRoute.kind === "events" ? (
           <div className="max-w-3xl mx-auto">
-            <h2 className="text-4xl font-serif font-black mb-12 border-b-2 border-ink pb-4">Upcoming SF Events</h2>
+            <h1 className="text-4xl font-serif font-black mb-4 border-b-2 border-ink pb-4">Upcoming SF Events</h1>
+            <p className="text-sm text-ink/60 mb-8 leading-relaxed">
+              Public listings with source links. Verify times on the organizer page before you go.
+            </p>
+            <SponsorSlot placement="events" />
+            {BOOSTED_EVENTS.filter((e) => e.active).map((boost) => (
+              <a
+                key={boost.id}
+                href={boost.href}
+                className="block mb-8 border border-accent/40 bg-accent/[0.04] px-4 py-3"
+                rel={boost.href.startsWith("http") ? "sponsored noopener noreferrer" : undefined}
+              >
+                <p className="text-[9px] font-mono uppercase tracking-[0.2em] text-accent mb-1">Boosted</p>
+                <p className="font-bold">{boost.title}</p>
+                <p className="text-xs text-ink/50">{boost.venue}</p>
+              </a>
+            ))}
             <EventsPanel events={events} />
           </div>
         ) : (
           <div className="flex flex-col lg:flex-row gap-12">
             <div className="flex-grow">
+              {appRoute.kind === "category" && (
+                <header className="mb-10 max-w-3xl">
+                  <h1 className="text-3xl md:text-4xl font-black tracking-tight mb-3">
+                    {CATEGORY_SEO[appRoute.category]?.title ?? `${appRoute.category} news`}
+                  </h1>
+                  <p className="text-sm text-ink/60 leading-relaxed">
+                    {CATEGORY_SEO[appRoute.category]?.description}
+                  </p>
+                </header>
+              )}
               {filteredArticles.length === 0 ? (
                 <div className="py-32 text-center">
                   {apiError ? (
@@ -548,7 +701,7 @@ export default function App() {
                     <p className="text-xl italic font-serif text-ink/40">No stories yet. The agent pipeline generates new articles every few minutes.</p>
                   ) : null}
                   <button 
-                    onClick={() => { setSelectedCategory(null); setSearchQuery(""); }}
+                    onClick={() => openCategory(null)}
                     className="mt-6 text-accent font-mono text-[10px] uppercase tracking-widest border-b border-accent"
                   >
                     Reset Filters
@@ -587,6 +740,43 @@ export default function App() {
               )}
             </div>
           </div>
+        )}
+
+        {((appRoute.kind === "category" && (appRoute.category === "Tech" || appRoute.category === "Funding"))
+          || selectedCategory === "Tech"
+          || selectedCategory === "Funding") && (
+          <div className="max-w-3xl">
+            <JobsBoard desk={appRoute.kind === "category" ? appRoute.category : (selectedCategory as string)} />
+          </div>
+        )}
+
+        {(appRoute.kind === "home" || appRoute.kind === "category") && (
+          <aside className="mt-16 max-w-3xl">
+            <h2 className="text-[10px] font-mono uppercase tracking-[0.25em] text-ink/40 mb-4">SF guides</h2>
+            <ul className="flex flex-wrap gap-3 mb-8">
+              {EVERGREEN_GUIDES.map((guide) => (
+                <li key={guide.slug}>
+                  <button
+                    type="button"
+                    onClick={() => navigateTo(guidePath(guide.slug))}
+                    className="text-xs font-mono uppercase tracking-widest border border-ink/15 px-3 py-2 hover:border-accent hover:text-accent"
+                  >
+                    {guide.title}
+                  </button>
+                </li>
+              ))}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => navigateTo(digestPath())}
+                  className="text-xs font-mono uppercase tracking-widest border border-ink/15 px-3 py-2 hover:border-accent hover:text-accent"
+                >
+                  Weekly digest
+                </button>
+              </li>
+            </ul>
+            <NewsletterCta variant="compact" />
+          </aside>
         )}
 
         <section
@@ -686,10 +876,10 @@ export default function App() {
           <div>
             <h4 className="text-xs font-mono uppercase tracking-widest mb-6 opacity-40">Categories</h4>
             <ul className="space-y-3 text-sm font-medium">
-              <li onClick={() => { setSelectedCategory('Civics'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Civics</li>
-              <li onClick={() => { setSelectedCategory('Culture'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Culture</li>
-              <li onClick={() => { setSelectedCategory('Tech'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Tech & Future</li>
-              <li onClick={() => { setSelectedCategory('Food'); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Food & Drink</li>
+              <li onClick={() => openCategory('Civics')} className="hover:text-accent cursor-pointer transition-colors">Civics</li>
+              <li onClick={() => openCategory('Culture')} className="hover:text-accent cursor-pointer transition-colors">Culture</li>
+              <li onClick={() => openCategory('Tech')} className="hover:text-accent cursor-pointer transition-colors">Tech & Future</li>
+              <li onClick={() => openCategory('Food')} className="hover:text-accent cursor-pointer transition-colors">Food & Drink</li>
             </ul>
           </div>
           <div>
@@ -698,21 +888,23 @@ export default function App() {
               <li onClick={() => toast.info("Choose your newsletter topics in the signup form.")} className="hover:text-accent cursor-pointer transition-colors">Newsletter</li>
               <li className="hover:text-accent cursor-pointer transition-colors">Instagram</li>
               <li className="hover:text-accent cursor-pointer transition-colors">Twitter (X)</li>
-              <li onClick={() => { setSelectedCategory(null); window.scrollTo(0,0); }} className="hover:text-accent cursor-pointer transition-colors">Archive</li>
+              <li onClick={() => openCategory(null)} className="hover:text-accent cursor-pointer transition-colors">Archive</li>
             </ul>
           </div>
         </footer>
       </main>
 
       <ReaderView 
-        article={selectedArticle} 
+        article={selectedArticle}
+        allArticles={articles}
         onClose={() => {
           setSelectedArticle(null);
-          const url = new URL(window.location.href);
-          url.searchParams.delete("id");
-          url.searchParams.delete("articleId");
-          window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
-        }} 
+          const path = listPathRef.current || "/";
+          window.history.replaceState({}, "", path);
+          setAppRoute(parseAppPath(path));
+        }}
+        onNavigate={navigateTo}
+        onOpenArticle={setSelectedArticle}
         isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
         onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}
         onShare={(e) => selectedArticle && handleShare(selectedArticle, e)}

@@ -36,6 +36,8 @@ export interface Article {
   date: string;
   /** ISO 8601 — when this article was published on Times of SF */
   publishedAt: string;
+  /** ISO 8601 — last content edit; falls back to publishedAt when unset */
+  updatedAt?: string;
   category: "Civics" | "Culture" | "Tech" | "Funding" | "Transit" | "Food" | "Events";
   excerpt: string;
   /** 2–3 sentence whole-story summary (from short_post at publish time). */

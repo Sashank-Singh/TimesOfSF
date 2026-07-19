@@ -6,9 +6,14 @@ export const SITE_SHORT_NAME = "Times of SF";
 export const SITE_DEFAULT_DESCRIPTION =
   "San Francisco news and analysis: civics, culture, tech, transit, food, funding, and events—grounded in linked primary sources with clear editorial context.";
 
-export function articlePath(slug: string): string {
-  return `/articles/${encodeURIComponent(slug)}`;
-}
+export {
+  articlePath,
+  categoryPath,
+  digestPath,
+  eventsPath,
+  guidePath,
+  topicPath,
+} from "./routes";
 
 export function getPublicOrigin(): string {
   if (typeof window === "undefined") return "";

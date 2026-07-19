@@ -70,6 +70,8 @@ export async function ensureSchema() {
     await sql`CREATE INDEX IF NOT EXISTS generated_posts_canonical_key_idx ON generated_posts (canonical_key)`;
     await sql`CREATE INDEX IF NOT EXISTS generated_posts_category_created_idx ON generated_posts (category, created_at DESC)`;
     await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS image_credit TEXT`;
+    await sql`ALTER TABLE generated_posts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`;
+    await sql`UPDATE generated_posts SET updated_at = created_at WHERE updated_at IS NULL`;
     await sql`
       CREATE TABLE IF NOT EXISTS events (
         id BIGSERIAL PRIMARY KEY,
@@ -392,13 +394,13 @@ export async function completeRun(result: PipelineRunResult) {
 
 export async function fetchPostSlugDatesForSitemap(limit = 2000) {
   const rows = await sql`
-    SELECT slug, created_at AS "publishedAt"
+    SELECT slug, created_at AS "publishedAt", COALESCE(updated_at, created_at) AS "updatedAt"
     FROM generated_posts
     WHERE slug IS NOT NULL AND TRIM(slug) <> ''
     ORDER BY created_at DESC
     LIMIT ${limit}
   `;
-  return rows.map((r: any) => ({ slug: r.slug, publishedAt: r.publishedAt }));
+  return rows.map((r: any) => ({ slug: r.slug, publishedAt: r.publishedAt, updatedAt: r.updatedAt }));
 }
 
 export async function fetchRecentPosts(limit = 1000, searchQuery?: string) {
@@ -426,6 +428,7 @@ export async function fetchRecentPosts(limit = 1000, searchQuery?: string) {
         data_blocks as "dataBlocks",
         category,
         created_at as "publishedAt",
+        COALESCE(updated_at, created_at) as "updatedAt",
         created_at
       FROM generated_posts
       WHERE headline ILIKE ${q}
@@ -465,7 +468,29 @@ export async function fetchRecentPosts(limit = 1000, searchQuery?: string) {
       data_blocks as "dataBlocks",
       category,
       created_at as "publishedAt",
+      COALESCE(updated_at, created_at) as "updatedAt",
       created_at
+    FROM generated_posts
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows as any[];
+}
+
+export async function fetchPostsForSeoList(options: { category?: string; limit?: number } = {}) {
+  const limit = options.limit ?? 24;
+  if (options.category) {
+    const rows = await sql`
+      SELECT headline, slug, dek, category, created_at as "publishedAt"
+      FROM generated_posts
+      WHERE category = ${options.category}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    return rows as any[];
+  }
+  const rows = await sql`
+    SELECT headline, slug, dek, category, created_at as "publishedAt"
     FROM generated_posts
     ORDER BY created_at DESC
     LIMIT ${limit}
@@ -529,7 +554,8 @@ export async function updatePostContent(id: string, content: string) {
   const numericId = id.replace("db-", "");
   await sql`
     UPDATE generated_posts
-    SET body_markdown = ${content}
+    SET body_markdown = ${content},
+        updated_at = NOW()
     WHERE id = ${numericId}
   `;
 }

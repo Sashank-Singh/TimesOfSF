@@ -1,5 +1,9 @@
 import React, { useState, useRef, useMemo, useEffect } from "react";
 import { Article, ArticleEntity } from "../types";
+import { NewsletterCta } from "./NewsletterCta";
+import { AdSlot } from "./AdSlot";
+import { pickRelatedArticles, RelatedArticles } from "./RelatedArticles";
+import { categoryPath } from "../lib/routes";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
 import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, Headphones } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -23,13 +27,17 @@ const VoiceReader = React.lazy(() => import("./VoiceReader"));
 
 interface ReaderViewProps {
   article: Article | null;
+  allArticles?: Article[];
   onClose: () => void;
+  onNavigate?: (path: string) => void;
+  onOpenArticle?: (article: Article) => void;
   isBookmarked: boolean;
   onBookmark: () => void;
   onShare: (e?: React.MouseEvent) => void;
 }
 
-function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, 'article'>) {
+function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenArticle, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, "article">) {
+  const related = pickRelatedArticles(article, allArticles, 3);
   const [showSummary, setShowSummary] = useState(true);
   const editorialSummary = useMemo(
     () => buildEditorialSummary({ summary: article.summary, excerpt: article.excerpt, tldr: article.tldr }),
@@ -405,6 +413,15 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
                     >
                       Published {formatPublishedTimestamp(article.publishedAt)}
                     </time>
+                    {article.updatedAt && article.updatedAt !== article.publishedAt && (
+                      <time
+                        dateTime={article.updatedAt}
+                        className="text-[10px] tracking-widest text-ink/45 normal-case"
+                        title={article.updatedAt}
+                      >
+                        Updated {formatPublishedTimestamp(article.updatedAt)}
+                      </time>
+                    )}
                   </div>
                </div>
             </header>
@@ -575,6 +592,34 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
               </div>
             </div>
 
+            <AdSlot slotId="article-below-body" />
+
+            {onOpenArticle && onNavigate && (
+              <RelatedArticles
+                article={article}
+                related={related}
+                onOpenArticle={onOpenArticle}
+                onNavigate={onNavigate}
+              />
+            )}
+
+            <div className="mt-12">
+              <NewsletterCta
+                variant="compact"
+                defaultTopics={[article.category]}
+              />
+            </div>
+
+            <p className="mt-8 text-center text-xs">
+              <button
+                type="button"
+                className="font-mono uppercase tracking-widest text-accent"
+                onClick={() => onNavigate?.(categoryPath(article.category))}
+              >
+                More {article.category} news
+              </button>
+            </p>
+
             <footer className="mt-20 md:mt-32 pt-12 md:pt-16 border-t-[3px] border-ink">
                <div className="flex flex-col md:flex-row justify-between items-start gap-8 md:gap-12 leading-none">
                   <div>
@@ -606,14 +651,17 @@ function ReaderContent({ article, onClose, isBookmarked, onBookmark, onShare }: 
   );
 }
 
-export function ReaderView({ article, onClose, isBookmarked, onBookmark, onShare }: ReaderViewProps) {
+export function ReaderView({ article, allArticles, onClose, onNavigate, onOpenArticle, isBookmarked, onBookmark, onShare }: ReaderViewProps) {
   return (
     <AnimatePresence>
       {article && (
         <ReaderContent
           key="reader"
           article={article}
+          allArticles={allArticles}
           onClose={onClose}
+          onNavigate={onNavigate}
+          onOpenArticle={onOpenArticle}
           isBookmarked={isBookmarked}
           onBookmark={onBookmark}
           onShare={onShare}
