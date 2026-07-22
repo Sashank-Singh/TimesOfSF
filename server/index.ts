@@ -1068,10 +1068,12 @@ ${articleUrls}
     });
   });
 
-  // Chunked TTS endpoint — per-sentence PCM chunks as NDJSON, for Web Audio API.
-  // Each line is JSON: {"pcm": "<base64>"} — first line has {"sampleRate": 24000}.
-  app.get("/api/tts/chunked", rateLimit("tts-chunked", 20, 60_000), async (req, res) => {
-    const text = typeof req.query.text === "string" ? req.query.text.trim() : "";
+  // Chunked TTS — NDJSON PCM for Web Audio. Prefer POST (GET query strings truncate long articles).
+  // Lines: {"sampleRate":24000} then {"pcm":"<base64>"}… then {"done":true}
+  const handleTtsChunked = async (req: express.Request, res: express.Response) => {
+    const fromQuery = typeof req.query.text === "string" ? req.query.text.trim() : "";
+    const fromBody = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+    const text = fromBody || fromQuery;
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
     const truncated = text.length > TTS_INLINE_MAX_CHARS ? text.slice(0, TTS_INLINE_MAX_CHARS) : text;
 
@@ -1086,19 +1088,14 @@ ${articleUrls}
     proc.stdin.write(truncated);
     proc.stdin.end();
 
-    // Pipe stdout → response with proper backpressure.
-    // DO NOT kill on req close — pipe() manages stream lifecycle, and
-    // req.on("close") fires too early on proxy-kept-alive GET connections.
     proc.stdout.pipe(res);
 
     let stderr = "";
     proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
-    // Safety timer — kill orphaned process after 10 minutes
     const killTimer = setTimeout(() => { proc.kill(); }, 600_000);
     proc.on("exit", () => clearTimeout(killTimer));
 
-    // If pipe already ended res, skip extra end
     const maybeEnd = () => { if (!res.writableEnded) res.end(); };
 
     proc.on("close", (code) => {
@@ -1121,7 +1118,10 @@ ${articleUrls}
         res.status(500).json({ error: "Failed to start TTS" });
       }
     });
-  });
+  };
+
+  app.get("/api/tts/chunked", rateLimit("tts-chunked", 20, 60_000), handleTtsChunked);
+  app.post("/api/tts/chunked", rateLimit("tts-chunked", 20, 60_000), handleTtsChunked);
 
   if (isProduction()) {
     const distDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");

@@ -8,6 +8,54 @@ export interface EventInfo {
   source: string;
 }
 
+
+/** Calendar YYYY-MM-DD in America/Los_Angeles. */
+export function sfTodayYmd(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+export function addDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Parse display dates like "Jul 19, 2026" into YYYY-MM-DD (null if unknown). */
+export function parseEventYmd(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed || /^date\s*tba$/i.test(trimmed) || /^tba$/i.test(trimmed)) return null;
+  const d = new Date(trimmed);
+  if (!Number.isFinite(d.getTime())) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  // Guard absurd years from bad RSS labels
+  if (y < 2024 || y > 2100) return null;
+  return `${y}-${m}-${day}`;
+}
+
+/** Keep events from SF today through +7 days, sorted soonest first. */
+export function filterEventsNextWeek<T extends { date: string }>(
+  events: T[],
+  now = new Date(),
+  daysAhead = 7,
+): T[] {
+  const start = sfTodayYmd(now);
+  const end = addDaysYmd(start, daysAhead);
+  return events
+    .map((event) => ({ event, ymd: parseEventYmd(event.date) }))
+    .filter((row): row is { event: T; ymd: string } => !!row.ymd && row.ymd >= start && row.ymd <= end)
+    .sort((a, b) => a.ymd.localeCompare(b.ymd) || a.event.date.localeCompare(b.event.date))
+    .map((row) => row.event);
+}
+
 // ── Luma (direct page scrape) ─────────────────────────────────────────
 
 interface LumaEvent {
@@ -39,13 +87,9 @@ async function scrapeLumaSf(): Promise<EventInfo[]> {
   const events: LumaEvent[] =
     data?.props?.pageProps?.initialData?.data?.events ?? [];
 
-  const now = new Date();
-  const nextMonth = new Date(now);
-  nextMonth.setMonth(nextMonth.getMonth() + 1);
-
-  return events
+  const mapped = events
     .map((item) => ({ raw: item, start: new Date(item.event.start_at) }))
-    .filter(({ start }) => start >= now && start <= nextMonth)
+    .filter(({ start }) => Number.isFinite(start.getTime()))
     .filter(({ raw }) => {
       const city = raw.event.geo_address_info?.city ?? "";
       return /san francisco/i.test(city);
@@ -54,12 +98,15 @@ async function scrapeLumaSf(): Promise<EventInfo[]> {
       title: raw.event.name,
       url: `https://lu.ma/${raw.event.url}`,
       date: start.toLocaleDateString("en-US", {
+        timeZone: "America/Los_Angeles",
         month: "short",
         day: "numeric",
         year: "numeric",
       }),
       source: "Luma",
     }));
+
+  return filterEventsNextWeek(mapped);
 }
 
 // ── Cerebral Valley (Google News RSS) ─────────────────────────────────
@@ -230,5 +277,5 @@ export async function fetchEvents(): Promise<EventInfo[]> {
     console.error("Cerebral Valley scraper failed:", err);
   }
 
-  return results.slice(0, 16);
+  return filterEventsNextWeek(results).slice(0, 24);
 }

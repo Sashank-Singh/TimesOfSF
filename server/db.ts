@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import postgres from "postgres";
 import { config } from "./config";
+import { filterEventsNextWeek } from "./events";
 import { EditorialCategory, GeneratedPost, PipelineRunResult, SourceAttempt, SourceExtraction, TrendCandidate } from "./types";
 
 const sql = postgres(config.databaseUrl);
@@ -268,8 +269,20 @@ export async function saveEvents(events: Array<{title: string, url: string, date
 }
 
 export async function fetchStoredEvents() {
-  const rows = await sql`SELECT title, url, event_date as date, source FROM events ORDER BY created_at DESC LIMIT 16`;
-  return rows.map((r: any) => ({ title: r.title, url: r.url, date: r.date, source: r.source }));
+  // Pull a wider pool, then keep only SF-today through +7 days (sorted soonest first).
+  const rows = await sql`
+    SELECT title, url, event_date as date, source
+    FROM events
+    ORDER BY created_at DESC
+    LIMIT 100
+  `;
+  const mapped = rows.map((r: any) => ({
+    title: r.title as string,
+    url: r.url as string,
+    date: r.date as string,
+    source: r.source as string,
+  }));
+  return filterEventsNextWeek(mapped).slice(0, 24);
 }
 
 /** Latest pipeline attempt (includes rejected / empty ticks). */

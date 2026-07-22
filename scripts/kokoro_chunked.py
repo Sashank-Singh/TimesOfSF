@@ -82,20 +82,29 @@ def main() -> None:
 
     chunks = split_into_chunks(text)
 
-    # header line — client needs sample rate
-    sys.stdout.write(f'{{"sampleRate": {SAMPLE_RATE}, "channels": 1}}\n')
-    sys.stdout.flush()
+    header_sent = False
 
     for chunk in chunks:
         try:
             samples, sample_rate = kokoro.create(chunk, voice=VOICE)
         except Exception as exc:
             sys.stderr.write(f"Gen error: {exc}\n")
+            sys.stderr.flush()
             continue
+
+        rate = int(sample_rate) if sample_rate else SAMPLE_RATE
+        if not header_sent:
+            sys.stdout.write(f'{{"sampleRate": {rate}, "channels": 1}}\n')
+            sys.stdout.flush()
+            header_sent = True
 
         pcm = (np.clip(samples, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
         b64 = base64.b64encode(pcm).decode("ascii")
         sys.stdout.write(f'{{"pcm": "{b64}"}}\n')
+        sys.stdout.flush()
+
+    if not header_sent:
+        sys.stdout.write(f'{{"sampleRate": {SAMPLE_RATE}, "channels": 1}}\n')
         sys.stdout.flush()
 
     sys.stdout.write('{"done": true}\n')

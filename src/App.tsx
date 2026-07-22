@@ -399,23 +399,6 @@ export default function App() {
       </a>
       <Toaster position="top-center" richColors />
       
-      {/* Live Dispatch Ticker */}
-      <div className="bg-paper border-b border-ink/10 relative overflow-hidden py-2 whitespace-nowrap group">
-        <div className="inline-flex animate-marquee group-hover:pause-marquee gap-12 items-center">
-          {[...filteredArticles, ...filteredArticles].slice(0, 10).map((a, i) => (
-            <div 
-              key={`${a.id}-${i}`} 
-              className="flex items-center gap-3 cursor-pointer hover:text-accent transition-colors"
-              onClick={() => setSelectedArticle(a)}
-            >
-              <span className="text-accent font-black text-[10px] tracking-widest uppercase">Headline:</span>
-              <span className="font-serif italic text-xs tracking-tight">{a.title}</span>
-              <span className="text-ink/20 opacity-50">—</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {/* Auth Modal Overlay */}
 
       <AnimatePresence>
@@ -583,6 +566,25 @@ export default function App() {
                </span>
              </div>
           </div>
+
+          {/* Live Dispatch Ticker — under masthead, stays with sticky header */}
+          {articles.length > 0 && (
+            <div className="relative overflow-hidden border-b border-ink/10 py-2 -mx-4 md:-mx-6 px-0 group/ticker">
+              <div className="flex w-max animate-marquee group-hover/ticker:[animation-play-state:paused] gap-12 items-center">
+                {[...articles.slice(0, 12), ...articles.slice(0, 12)].map((a, i) => (
+                  <div
+                    key={`${a.id}-tape-${i}`}
+                    className="flex items-center gap-3 cursor-pointer hover:text-accent transition-colors shrink-0"
+                    onClick={() => setSelectedArticle(a)}
+                  >
+                    <span className="text-accent font-black text-[10px] tracking-widest uppercase">Headline:</span>
+                    <span className="font-serif italic text-xs tracking-tight">{a.title}</span>
+                    <span className="text-ink/20 opacity-50">—</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           
           <nav className="relative">
             <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">

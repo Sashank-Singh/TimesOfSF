@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { Play, Pause, StopCircle, Loader2, ChevronUp, ChevronDown, RotateCcw, RotateCw } from "lucide-react";
+import { Play, Pause, StopCircle, Loader2, RotateCcw, RotateCw } from "lucide-react";
 import { cn } from "../lib/utils";
+import { getApiBase } from "../services/newsService";
 
 export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paused" | "error";
 
@@ -15,6 +16,7 @@ interface VoiceReaderProps {
 
 const SPEED_OPTIONS = [0.75, 1, 1.25, 1.5, 2] as const;
 const SKIP_SECONDS = 10;
+const DEFAULT_SAMPLE_RATE = 24000;
 
 function fmtTime(sec: number): string {
   if (!isFinite(sec) || sec < 0) return "0:00";
@@ -23,19 +25,20 @@ function fmtTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** base64 int16 PCM → Float32Array */
+/** base64 int16 PCM → Float32Array (aligned buffer copy). */
 function decodePcm(b64: string): Float32Array {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const i16 = new Int16Array(bytes.buffer);
+  const copy = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(copy).set(bytes);
+  const i16 = new Int16Array(copy);
   const out = new Float32Array(i16.length);
   for (let i = 0; i < i16.length; i++) out[i] = i16[i] / 32768;
   return out;
 }
 
 export function VoiceReader({ text, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
-  // ── state ──
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -46,17 +49,16 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   const [isSeeking, setIsSeeking] = useState(false);
   const [pendingPlay, setPendingPlay] = useState(false);
 
-  // ── refs — streaming + Web Audio ──
   const audioCtxRef = useRef<AudioContext | null>(null);
   const pcmChunksRef = useRef<Float32Array[]>([]);
-  const totalSamplesRef = useRef(0);               // raw 1x sample count
-  const playbackStartRef = useRef(-1);              // ctx.currentTime when play started; -1 = not started
-  const scheduledEndRef = useRef(0);                // ctx.currentTime when last scheduled chunk ends
+  const sampleRateRef = useRef(DEFAULT_SAMPLE_RATE);
+  const totalSamplesRef = useRef(0);
+  const playbackStartRef = useRef(-1);
+  const scheduledEndRef = useRef(0);
   const streamAbortRef = useRef<AbortController | null>(null);
   const streamDoneRef = useRef(false);
   const sourceNodesRef = useRef<AudioBufferSourceNode[]>([]);
 
-  // ── refs — UI / lifecycle ──
   const onWordRef = useRef(onWordChange);
   const lastWordRef = useRef(-1);
   const barRef = useRef<HTMLDivElement>(null);
@@ -72,57 +74,79 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
 
   const totalWords = useMemo(() => text.trim().split(/\s+/).filter(Boolean).length, [text]);
 
-  // ── helpers ──
   const updateStatus = useCallback((s: VoiceReaderStatus) => {
     if (!mountedRef.current) return;
     setStatus(s);
     onStatusChange?.(s);
   }, [onStatusChange]);
 
-  /** Schedule a PCM chunk for playback on the current AudioContext */
+  const ensureAudioCtx = useCallback(async () => {
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+      try {
+        audioCtxRef.current = new AudioContext({ sampleRate: sampleRateRef.current });
+      } catch {
+        audioCtxRef.current = new AudioContext();
+      }
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+    return ctx;
+  }, []);
+
   const scheduleChunk = useCallback((float32: Float32Array) => {
     const ctx = audioCtxRef.current;
     if (!ctx || ctx.state === "closed") return;
+    const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
 
-    const buf = ctx.createBuffer(1, float32.length, 24000);
+    const buf = ctx.createBuffer(1, float32.length, rate);
     buf.getChannelData(0).set(float32);
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.playbackRate.value = speedRef.current;
     src.connect(ctx.destination);
 
-    const now = ctx.currentTime;
-    const when = Math.max(scheduledEndRef.current, now);
+    const when = Math.max(scheduledEndRef.current, ctx.currentTime);
     src.start(when);
-    scheduledEndRef.current = when + float32.length / (24000 * speedRef.current);
+    scheduledEndRef.current = when + float32.length / (rate * speedRef.current);
     sourceNodesRef.current.push(src);
   }, []);
 
-  /** Schedule ALL currently buffered chunks */
-  const playBuffered = useCallback(() => {
-    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-      audioCtxRef.current = new AudioContext();
+  const playBuffered = useCallback(async () => {
+    const ctx = await ensureAudioCtx();
+    const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
+    // Stop any previously scheduled sources by closing/recreating context for a clean timeline
+    if (sourceNodesRef.current.length > 0 && playbackStartRef.current !== -1) {
+      try { await ctx.close(); } catch { /* ignore */ }
+      audioCtxRef.current = null;
+      const fresh = await ensureAudioCtx();
+      playbackStartRef.current = fresh.currentTime;
+      scheduledEndRef.current = fresh.currentTime;
+      sourceNodesRef.current = [];
+      for (const chunk of pcmChunksRef.current) {
+        const buf = fresh.createBuffer(1, chunk.length, rate);
+        buf.getChannelData(0).set(chunk);
+        const src = fresh.createBufferSource();
+        src.buffer = buf;
+        src.playbackRate.value = speedRef.current;
+        src.connect(fresh.destination);
+        const when = Math.max(scheduledEndRef.current, fresh.currentTime);
+        src.start(when);
+        scheduledEndRef.current = when + chunk.length / (rate * speedRef.current);
+        sourceNodesRef.current.push(src);
+      }
+      return;
     }
-    const ctx = audioCtxRef.current;
+
     playbackStartRef.current = ctx.currentTime;
     scheduledEndRef.current = ctx.currentTime;
     sourceNodesRef.current = [];
-
     for (const chunk of pcmChunksRef.current) {
-      const buf = ctx.createBuffer(1, chunk.length, 24000);
-      buf.getChannelData(0).set(chunk);
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.playbackRate.value = speedRef.current;
-      src.connect(ctx.destination);
-      const when = Math.max(scheduledEndRef.current, ctx.currentTime);
-      src.start(when);
-      scheduledEndRef.current = when + chunk.length / (24000 * speedRef.current);
-      sourceNodesRef.current.push(src);
+      scheduleChunk(chunk);
     }
-  }, []);
+  }, [ensureAudioCtx, scheduleChunk]);
 
-  /** Accept a PCM chunk from the stream */
   const acceptChunk = useCallback((b64: string) => {
     if (!mountedRef.current) return;
     try {
@@ -130,16 +154,17 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       if (float32.length === 0) return;
       pcmChunksRef.current.push(float32);
       totalSamplesRef.current += float32.length;
-      setDuration(totalSamplesRef.current / (24000 * speedRef.current));
+      const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
+      setDuration(totalSamplesRef.current / (rate * speedRef.current));
 
-      // If playback already started, schedule immediately
       if (audioCtxRef.current && audioCtxRef.current.state !== "closed" && playbackStartRef.current !== -1) {
         scheduleChunk(float32);
       }
-    } catch { /* skip corrupt chunk */ }
+    } catch {
+      /* skip corrupt chunk */
+    }
   }, [scheduleChunk]);
 
-  /** Clean shutdown — close AudioContext, abort stream, reset refs */
   const stopAll = useCallback(() => {
     pendingPlayRef.current = false;
     setPendingPlay(false);
@@ -151,7 +176,7 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     totalSamplesRef.current = 0;
 
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
-      audioCtxRef.current.close();
+      void audioCtxRef.current.close();
     }
     audioCtxRef.current = null;
 
@@ -159,7 +184,6 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     streamAbortRef.current = null;
   }, []);
 
-  // ── NDJSON stream reader ──
   const startStream = useCallback(() => {
     if (!mountedRef.current) return;
     streamAbortRef.current?.abort();
@@ -168,26 +192,40 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     streamDoneRef.current = false;
     pcmChunksRef.current = [];
     totalSamplesRef.current = 0;
+    sampleRateRef.current = DEFAULT_SAMPLE_RATE;
     setError(null);
     updateStatus("loading");
 
     const truncated = text.length > 8000 ? text.slice(0, 8000) : text;
     const controller = streamAbortRef.current;
+    const url = `${getApiBase()}/api/tts/chunked`;
 
     (async () => {
       try {
-        const resp = await fetch(`/api/tts/chunked?text=${encodeURIComponent(truncated)}`, {
+        // POST avoids URL-length truncation that breaks long articles on GET.
+        let resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+          body: JSON.stringify({ text: truncated }),
           signal: controller.signal,
         });
+        // Older deploys only expose GET — fall back so Listen still works mid-rollout.
+        if (resp.status === 404 || resp.status === 405) {
+          const qs = new URLSearchParams({ text: truncated });
+          resp = await fetch(`${url}?${qs}`, {
+            headers: { Accept: "application/x-ndjson" },
+            signal: controller.signal,
+          });
+        }
         if (!resp.ok) {
-          const errData = await resp.json().catch(() => ({}));
+          const errData = await resp.json().catch(() => ({} as { error?: string }));
           throw new Error(errData.error || `Server ${resp.status}`);
         }
+        if (!resp.body) throw new Error("TTS stream had no body");
 
-        const reader = resp.body!.getReader();
+        const reader = resp.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
-        let gotMetadata = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -195,33 +233,40 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
 
           buf += decoder.decode(value, { stream: true });
           const lines = buf.split("\n");
-          buf = lines.pop() || "";               // keep incomplete line
+          buf = lines.pop() || "";
 
           for (const line of lines) {
             const t = line.trim();
             if (!t) continue;
             try {
-              const data = JSON.parse(t);
-              if (data.sampleRate && !gotMetadata) {
-                gotMetadata = true;
-              } else if (data.pcm) {
-                gotMetadata = true;
+              const data = JSON.parse(t) as { sampleRate?: number; pcm?: string; done?: boolean; error?: string };
+              if (data.error) throw new Error(data.error);
+              if (typeof data.sampleRate === "number" && data.sampleRate > 0) {
+                sampleRateRef.current = data.sampleRate;
+              }
+              if (data.pcm) {
                 acceptChunk(data.pcm);
-                // On first PCM chunk → mark ready
-                if (statusRef.current === "loading" && mountedRef.current) {
-                  updateStatus("ready");
+                if (mountedRef.current && (statusRef.current === "loading" || statusRef.current === "ready")) {
+                  if (statusRef.current === "loading") updateStatus("ready");
                   if (pendingPlayRef.current) {
                     pendingPlayRef.current = false;
                     setPendingPlay(false);
-                    playBuffered();
+                    await playBuffered();
                     updateStatus("playing");
                   }
                 }
               } else if (data.done) {
                 streamDoneRef.current = true;
+                if (totalSamplesRef.current === 0) {
+                  throw new Error("TTS engine returned no audio — model may not be ready on the server");
+                }
                 return;
               }
-            } catch { /* skip malformed */ }
+            } catch (parseErr) {
+              if (parseErr instanceof Error && parseErr.message.startsWith("TTS")) throw parseErr;
+              if (parseErr instanceof Error && parseErr.message.includes("model may not")) throw parseErr;
+              /* skip malformed NDJSON line */
+            }
           }
         }
         if (totalSamplesRef.current === 0) {
@@ -237,14 +282,12 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     })();
   }, [text, updateStatus, acceptChunk, playBuffered]);
 
-  // Preload stream on mount
   useEffect(() => {
     startStream();
     return () => { stopAll(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── progress + completion watcher ──
   useEffect(() => {
     if (status !== "playing") return;
 
@@ -252,22 +295,21 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       const ctx = audioCtxRef.current;
       if (!ctx || ctx.state === "closed" || playbackStartRef.current === -1) return;
 
-      const ct = ctx.currentTime - playbackStartRef.current;
-      const tot = totalSamplesRef.current / (24000 * speedRef.current);
+      const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
+      const ct = Math.max(0, ctx.currentTime - playbackStartRef.current);
+      const tot = totalSamplesRef.current / (rate * speedRef.current);
 
       setCurrentTime(ct);
       if (tot > 0) setProgress(Math.min(100, Math.round((ct / tot) * 100)));
 
-      // word tracking — monotonic forward only to prevent oscillation
       const rawWi = tot > 0 ? Math.round((ct / tot) * totalWords) : 0;
-      const wi = Math.min(totalWords - 1, rawWi);
+      const wi = Math.min(Math.max(totalWords - 1, 0), rawWi);
       if (wi > lastWordRef.current) {
         lastWordRef.current = wi;
         onWordRef.current?.(wi);
       }
 
-      // completion
-      if (streamDoneRef.current && scheduledEndRef.current > 0 && ctx.currentTime >= scheduledEndRef.current) {
+      if (streamDoneRef.current && scheduledEndRef.current > 0 && ctx.currentTime >= scheduledEndRef.current - 0.05) {
         stopAll();
         setProgress(100);
         setCurrentTime(0);
@@ -282,15 +324,14 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     return () => clearInterval(interval);
   }, [status, totalWords, updateStatus, onComplete, stopAll]);
 
-  // ── transport controls ──
-  const togglePause = useCallback(() => {
+  const togglePause = useCallback(async () => {
     const ctx = audioCtxRef.current;
     if (!ctx || ctx.state === "closed") return;
     if (ctx.state === "running") {
-      ctx.suspend();
+      await ctx.suspend();
       updateStatus("paused");
     } else if (ctx.state === "suspended") {
-      ctx.resume();
+      await ctx.resume();
       updateStatus("playing");
     }
   }, [updateStatus]);
@@ -305,27 +346,26 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     updateStatus("idle");
   }, [updateStatus, stopAll]);
 
-  const skip = useCallback((delta: number) => {
+  const skip = useCallback(async (delta: number) => {
+    const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
     const ctx = audioCtxRef.current;
-    if (!ctx || ctx.state === "closed") return;
+    if (!ctx || ctx.state === "closed" || playbackStartRef.current === -1) return;
 
     const ct = ctx.currentTime - playbackStartRef.current;
-    const tot = totalSamplesRef.current / (24000 * speedRef.current);
+    const tot = totalSamplesRef.current / (rate * speedRef.current);
     if (tot <= 0) return;
 
     const newPos = Math.max(0, Math.min(tot, ct + delta));
-    const newSample = Math.round(newPos * 24000 * speedRef.current);
+    const newSample = Math.round(newPos * rate * speedRef.current);
     const clamped = Math.min(newSample, totalSamplesRef.current);
 
-    // Close old AudioContext, create fresh
-    ctx.close();
-    const newCtx = new AudioContext();
-    audioCtxRef.current = newCtx;
+    try { await ctx.close(); } catch { /* ignore */ }
+    audioCtxRef.current = null;
+    const newCtx = await ensureAudioCtx();
     playbackStartRef.current = newCtx.currentTime;
     scheduledEndRef.current = newCtx.currentTime;
     sourceNodesRef.current = [];
 
-    // Reschedule from clamped sample onward
     let remaining = clamped;
     for (const chunk of pcmChunksRef.current) {
       if (remaining <= 0) {
@@ -338,76 +378,62 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
       }
     }
 
-    if (newCtx.state === "suspended") newCtx.resume();
-
-    // Emit correct word immediately after seek
     const newWi = tot > 0 ? Math.min(totalWords - 1, Math.round((newPos / tot) * totalWords)) : 0;
     lastWordRef.current = newWi;
     onWordRef.current?.(newWi);
-  }, [scheduleChunk, totalWords]);
+  }, [ensureAudioCtx, scheduleChunk, totalWords]);
 
-  const handlePlay = useCallback(() => {
+  const handlePlay = useCallback(async () => {
     switch (statusRef.current) {
       case "idle":
       case "error":
         pendingPlayRef.current = true;
         setPendingPlay(true);
+        // Unlock audio on the click gesture before the stream returns.
+        await ensureAudioCtx();
         startStream();
         break;
       case "loading":
-        // Create AudioContext inside click gesture so autoplay works
-        if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-          audioCtxRef.current = new AudioContext();
-          playbackStartRef.current = audioCtxRef.current.currentTime;
-          scheduledEndRef.current = audioCtxRef.current.currentTime;
-          // Schedule any chunks that already buffered
-          for (const chunk of pcmChunksRef.current) {
-            const ctx = audioCtxRef.current!;
-            const buf = ctx.createBuffer(1, chunk.length, 24000);
-            buf.getChannelData(0).set(chunk);
-            const src = ctx.createBufferSource();
-            src.buffer = buf;
-            src.playbackRate.value = speedRef.current;
-            src.connect(ctx.destination);
-            const when = Math.max(scheduledEndRef.current, ctx.currentTime);
-            src.start(when);
-            scheduledEndRef.current = when + chunk.length / (24000 * speedRef.current);
-            sourceNodesRef.current.push(src);
-          }
+        pendingPlayRef.current = true;
+        setPendingPlay(true);
+        await ensureAudioCtx();
+        if (pcmChunksRef.current.length > 0) {
+          pendingPlayRef.current = false;
+          setPendingPlay(false);
+          await playBuffered();
+          updateStatus("playing");
         }
-        pendingPlayRef.current = false;
-        setPendingPlay(false);
-        updateStatus("playing");
         break;
       case "ready":
-        playBuffered();
+        await ensureAudioCtx();
+        await playBuffered();
         updateStatus("playing");
         break;
       case "playing":
-        togglePause();
-        break;
       case "paused":
-        togglePause();
+        await togglePause();
         break;
     }
-  }, [startStream, playBuffered, togglePause, updateStatus]);
+  }, [startStream, playBuffered, togglePause, updateStatus, ensureAudioCtx]);
 
-  // ── progress bar seeking ──
-  const seekFromEvent = useCallback((clientX: number) => {
+  const seekFromEvent = useCallback(async (clientX: number) => {
     const bar = barRef.current;
     if (!bar) return;
+    const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
     const rect = bar.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const tot = totalSamplesRef.current / (24000 * speedRef.current);
+    const tot = totalSamplesRef.current / (rate * speedRef.current);
     if (tot <= 0) return;
     const newPos = ratio * tot;
-    const newSample = Math.round(newPos * 24000 * speedRef.current);
+    const newSample = Math.round(newPos * rate * speedRef.current);
     const clamped = Math.min(newSample, totalSamplesRef.current);
 
     const ctx = audioCtxRef.current;
-    if (ctx && ctx.state !== "closed") ctx.close();
-    const newCtx = new AudioContext();
-    audioCtxRef.current = newCtx;
+    if (ctx && ctx.state !== "closed") {
+      try { await ctx.close(); } catch { /* ignore */ }
+    }
+    audioCtxRef.current = null;
+    const newCtx = await ensureAudioCtx();
     playbackStartRef.current = newCtx.currentTime;
     scheduledEndRef.current = newCtx.currentTime;
     sourceNodesRef.current = [];
@@ -415,34 +441,9 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     let remaining = clamped;
     for (const chunk of pcmChunksRef.current) {
       if (remaining <= 0) {
-        (buf => {
-          const c = newCtx;
-          const b = c.createBuffer(1, buf.length, 24000);
-          b.getChannelData(0).set(buf);
-          const src = c.createBufferSource();
-          src.buffer = b;
-          src.playbackRate.value = speedRef.current;
-          src.connect(c.destination);
-          const when = Math.max(scheduledEndRef.current, c.currentTime);
-          src.start(when);
-          scheduledEndRef.current = when + buf.length / (24000 * speedRef.current);
-          sourceNodesRef.current.push(src);
-        })(chunk);
+        scheduleChunk(chunk);
       } else if (remaining < chunk.length) {
-        const sliced = chunk.slice(remaining);
-        (buf => {
-          const c = newCtx;
-          const b = c.createBuffer(1, buf.length, 24000);
-          b.getChannelData(0).set(buf);
-          const src = c.createBufferSource();
-          src.buffer = b;
-          src.playbackRate.value = speedRef.current;
-          src.connect(c.destination);
-          const when = Math.max(scheduledEndRef.current, c.currentTime);
-          src.start(when);
-          scheduledEndRef.current = when + buf.length / (24000 * speedRef.current);
-          sourceNodesRef.current.push(src);
-        })(sliced);
+        scheduleChunk(chunk.slice(remaining));
         remaining = -1;
       } else {
         remaining -= chunk.length;
@@ -450,51 +451,85 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
     }
 
     setCurrentTime(newPos);
-    setProgress(Math.min(100, Math.round(ratio * 100)));
-    if (newCtx.state === "suspended") newCtx.resume();
-
-    // Emit correct word immediately after seek
+    setProgress(Math.round(ratio * 100));
     const newWi = tot > 0 ? Math.min(totalWords - 1, Math.round((newPos / tot) * totalWords)) : 0;
     lastWordRef.current = newWi;
     onWordRef.current?.(newWi);
-  }, [totalWords]);
+    if (statusRef.current === "paused" || statusRef.current === "ready") {
+      updateStatus("playing");
+    }
+  }, [ensureAudioCtx, scheduleChunk, totalWords, updateStatus]);
+
+  const handleSpeedChange = useCallback(async (s: number) => {
+    const prev = speedRef.current;
+    const rate = sampleRateRef.current || DEFAULT_SAMPLE_RATE;
+    const ctx = audioCtxRef.current;
+    let sampleAt = 0;
+    if (ctx && ctx.state !== "closed" && playbackStartRef.current !== -1) {
+      const ct = Math.max(0, ctx.currentTime - playbackStartRef.current);
+      const oldTot = totalSamplesRef.current / (rate * prev);
+      sampleAt = Math.round((ct / Math.max(oldTot, 0.001)) * totalSamplesRef.current);
+    }
+    setSpeed(s);
+    speedRef.current = s;
+    setSpeedOpen(false);
+    setDuration(totalSamplesRef.current / (rate * s));
+
+    if ((statusRef.current === "playing" || statusRef.current === "paused") && pcmChunksRef.current.length > 0) {
+      if (ctx && ctx.state !== "closed") {
+        try { await ctx.close(); } catch { /* ignore */ }
+      }
+      audioCtxRef.current = null;
+      const newCtx = await ensureAudioCtx();
+      playbackStartRef.current = newCtx.currentTime;
+      scheduledEndRef.current = newCtx.currentTime;
+      sourceNodesRef.current = [];
+      let remaining = Math.min(sampleAt, totalSamplesRef.current);
+      for (const chunk of pcmChunksRef.current) {
+        if (remaining <= 0) scheduleChunk(chunk);
+        else if (remaining < chunk.length) {
+          scheduleChunk(chunk.slice(remaining));
+          remaining = -1;
+        } else remaining -= chunk.length;
+      }
+      if (statusRef.current === "paused") await newCtx.suspend();
+    }
+  }, [ensureAudioCtx, scheduleChunk]);
 
   const onBarMouseDown = useCallback((e: React.MouseEvent) => {
     setIsSeeking(true);
-    seekFromEvent(e.clientX);
+    void seekFromEvent(e.clientX);
   }, [seekFromEvent]);
 
   useEffect(() => {
     if (!isSeeking) return;
-    const onMove = (e: MouseEvent) => seekFromEvent(e.clientX);
+    const onMove = (e: MouseEvent) => { void seekFromEvent(e.clientX); };
     const onUp = () => setIsSeeking(false);
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
   }, [isSeeking, seekFromEvent]);
 
   const onBarTouchStart = useCallback((e: React.TouchEvent) => {
     setIsSeeking(true);
-    seekFromEvent(e.touches[0].clientX);
+    void seekFromEvent(e.touches[0].clientX);
   }, [seekFromEvent]);
 
   useEffect(() => {
     if (!isSeeking) return;
-    const onMove = (e: TouchEvent) => seekFromEvent(e.touches[0].clientX);
+    const onMove = (e: TouchEvent) => { void seekFromEvent(e.touches[0].clientX); };
     const onEnd = () => setIsSeeking(false);
     window.addEventListener("touchmove", onMove, { passive: true });
     window.addEventListener("touchend", onEnd);
-    return () => { window.removeEventListener("touchmove", onMove); window.removeEventListener("touchend", onEnd); };
+    return () => {
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+    };
   }, [isSeeking, seekFromEvent]);
 
-  // ── speed ──
-  const handleSpeedChange = useCallback((s: number) => {
-    for (const src of sourceNodesRef.current) src.playbackRate.value = s;
-    setSpeed(s);
-    setSpeedOpen(false);
-  }, []);
-
-  // ── render ──
   const isPlaying = status === "playing";
   const isPaused = status === "paused";
   const isLoading = status === "loading";
