@@ -360,6 +360,15 @@ export default function App() {
     };
   }, [articles.length, selectedArticle]);
 
+  useEffect(() => {
+    if (!selectedArticle) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [selectedArticle]);
+
   if (loading) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-paper z-[200]">
@@ -527,11 +536,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Editorial Header — stays above article reader */}
-      <div ref={chromeRef} className="border-b-[4px] border-ink bg-paper sticky top-0 z-[60]">
+      {/* Site chrome — fixed so it never scrolls away */}
+      <div
+        ref={chromeRef}
+        className="fixed top-0 inset-x-0 z-[60] border-b-[4px] border-ink bg-paper"
+      >
         {/* News tape — always at the very top, scrolls right → left */}
         {articles.length > 0 && (
-          <div className="relative overflow-hidden border-b border-ink/10 bg-paper py-2 group/ticker">
+          <div className="relative overflow-hidden border-b border-ink/10 bg-paper py-2">
             <div className="flex w-max animate-marquee gap-12 items-center will-change-transform">
               {[...articles.slice(0, 12), ...articles.slice(0, 12)].map((a, i) => (
                 <button
@@ -548,106 +560,116 @@ export default function App() {
             </div>
           </div>
         )}
-        <div className="max-w-7xl mx-auto px-4 md:px-6 pt-2 md:pt-4">
-          <div className="flex flex-col gap-2 md:gap-4 mb-2 md:mb-4 border-b border-ink pb-2 md:pb-4">
-             {/* Top Meta Bar */}
-             <div className="flex justify-between items-center text-[10px] font-mono uppercase tracking-[0.2em] opacity-40 leading-relaxed">
-               <div className="flex items-center gap-4 md:gap-8">
 
-                 <button 
-                  onClick={() => setIsMenuOpen(true)}
-                  className="flex items-center gap-2 hover:text-accent transition-colors"
-                 >
-                   <Menu size={18} />
-                   <span className="hidden sm:inline">Sections</span>
-                 </button>
-               </div>
-
-               <div className="hidden lg:block text-center flex-grow">
-                 <span>San Francisco, CA</span>
-
-
-               </div>
-               
-               <div className="flex items-center gap-4">
-                 <div className="hidden sm:block lg:hidden text-right mr-4">
-                   <span>{currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                 </div>
-                 <button 
-                  onClick={() => setIsMenuOpen(true)}
-                  className="p-2 hover:text-accent transition-colors hidden sm:block"
-                  title="Search"
-                 >
-                   <Search size={16} />
-                 </button>
-                 <button 
-                  onClick={() => setIsAuthModalOpen(true)}
-                  className="text-[10px] font-mono font-bold uppercase tracking-widest px-4 py-2 border border-ink/20 hover:bg-ink hover:text-paper transition-all opacity-100 whitespace-nowrap"
-                 >
-                  Subscribe / Login
-                 </button>
-               </div>
-             </div>
-
-             {/* Big Title on its own line */}
-             <div
-              role="banner"
+        {/* Full masthead only on the feed — reading mode uses a compact brand strip */}
+        {selectedArticle ? (
+          <div className="px-4 md:px-6 py-2.5 flex items-center justify-between gap-4">
+            <button
+              type="button"
               onClick={() => openCategory(null)}
-              className="text-[clamp(1rem,6vw,95px)] font-serif font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
+              className="font-serif font-black uppercase tracking-tight text-lg md:text-xl hover:text-accent transition-colors"
             >
-                Times of San Francisco
-             </div>
-
-             <div className="text-center mt-1 md:mt-2">
-               <span className="inline-block text-[9px] md:text-[11px] font-mono font-medium uppercase tracking-[0.3em] md:tracking-[0.4em] text-ink opacity-60">
-                 {currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-               </span>
-             </div>
+              Times of SF
+            </button>
+            <span className="hidden sm:inline text-[10px] font-mono uppercase tracking-[0.25em] text-ink/40">
+              Special Report
+            </span>
           </div>
-
-          
-          <nav className="relative">
-            <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
-              <div className="flex items-center gap-6 md:gap-10 flex-nowrap min-w-max md:min-w-0">
-                {categories.map(cat => (
-                  <button 
-                    key={cat}
-                    onClick={() => openCategory(cat)}
-                    className={cn(
-                      "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
-                      (selectedCategory === cat || (cat === "Events" && appRoute.kind === "events")) ? "border-accent text-accent" : "border-transparent hover:border-accent"
-                    )}
+        ) : (
+          <div className="max-w-7xl mx-auto px-4 md:px-6 pt-2 md:pt-4">
+            <div className="flex flex-col gap-2 md:gap-4 mb-2 md:mb-4 border-b border-ink pb-2 md:pb-4">
+              <div className="flex justify-between items-center text-[10px] font-mono uppercase tracking-[0.2em] opacity-40 leading-relaxed">
+                <div className="flex items-center gap-4 md:gap-8">
+                  <button
+                    onClick={() => setIsMenuOpen(true)}
+                    className="flex items-center gap-2 hover:text-accent transition-colors"
                   >
-                    {cat}
+                    <Menu size={18} />
+                    <span className="hidden sm:inline">Sections</span>
                   </button>
-                ))}
-                <button
-                  onClick={() => navigateTo(digestPath())}
-                  className={cn(
-                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
-                    appRoute.kind === "digest" ? "border-accent text-accent" : "border-transparent hover:border-accent"
-                  )}
-                >
-                  Digest
-                </button>
-                <div className="w-px h-4 bg-ink/10 mx-2" />
-                <button 
-                  onClick={() => openCategory('Bookmarks')}
-                  className={cn(
-                    "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
-                    selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
-                  )}
-                >
-                  <BookmarkIcon size={12} />
-                  <span>Reading List</span>
-                </button>
+                </div>
+                <div className="hidden lg:block text-center flex-grow">
+                  <span>San Francisco, CA</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="hidden sm:block lg:hidden text-right mr-4">
+                    <span>{currentTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  </div>
+                  <button
+                    onClick={() => setIsMenuOpen(true)}
+                    className="p-2 hover:text-accent transition-colors hidden sm:block"
+                    title="Search"
+                  >
+                    <Search size={16} />
+                  </button>
+                  <button
+                    onClick={() => setIsAuthModalOpen(true)}
+                    className="text-[10px] font-mono font-bold uppercase tracking-widest px-4 py-2 border border-ink/20 hover:bg-ink hover:text-paper transition-all opacity-100 whitespace-nowrap"
+                  >
+                    Subscribe / Login
+                  </button>
+                </div>
+              </div>
+
+              <div
+                role="banner"
+                onClick={() => openCategory(null)}
+                className="text-[clamp(1rem,6vw,95px)] font-serif font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
+              >
+                Times of San Francisco
+              </div>
+
+              <div className="text-center mt-1 md:mt-2">
+                <span className="inline-block text-[9px] md:text-[11px] font-mono font-medium uppercase tracking-[0.3em] md:tracking-[0.4em] text-ink opacity-60">
+                  {currentTime.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </span>
               </div>
             </div>
-            {/* Fade effect for scroll indicators on mobile */}
-            <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-paper to-transparent pointer-events-none md:hidden" />
-          </nav>
-        </div>
+
+            <nav className="relative">
+              <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
+                <div className="flex items-center gap-6 md:gap-10 flex-nowrap min-w-max md:min-w-0">
+                  {categories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => openCategory(cat)}
+                      className={cn(
+                        "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
+                        (selectedCategory === cat || (cat === "Events" && appRoute.kind === "events")) ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => navigateTo(digestPath())}
+                    className={cn(
+                      "hover:text-accent transition-colors border-b-2 whitespace-nowrap pb-1",
+                      appRoute.kind === "digest" ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                    )}
+                  >
+                    Digest
+                  </button>
+                  <div className="w-px h-4 bg-ink/10 mx-2" />
+                  <button
+                    onClick={() => openCategory('Bookmarks')}
+                    className={cn(
+                      "hover:text-accent transition-colors border-b-2 whitespace-nowrap flex items-center gap-1 pb-1",
+                      selectedCategory === 'Bookmarks' ? "border-accent text-accent" : "border-transparent hover:border-accent"
+                    )}
+                  >
+                    <BookmarkIcon size={12} />
+                    <span>Reading List</span>
+                  </button>
+                </div>
+              </div>
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-paper to-transparent pointer-events-none md:hidden" />
+            </nav>
+          </div>
+        )}
       </div>
+      {/* Spacer so feed content clears the fixed chrome */}
+      <div aria-hidden className="shrink-0" style={{ height: "var(--site-chrome-h, 0px)" }} />
 
       {/* Main Content */}
       <main id="main-stream" tabIndex={-1} className="max-w-7xl mx-auto px-4 md:px-6 py-8 md:py-12 lg:py-16 outline-none">
