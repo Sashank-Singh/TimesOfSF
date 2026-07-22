@@ -328,7 +328,8 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 1.02 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="fixed inset-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
+      className="fixed left-0 right-0 bottom-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
+      style={{ top: "var(--site-chrome-h, 0px)" }}
     >
       {/* Subtle Progress Header */}
           <nav className="sticky top-0 z-50 bg-paper/90 backdrop-blur-sm border-b border-ink/5 flex flex-col">

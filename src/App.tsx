@@ -58,6 +58,7 @@ export default function App() {
   const [filteredArticles, setFilteredArticles] = useState<Article[]>([]);
   const [events, setEvents] = useState<EventInfo[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
+  const chromeRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   
@@ -93,6 +94,7 @@ export default function App() {
   const applyListRoute = useCallback((route: AppRoute, push = true) => {
     const next: AppRoute =
       route.kind === "article" || route.kind === "unknown" ? { kind: "home" } : route;
+    setSelectedArticle(null);
     setAppRoute(next);
     const path = listPathFromRoute(next);
     listPathRef.current = path;
@@ -341,6 +343,23 @@ export default function App() {
     : appRoute;
   const activeGuide = appRoute.kind === "guide" ? getGuideBySlug(appRoute.slug) : null;
 
+
+  useEffect(() => {
+    const el = chromeRef.current;
+    if (!el) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--site-chrome-h", `${el.offsetHeight}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    window.addEventListener("resize", apply);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", apply);
+    };
+  }, [articles.length, selectedArticle]);
+
   if (loading) {
     return (
       <div className="fixed inset-0 flex flex-col items-center justify-center bg-paper z-[200]">
@@ -508,9 +527,28 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Editorial Header */}
-      <div className="border-b-[4px] border-ink bg-paper pt-2 md:pt-4 px-4 md:px-6 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto">
+      {/* Editorial Header — stays above article reader */}
+      <div ref={chromeRef} className="border-b-[4px] border-ink bg-paper sticky top-0 z-[60]">
+        {/* News tape — always at the very top, scrolls right → left */}
+        {articles.length > 0 && (
+          <div className="relative overflow-hidden border-b border-ink/10 bg-paper py-2 group/ticker">
+            <div className="flex w-max animate-marquee gap-12 items-center will-change-transform">
+              {[...articles.slice(0, 12), ...articles.slice(0, 12)].map((a, i) => (
+                <button
+                  type="button"
+                  key={`${a.id}-tape-${i}`}
+                  className="flex items-center gap-3 cursor-pointer hover:text-accent transition-colors shrink-0"
+                  onClick={() => setSelectedArticle(a)}
+                >
+                  <span className="text-accent font-black text-[10px] tracking-widest uppercase">Headline:</span>
+                  <span className="font-serif italic text-xs tracking-tight">{a.title}</span>
+                  <span className="text-ink/20 opacity-50">—</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="max-w-7xl mx-auto px-4 md:px-6 pt-2 md:pt-4">
           <div className="flex flex-col gap-2 md:gap-4 mb-2 md:mb-4 border-b border-ink pb-2 md:pb-4">
              {/* Top Meta Bar */}
              <div className="flex justify-between items-center text-[10px] font-mono uppercase tracking-[0.2em] opacity-40 leading-relaxed">
@@ -567,24 +605,6 @@ export default function App() {
              </div>
           </div>
 
-          {/* Live Dispatch Ticker — under masthead, stays with sticky header */}
-          {articles.length > 0 && (
-            <div className="relative overflow-hidden border-b border-ink/10 py-2 -mx-4 md:-mx-6 px-0 group/ticker">
-              <div className="flex w-max animate-marquee group-hover/ticker:[animation-play-state:paused] gap-12 items-center">
-                {[...articles.slice(0, 12), ...articles.slice(0, 12)].map((a, i) => (
-                  <div
-                    key={`${a.id}-tape-${i}`}
-                    className="flex items-center gap-3 cursor-pointer hover:text-accent transition-colors shrink-0"
-                    onClick={() => setSelectedArticle(a)}
-                  >
-                    <span className="text-accent font-black text-[10px] tracking-widest uppercase">Headline:</span>
-                    <span className="font-serif italic text-xs tracking-tight">{a.title}</span>
-                    <span className="text-ink/20 opacity-50">—</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
           
           <nav className="relative">
             <div className="flex items-center overflow-x-auto no-scrollbar py-3 px-4 md:px-0 md:justify-center text-[10px] md:text-[11px] font-mono font-bold uppercase tracking-[0.2em] md:tracking-[0.3em]">
