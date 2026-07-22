@@ -378,7 +378,7 @@ export default function App() {
           className="text-center px-6"
         >
           <div className="mb-8 relative">
-            <h1 className="text-4xl md:text-6xl font-black tracking-tighter uppercase mb-2">Times of SF</h1>
+            <h1 className="text-4xl md:text-7xl font-serif font-black tracking-tighter uppercase mb-2 text-center">Times of San Francisco</h1>
             <div className="h-0.5 w-16 bg-accent mx-auto" />
           </div>
           
@@ -563,15 +563,16 @@ export default function App() {
 
         {/* Full masthead only on the feed — reading mode uses a compact brand strip */}
         {selectedArticle ? (
-          <div className="px-4 md:px-6 py-2.5 flex items-center justify-between gap-4">
+          <div className="px-4 md:px-6 py-2.5 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <div />
             <button
               type="button"
               onClick={() => openCategory(null)}
-              className="font-serif font-black uppercase tracking-tight text-lg md:text-xl hover:text-accent transition-colors"
+              className="font-serif font-black uppercase tracking-tight text-xl md:text-3xl hover:text-accent transition-colors text-center justify-self-center"
             >
-              Times of SF
+              Times of San Francisco
             </button>
-            <span className="hidden sm:inline text-[10px] font-mono uppercase tracking-[0.25em] text-ink/40">
+            <span className="hidden sm:inline text-[10px] font-mono uppercase tracking-[0.25em] text-ink/40 justify-self-end">
               Special Report
             </span>
           </div>
@@ -614,7 +615,7 @@ export default function App() {
               <div
                 role="banner"
                 onClick={() => openCategory(null)}
-                className="text-[clamp(1rem,6vw,95px)] font-serif font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
+                className="text-[clamp(2.25rem,11vw,7.5rem)] font-serif font-black tracking-tighter uppercase text-center w-full max-w-6xl mx-auto select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.9] block text-balance px-1"
               >
                 Times of San Francisco
               </div>
@@ -870,9 +871,9 @@ export default function App() {
         {/* Footer */}
         <footer className="mt-32 pt-16 border-t-2 border-ink pb-24 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
           <div className="lg:col-span-2">
-             <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tighter mb-6 whitespace-nowrap">Times of SF</h2>
+             <h2 className="text-3xl md:text-5xl font-serif font-black uppercase tracking-tighter mb-6 text-center md:text-left">Times of San Francisco</h2>
              <p className="max-w-sm text-ink/60 text-sm leading-relaxed mb-8 italic">
-               Independent. Local. Essential. The Times of SF is dedicated to chronicling the vibrant soul of the Bay Area through rigorous journalism and elegant design.
+               Independent. Local. Essential. The Times of San Francisco is dedicated to chronicling the vibrant soul of the Bay Area through rigorous journalism and elegant design.
              </p>
              <form onSubmit={handleNewsletterSubmit} className="mb-8 max-w-xl space-y-4">
                <div className="flex flex-col gap-4 sm:flex-row sm:items-end">

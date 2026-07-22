@@ -633,7 +633,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
             <footer className="mt-20 md:mt-32 pt-12 md:pt-16 border-t-[3px] border-ink">
                <div className="flex flex-col md:flex-row justify-between items-start gap-8 md:gap-12 leading-none">
                   <div>
-                    <h2 className="text-3xl md:text-4xl font-black uppercase tracking-tighter mb-4 whitespace-nowrap">Times of SF</h2>
+                    <h2 className="text-3xl md:text-5xl font-serif font-black uppercase tracking-tighter mb-4 text-center md:text-left">Times of San Francisco</h2>
                     <p className="text-[10px] font-mono uppercase tracking-widest opacity-30">Independent San Francisco Journalism</p>
                   </div>
                   <button onClick={onClose} className="w-full md:w-auto group relative px-8 md:px-10 py-4 md:py-5 bg-ink text-paper text-[10px] font-bold uppercase tracking-[0.2em] md:tracking-[0.3em] overflow-hidden">
