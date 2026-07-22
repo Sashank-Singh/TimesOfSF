@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -14,6 +15,8 @@ import {
   Label
 } from "recharts";
 import { motion } from "motion/react";
+
+const CHART_HEIGHT_PX = 320;
 
 interface DataVisChartProps {
   title: string;
@@ -83,6 +86,28 @@ export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAx
   const inferred = inferAxisLabels(title, chartType, normalizedData);
   const xResolved = isPlaceholderAxisLabel(xAxisLabel) ? inferred.x : xAxisLabel.trim();
   const yResolved = isPlaceholderAxisLabel(yAxisLabel) ? inferred.y : yAxisLabel.trim();
+  const chartHostRef = useRef<HTMLDivElement>(null);
+  const [chartReady, setChartReady] = useState(false);
+  const citationRef = useRef(`SF/${Math.floor(Math.random() * 1000)}`);
+
+  // ResponsiveContainer measures parent on mount; wait until the host has real width
+  // (hidden/animating parents report -1 and spam the console).
+  useEffect(() => {
+    const host = chartHostRef.current;
+    if (!host) return;
+
+    const markReady = () => {
+      if (host.clientWidth > 0) setChartReady(true);
+    };
+
+    markReady();
+    if (host.clientWidth > 0) return;
+
+    const ro = new ResizeObserver(markReady);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, []);
+
   const commonMargin = { top: 20, right: 24, left: 18, bottom: 48 };
   const axisTick = { fontSize: 10, fontFamily: "monospace", fill: "rgba(0,0,0,0.5)", fontWeight: "bold" };
   const tooltipStyle = {
@@ -179,15 +204,21 @@ export function DataVisChart({ title, type = "bar", xAxisLabel = "Category", yAx
         <h4 className="text-2xl font-black tracking-tighter leading-tight max-w-xl italic serif">{title}</h4>
       </div>
       
-      <div className="h-80 md:h-96 w-full relative">
-        <ResponsiveContainer width="100%" height="100%">
-          {renderChart()}
-        </ResponsiveContainer>
-        
+      <div
+        ref={chartHostRef}
+        className="w-full min-w-0 relative"
+        style={{ height: CHART_HEIGHT_PX }}
+      >
+        {chartReady ? (
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT_PX} minWidth={0} debounce={50}>
+            {renderChart()}
+          </ResponsiveContainer>
+        ) : null}
+
         {/* Integrated Citation Overlay in the "image" (chart area) */}
         <div className="absolute top-0 right-0 pointer-events-none opacity-20">
           <span className="text-[8px] font-mono uppercase tracking-widest vertical-text transform rotate-90 origin-top-right">
-            Times Analysis Unit Ref. SF/{(Math.random() * 1000).toFixed(0)}
+            Times Analysis Unit Ref. {citationRef.current}
           </span>
         </div>
       </div>

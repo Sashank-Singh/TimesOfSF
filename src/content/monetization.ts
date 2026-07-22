@@ -1,6 +1,7 @@
 /**
  * Config-driven monetization slots.
- * Fill real sponsors/jobs via env later; placeholders are honest and opt-in.
+ * Keep placeholders `active: false` until a real partner is live —
+ * empty inventory must not appear on the homepage or elsewhere.
  */
 
 export type SponsorSlot = {
@@ -53,7 +54,7 @@ export const SPONSORS: SponsorSlot[] = [
     tagline: "Sponsor the hometown briefing — local reach, source-linked readers.",
     href: "mailto:hello@timesofsf.com?subject=Sponsorship",
     placement: "homepage",
-    active: true,
+    active: false,
   },
   {
     id: "category-primary",
@@ -62,7 +63,7 @@ export const SPONSORS: SponsorSlot[] = [
     tagline: "Reach readers in a specific SF news section.",
     href: "mailto:hello@timesofsf.com?subject=Category%20sponsorship",
     placement: "category",
-    active: true,
+    active: false,
   },
   {
     id: "events-boost-slot",
@@ -71,7 +72,7 @@ export const SPONSORS: SponsorSlot[] = [
     tagline: "Paid boosts appear above the organic calendar.",
     href: "mailto:hello@timesofsf.com?subject=Event%20boost",
     placement: "events",
-    active: true,
+    active: false,
   },
 ];
 
@@ -83,7 +84,7 @@ export const JOBS: JobListing[] = [
     location: "San Francisco / Hybrid",
     href: "mailto:hello@timesofsf.com?subject=SF%20Jobs%20listing",
     desks: ["Tech", "Funding"],
-    active: true,
+    active: false,
   },
 ];
 
@@ -112,7 +113,7 @@ export const BOOSTED_EVENTS: BoostedEvent[] = [
     title: "Feature your venue or festival",
     venue: "Paid placement",
     href: "mailto:hello@timesofsf.com?subject=Boosted%20event",
-    active: true,
+    active: false,
   },
 ];
 

@@ -930,8 +930,16 @@ export default function App() {
             <h4 className="text-xs font-mono uppercase tracking-widest mb-6 opacity-40">Connect</h4>
             <ul className="space-y-3 text-sm font-medium">
               <li onClick={() => toast.info("Choose your newsletter topics in the signup form.")} className="hover:text-accent cursor-pointer transition-colors">Newsletter</li>
-              <li className="hover:text-accent cursor-pointer transition-colors">Instagram</li>
-              <li className="hover:text-accent cursor-pointer transition-colors">Twitter (X)</li>
+              <li>
+                <a
+                  href="https://x.com/_timesofsf"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-accent transition-colors"
+                >
+                  X
+                </a>
+              </li>
               <li onClick={() => openCategory(null)} className="hover:text-accent cursor-pointer transition-colors">Archive</li>
             </ul>
           </div>
