@@ -572,7 +572,7 @@ export default function App() {
              <div
               role="banner"
               onClick={() => openCategory(null)}
-              className="text-[clamp(1rem,6vw,95px)] font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
+              className="text-[clamp(1rem,6vw,95px)] font-serif font-black tracking-tighter uppercase text-center w-full select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.85] block whitespace-nowrap"
             >
                 Times of San Francisco
              </div>
