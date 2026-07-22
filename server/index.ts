@@ -1068,8 +1068,151 @@ ${articleUrls}
     });
   });
 
+  // Persistent chunked TTS worker — model stays warm; NDJSON PCM streams to the browser.
+  const chunkedWorkerScript = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "scripts",
+    "kokoro_chunked_worker.py",
+  );
+  const CHUNKED_TTS_TIMEOUT_MS = 600_000;
+  let chunkedWorker: import("node:child_process").ChildProcess | null = null;
+  let chunkedBusy = false;
+  let chunkedBuf = Buffer.alloc(0);
+  let chunkedTimer: NodeJS.Timeout | null = null;
+  let chunkedQueue: Array<{
+    text: string;
+    res: express.Response;
+  }> = [];
+
+  function clearChunkedTimer() {
+    if (chunkedTimer) clearTimeout(chunkedTimer);
+    chunkedTimer = null;
+  }
+
+  function failChunkedJob(err: Error, restartWorker = true) {
+    clearChunkedTimer();
+    chunkedBusy = false;
+    const job = chunkedQueue.shift();
+    if (job && !job.res.writableEnded && !job.res.destroyed) {
+      try {
+        if (!job.res.headersSent) {
+          job.res.status(500).json({ error: err.message });
+        } else {
+          job.res.write(JSON.stringify({ error: err.message }) + "\n");
+          job.res.end();
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (restartWorker && chunkedWorker) {
+      try { chunkedWorker.kill(); } catch { /* ignore */ }
+      chunkedWorker = null;
+    }
+    flushChunkedQueue();
+  }
+
+  function spawnChunkedWorker() {
+    try {
+      chunkedBuf = Buffer.alloc(0);
+      const proc = spawn("python3", ["-u", chunkedWorkerScript], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      });
+
+      proc.stdout.on("data", (chunk: Buffer) => {
+        chunkedBuf = Buffer.concat([chunkedBuf, chunk]);
+        let endIdx = chunkedBuf.indexOf(END_MARKER);
+        while (endIdx >= 0) {
+          const payload = chunkedBuf.subarray(0, endIdx);
+          chunkedBuf = chunkedBuf.subarray(endIdx + END_MARKER.length);
+          clearChunkedTimer();
+          chunkedBusy = false;
+          const job = chunkedQueue.shift();
+          if (job && !job.res.writableEnded && !job.res.destroyed) {
+            try {
+              if (payload.length > 0) job.res.write(payload);
+              if (!job.res.writableEnded) job.res.end();
+            } catch {
+              /* ignore */
+            }
+          }
+          flushChunkedQueue();
+          endIdx = chunkedBuf.indexOf(END_MARKER);
+        }
+
+        // Stream partial NDJSON to the current response as soon as we have complete lines.
+        if (chunkedBusy && chunkedQueue.length > 0) {
+          const job = chunkedQueue[0];
+          if (job && !job.res.writableEnded && !job.res.destroyed) {
+            const lastNl = chunkedBuf.lastIndexOf(0x0a); // \n
+            if (lastNl >= 0) {
+              const ready = chunkedBuf.subarray(0, lastNl + 1);
+              chunkedBuf = chunkedBuf.subarray(lastNl + 1);
+              if (ready.length > 0) {
+                try { job.res.write(ready); } catch { /* ignore */ }
+              }
+            }
+          }
+        }
+      });
+
+      proc.stderr.on("data", (d: Buffer) => {
+        if (d.length > 0) console.error("[tts-chunked-worker]", d.toString().trim());
+      });
+
+      proc.on("exit", (code) => {
+        chunkedWorker = null;
+        if (chunkedQueue.length > 0) {
+          failChunkedJob(new Error(`Chunked TTS worker exited (${code})`), false);
+        } else {
+          clearChunkedTimer();
+          chunkedBusy = false;
+        }
+      });
+
+      proc.on("error", (err) => {
+        chunkedWorker = null;
+        if (chunkedQueue.length > 0) {
+          failChunkedJob(err instanceof Error ? err : new Error("Chunked TTS worker failed"), false);
+        } else {
+          clearChunkedTimer();
+          chunkedBusy = false;
+        }
+      });
+
+      chunkedWorker = proc;
+      console.log("[tts-chunked-worker] spawned (model loads in background)");
+    } catch (err) {
+      chunkedWorker = null;
+      console.error("[tts-chunked-worker] spawn failed:", err);
+    }
+  }
+
+  function flushChunkedQueue() {
+    if (!chunkedWorker || chunkedBusy || chunkedQueue.length === 0) return;
+    if (chunkedWorker.exitCode !== null) {
+      spawnChunkedWorker();
+      return;
+    }
+    chunkedBusy = true;
+    clearChunkedTimer();
+    chunkedTimer = setTimeout(() => {
+      failChunkedJob(new Error("Chunked TTS timed out"));
+    }, CHUNKED_TTS_TIMEOUT_MS);
+    try {
+      chunkedWorker.stdin?.write(JSON.stringify({ text: chunkedQueue[0].text }) + "\n");
+    } catch (err) {
+      failChunkedJob(err instanceof Error ? err : new Error("Failed to write to chunked TTS worker"));
+    }
+  }
+
+  function warmChunkedWorker() {
+    if (!chunkedWorker || chunkedWorker.exitCode !== null) spawnChunkedWorker();
+  }
+
   // Chunked TTS — NDJSON PCM for Web Audio. Prefer POST (GET query strings truncate long articles).
-  // Lines: {"sampleRate":24000} then {"pcm":"<base64>"}… then {"done":true}
   const handleTtsChunked = async (req: express.Request, res: express.Response) => {
     const fromQuery = typeof req.query.text === "string" ? req.query.text.trim() : "";
     const fromBody = typeof req.body?.text === "string" ? req.body.text.trim() : "";
@@ -1077,47 +1220,39 @@ ${articleUrls}
     if (!text) { res.status(400).json({ error: "Missing text" }); return; }
     const truncated = text.length > TTS_INLINE_MAX_CHARS ? text.slice(0, TTS_INLINE_MAX_CHARS) : text;
 
-    const chunkedScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_chunked.py");
-
     res.setHeader("Content-Type", "application/x-ndjson");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("X-Accel-Buffering", "no");
+    // Flush headers immediately so the browser starts reading the stream.
+    if (typeof (res as express.Response & { flushHeaders?: () => void }).flushHeaders === "function") {
+      (res as express.Response & { flushHeaders: () => void }).flushHeaders();
+    }
 
-    const proc = spawn("python3", [chunkedScript], { stdio: ["pipe", "pipe", "pipe"] });
+    if (!chunkedWorker || chunkedWorker.exitCode !== null) spawnChunkedWorker();
+    if (!chunkedWorker) {
+      // Fallback: one-shot script (cold — slower).
+      const chunkedScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "kokoro_chunked.py");
+      const proc = spawn("python3", ["-u", chunkedScript], {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, PYTHONUNBUFFERED: "1" },
+      });
+      proc.stdin.write(truncated);
+      proc.stdin.end();
+      proc.stdout.pipe(res);
+      proc.on("error", () => {
+        if (!res.headersSent) res.status(500).json({ error: "Failed to start TTS" });
+      });
+      return;
+    }
 
-    proc.stdin.write(truncated);
-    proc.stdin.end();
-
-    proc.stdout.pipe(res);
-
-    let stderr = "";
-    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
-
-    const killTimer = setTimeout(() => { proc.kill(); }, 600_000);
-    proc.on("exit", () => clearTimeout(killTimer));
-
-    const maybeEnd = () => { if (!res.writableEnded) res.end(); };
-
-    proc.on("close", (code) => {
-      clearTimeout(killTimer);
-      if (res.writableEnded || res.destroyed) return;
-      if (code !== 0) {
-        const msg = stderr.trim() || `exit ${code}`;
-        console.error("[tts-chunked] error:", msg);
-        if (!res.headersSent) res.status(500).json({ error: `TTS error: ${msg}` });
-        else maybeEnd();
-      } else {
-        maybeEnd();
+    chunkedQueue.push({ text: truncated, res });
+    res.on("close", () => {
+      // If client disconnects before we start, drop the queued job.
+      if (!chunkedBusy) {
+        chunkedQueue = chunkedQueue.filter((j) => j.res !== res);
       }
     });
-
-    proc.on("error", (err) => {
-      clearTimeout(killTimer);
-      console.error("[tts-chunked] spawn error:", err);
-      if (!res.headersSent && !res.destroyed) {
-        res.status(500).json({ error: "Failed to start TTS" });
-      }
-    });
+    if (!chunkedBusy) flushChunkedQueue();
   };
 
   app.get("/api/tts/chunked", rateLimit("tts-chunked", 20, 60_000), handleTtsChunked);
@@ -1247,6 +1382,12 @@ ${articleUrls}
 
   app.listen(config.port, "0.0.0.0", () => {
     console.log(`Server listening on http://0.0.0.0:${config.port}`);
+    // Preload Kokoro so the first Listen click streams audio within seconds.
+    try {
+      warmChunkedWorker();
+    } catch (err) {
+      console.warn("[tts-chunked-worker] prewarm skipped:", err);
+    }
     if (config.ownerAdminUiPath && config.ownerCliSecret) {
       console.log(`Owner article ingest UI: GET ${config.ownerAdminUiPath} (same origin as this server)`);
     }

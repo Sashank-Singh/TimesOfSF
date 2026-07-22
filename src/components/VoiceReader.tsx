@@ -8,6 +8,8 @@ export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paus
 interface VoiceReaderProps {
   text: string;
   title?: string;
+  /** Start playback as soon as the first PCM chunk arrives (within ~5s on warm TTS). */
+  autoPlay?: boolean;
   onWordChange?: (wordIndex: number) => void;
   onStatusChange?: (status: VoiceReaderStatus) => void;
   onComplete?: () => void;
@@ -38,7 +40,7 @@ function decodePcm(b64: string): Float32Array {
   return out;
 }
 
-export function VoiceReader({ text, title, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
+export function VoiceReader({ text, title, autoPlay = false, onWordChange, onStatusChange, onComplete, onClose }: VoiceReaderProps) {
   const [status, setStatus] = useState<VoiceReaderStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -283,8 +285,23 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
   }, [text, updateStatus, acceptChunk, playBuffered]);
 
   useEffect(() => {
-    startStream();
-    return () => { stopAll(); };
+    let cancelled = false;
+    (async () => {
+      if (autoPlay) {
+        pendingPlayRef.current = true;
+        setPendingPlay(true);
+        try {
+          await ensureAudioCtx();
+        } catch {
+          /* gesture may still unlock on Play tap */
+        }
+      }
+      if (!cancelled) startStream();
+    })();
+    return () => {
+      cancelled = true;
+      stopAll();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -581,10 +598,10 @@ export function VoiceReader({ text, title, onWordChange, onStatusChange, onCompl
 
           <div className="min-w-0 flex-1">
             <p className="text-[12px] sm:text-[13px] font-medium text-white/90 truncate leading-tight">
-              {isLoading ? "Preparing audio..." : isReady ? "Ready to play" : title || "Now Playing"}
+              {isLoading ? (pendingPlay ? "Starting stream…" : "Buffering audio…") : isReady ? "Ready to play" : title || "Now Playing"}
             </p>
             <p className="text-[10px] sm:text-[11px] text-white/40 truncate leading-tight mt-0.5">
-              {isLoading ? (pendingPlay ? "Will play when ready" : "Processing locally") : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
+              {isLoading ? (pendingPlay ? "First audio should start within a few seconds" : "Warming TTS engine") : isReady ? "Tap play to listen" : hasAudio ? fmtTime(currentTime) : ""}
             </p>
           </div>
 

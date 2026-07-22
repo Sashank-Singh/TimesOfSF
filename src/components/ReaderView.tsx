@@ -362,7 +362,19 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                 </button>
                 <button
                   title="Listen to Article"
-                  onClick={() => setVoiceActive(!voiceActive)}
+                  onClick={() => {
+                    if (!voiceActive) {
+                      // Unlock AudioContext during the user gesture so autoplay can start on first chunk.
+                      try {
+                        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+                        const ctx = new Ctx();
+                        void ctx.resume().finally(() => { void ctx.close(); });
+                      } catch { /* ignore */ }
+                      setVoiceActive(true);
+                    } else {
+                      setVoiceActive(false);
+                    }
+                  }}
                   className={cn(
                     "group flex items-center gap-2 text-[10px] font-mono font-bold uppercase tracking-widest transition-colors",
                     voiceActive ? "text-accent" : "hover:text-accent",
@@ -637,6 +649,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
               <VoiceReader
                 text={plainText}
                 title={article.title}
+                autoPlay
                 onWordChange={setActiveWord}
                 onClose={() => setVoiceActive(false)}
               />
