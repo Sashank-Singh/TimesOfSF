@@ -59,6 +59,8 @@ export default function App() {
   const [events, setEvents] = useState<EventInfo[]>([]);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const chromeRef = useRef<HTMLDivElement>(null);
+  const tickerTrackRef = useRef<HTMLDivElement>(null);
+  const [tickerDuration, setTickerDuration] = useState(45);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   
@@ -299,6 +301,30 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('sf-bookmarks', JSON.stringify(bookmarkedIds));
   }, [bookmarkedIds]);
+
+  // Keep the news-tape scroll speed relative to viewport width — a fixed px/sec
+  // reads as way too fast on a narrow phone screen and barely perceptible on a
+  // wide desktop screen, so aim for a constant "seconds to cross the viewport".
+  useEffect(() => {
+    const track = tickerTrackRef.current;
+    if (!track) return;
+
+    const SECONDS_PER_VIEWPORT = 9;
+    const MIN_DURATION = 20;
+    const MAX_DURATION = 70;
+
+    const recompute = () => {
+      const singleCopyWidth = track.scrollWidth / 2;
+      if (!singleCopyWidth) return;
+      const pxPerSecond = window.innerWidth / SECONDS_PER_VIEWPORT;
+      const duration = singleCopyWidth / pxPerSecond;
+      setTickerDuration(Math.min(MAX_DURATION, Math.max(MIN_DURATION, duration)));
+    };
+
+    recompute();
+    window.addEventListener('resize', recompute);
+    return () => window.removeEventListener('resize', recompute);
+  }, [articles]);
 
   useEffect(() => {
     const route = routeFromLocation(window.location);
@@ -544,7 +570,11 @@ export default function App() {
         {/* News tape — always at the very top, scrolls right → left */}
         {articles.length > 0 && (
           <div className="relative overflow-hidden border-b border-ink/10 bg-paper py-2">
-            <div className="flex w-max animate-marquee gap-12 items-center will-change-transform">
+            <div
+              ref={tickerTrackRef}
+              className="flex w-max animate-marquee gap-12 items-center will-change-transform"
+              style={{ animationDuration: `${tickerDuration}s` }}
+            >
               {[...articles.slice(0, 12), ...articles.slice(0, 12)].map((a, i) => (
                 <button
                   type="button"
@@ -615,7 +645,7 @@ export default function App() {
               <div
                 role="banner"
                 onClick={() => openCategory(null)}
-                className="text-[clamp(2.25rem,11vw,7.5rem)] font-serif font-black tracking-tighter uppercase text-center w-full max-w-6xl mx-auto select-none cursor-pointer hover:text-accent transition-colors duration-500 leading-[0.9] block text-balance px-1"
+                className="masthead-title font-serif font-black tracking-tighter uppercase text-center w-full mx-auto select-none cursor-pointer hover:text-accent transition-colors duration-500 block px-2"
               >
                 Times of San Francisco
               </div>

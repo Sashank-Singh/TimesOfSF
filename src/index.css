@@ -50,6 +50,13 @@
 }
 
 @layer utilities {
+  /* Keep full masthead name on one line while scaling to the viewport */
+  .masthead-title {
+    font-size: clamp(1.15rem, calc((100vw - 3rem) / 13.5), 7rem);
+    white-space: nowrap;
+    line-height: 1;
+  }
+
   .sr-only {
     position: absolute;
     width: 1px;
