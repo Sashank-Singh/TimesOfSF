@@ -464,9 +464,35 @@ export async function runPipeline(options?: RunPipelineOptions) {
     ];
   }
 
-  activePipelineRun = runPipelineUnlocked(options).finally(() => {
-    activePipelineRun = null;
-  });
+  const timeoutMs = Math.max(60_000, config.pipelineRunTimeoutMs);
+  activePipelineRun = Promise.race([
+    runPipelineUnlocked(options),
+    new Promise<PipelineRunResult[]>((_, reject) => {
+      setTimeout(() => {
+        reject(
+          new Error(
+            `Pipeline run timed out after ${Math.round(timeoutMs / 1000)}s — releasing lock so publishing can resume.`,
+          ),
+        );
+      }, timeoutMs);
+    }),
+  ])
+    .catch((error) => {
+      console.error("🚨 Pipeline run aborted:", error instanceof Error ? error.message : error);
+      return [
+        {
+          runId: `timeout_${Date.now()}`,
+          topic: null,
+          successfulSources: [],
+          failedSources: [],
+          published: false,
+          reason: error instanceof Error ? error.message : "Pipeline run aborted.",
+        },
+      ] satisfies PipelineRunResult[];
+    })
+    .finally(() => {
+      activePipelineRun = null;
+    });
   return activePipelineRun;
 }
 

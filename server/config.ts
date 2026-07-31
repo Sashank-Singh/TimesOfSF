@@ -111,6 +111,11 @@ export const config = {
    * Prevents duplicate overlapping runs when an external cron and the internal timer both fire. HTTP /api/pipeline/run ignores this.
    */
   pipelineCoalesceMs: readOptionalInt("PIPELINE_COALESCE_MS", 7 * 60 * 1000),
+  /**
+   * Hard ceiling for one pipeline pass. If a hung LLM/fetch never returns, the in-memory
+   * single-flight lock is released after this so later ticks can publish again. Default 12m.
+   */
+  pipelineRunTimeoutMs: readOptionalInt("PIPELINE_RUN_TIMEOUT_MS", 12 * 60 * 1000),
   /** Optional shared secret for GET /api/cron/pipeline?secret=… (UptimeRobot / Coolify scheduled tasks / GitHub Actions). */
   cronSecret: process.env.CRON_SECRET,
   /** Same secret as CLI admin; required for POST /api/admin/article-from-url */
