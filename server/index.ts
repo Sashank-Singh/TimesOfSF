@@ -717,6 +717,38 @@ ${articleUrls}
     }
   });
 
+  app.post("/api/tips", rateLimit("tips-submit", 5, 10 * 60_000), async (req, res) => {
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const kind = req.body?.kind === "correction" ? "correction" : "tip";
+    const postSlug = typeof req.body?.postSlug === "string" ? req.body.postSlug.trim().slice(0, 200) : null;
+    const contactEmailRaw = typeof req.body?.contactEmail === "string" ? req.body.contactEmail.trim() : "";
+    const contactEmail = contactEmailRaw && EMAIL_RE.test(contactEmailRaw) ? contactEmailRaw.slice(0, 254) : null;
+
+    if (message.length < 10 || message.length > 4000) {
+      res.status(400).json({ ok: false, error: "Message must be between 10 and 4000 characters." });
+      return;
+    }
+
+    try {
+      const { saveTip } = await import("./db");
+      await saveTip({ postSlug, kind, message, contactEmail });
+      res.status(201).json({ ok: true });
+    } catch (error) {
+      console.error("tip submit:", error);
+      res.status(500).json({ ok: false, error: "Could not submit right now." });
+    }
+  });
+
+  app.get("/api/tips", requireOwner, async (_req, res) => {
+    try {
+      const { fetchTips } = await import("./db");
+      const tips = await fetchTips();
+      res.json(tips);
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to fetch tips" });
+    }
+  });
+
   app.post("/api/posts/:id/expand", requireOwner, async (req, res) => {
     try {
       const { fetchPostById, updatePostContent } = await import("./db");

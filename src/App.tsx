@@ -71,6 +71,9 @@ export default function App() {
       return "";
     }
   });
+  const [searchResults, setSearchResults] = useState<Article[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [appRoute, setAppRoute] = useState<AppRoute>(() => routeFromLocation(window.location));
   const [selectedCategory, setSelectedCategory] = useState<string | null>(() => {
     const route = routeFromLocation(window.location);
@@ -297,6 +300,32 @@ export default function App() {
     }
     setFilteredArticles(result);
   }, [searchQuery, selectedCategory, articles, bookmarkedIds]);
+
+  // Live search dropdown in the menu overlay — hits the backend so it covers
+  // the full archive (headline/dek/body), not just the ~100 articles already loaded.
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await fetchArticles(q);
+        setSearchResults(results.slice(0, 8));
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [searchQuery]);
 
   useEffect(() => {
     localStorage.setItem('sf-bookmarks', JSON.stringify(bookmarkedIds));
@@ -526,6 +555,32 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {searchQuery.trim().length >= 2 && (
+              <div className="w-full max-w-sm mb-12 text-left max-h-72 overflow-y-auto border border-ink/10 rounded-sm divide-y divide-ink/10 bg-paper">
+                {searching ? (
+                  <p className="px-4 py-3 text-xs font-mono uppercase tracking-widest text-ink/40">Searching...</p>
+                ) : searchResults.length === 0 ? (
+                  <p className="px-4 py-3 text-xs font-mono uppercase tracking-widest text-ink/40">No stories found.</p>
+                ) : (
+                  searchResults.map((result) => (
+                    <button
+                      key={result.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedArticle(result);
+                        setIsMenuOpen(false);
+                        setSearchQuery("");
+                      }}
+                      className="w-full text-left px-4 py-3 hover:bg-ink/5 transition-colors"
+                    >
+                      <span className="block text-[9px] font-mono uppercase tracking-widest text-accent mb-1">{result.category}</span>
+                      <span className="block text-sm font-serif font-bold leading-snug">{result.title}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
 
             <div className="space-y-6">
               <button 

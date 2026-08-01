@@ -166,6 +166,24 @@ export async function fetchEvents(): Promise<EventInfo[]> {
   return await res.json();
 }
 
+export async function submitTip(input: {
+  postSlug?: string;
+  kind: "tip" | "correction";
+  message: string;
+  contactEmail?: string;
+}): Promise<void> {
+  const res = await fetch(`${getApiBase()}/api/tips`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(typeof data.error === "string" ? data.error : "Could not submit right now.");
+  }
+}
+
 export async function subscribeToNewsletter(email: string, preferences: string[]): Promise<void> {
   const res = await fetch(`${getApiBase()}/api/newsletter/subscribe`, {
     method: "POST",

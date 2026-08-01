@@ -24,6 +24,10 @@ export function buildOwnerArticleIngestPageHtml(): string {
     .row input { width: auto; }
     pre { white-space: pre-wrap; font-size: 0.75rem; background: #171717; border: 1px solid #262626; padding: 0.75rem; border-radius: 0.375rem; margin-top: 1rem; }
     a { color: #fbbf24; }
+    .tips { margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid #262626; }
+    .tip-item { border: 1px solid #262626; border-radius: 0.375rem; padding: 0.75rem; margin-top: 0.75rem; font-size: 0.8125rem; }
+    .tip-item .meta { font-size: 0.6875rem; text-transform: uppercase; letter-spacing: 0.1em; color: #737373; margin-bottom: 0.35rem; }
+    .tip-item .msg { color: #e5e5e5; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -46,6 +50,13 @@ export function buildOwnerArticleIngestPageHtml(): string {
     <pre id="out" hidden></pre>
     <p style="margin-top:1.5rem;font-size:0.75rem;color:#525252">Do not bookmark with the secret in the URL. Bookmark this page path only.</p>
     <p style="margin-top:0.5rem"><a href="/">← Public site</a></p>
+
+    <div class="tips">
+      <h1>Tips & corrections</h1>
+      <p class="note">Reader submissions from article pages.</p>
+      <button type="button" id="loadTips">Load recent</button>
+      <div id="tipsOut"></div>
+    </div>
   </div>
   <script>
     (function () {
@@ -90,6 +101,36 @@ export function buildOwnerArticleIngestPageHtml(): string {
           out.hidden = false;
           out.textContent = e.message || "Network error";
         }).finally(function () { btn.disabled = false; });
+      };
+
+      document.getElementById("loadTips").onclick = function () {
+        var tipsOut = document.getElementById("tipsOut");
+        var secretValue = sec.value.trim();
+        if (!secretValue) { tipsOut.textContent = "Enter OWNER_CLI_SECRET above first."; return; }
+        tipsOut.textContent = "Loading…";
+        fetch("/api/tips", { headers: { "x-admin-secret": secretValue } })
+          .then(function (r) { return r.json().then(function (j) { return { r: r, j: j }; }); })
+          .then(function (_ref) {
+            var r = _ref.r, j = _ref.j;
+            if (!r.ok) { tipsOut.textContent = (j && j.error) || r.statusText; return; }
+            if (!Array.isArray(j) || j.length === 0) { tipsOut.textContent = "No submissions yet."; return; }
+            tipsOut.innerHTML = "";
+            j.forEach(function (tip) {
+              var div = document.createElement("div");
+              div.className = "tip-item";
+              var meta = document.createElement("div");
+              meta.className = "meta";
+              var when = new Date(tip.createdAt).toLocaleString();
+              meta.textContent = [tip.kind, tip.postSlug || "(no article)", tip.contactEmail || "no email", when].join(" · ");
+              var msg = document.createElement("div");
+              msg.className = "msg";
+              msg.textContent = tip.message;
+              div.appendChild(meta);
+              div.appendChild(msg);
+              tipsOut.appendChild(div);
+            });
+          })
+          .catch(function (e) { tipsOut.textContent = e.message || "Network error"; });
       };
     })();
   </script>

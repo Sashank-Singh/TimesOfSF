@@ -11,6 +11,7 @@ import { formatPublishedTimestamp, cn, stripCitationSectionsForTts, stripMarkdow
 
 import { EntityHighlight } from "./EntityHighlight";
 import { DataVisChart } from "./DataVisChart";
+import { TipBox } from "./TipBox";
 import { lookupGlossaryDefinition } from "../lib/glossary";
 
 const categoryGradients: Record<string, string> = {
@@ -629,6 +630,10 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                 More {article.category} news
               </button>
             </p>
+
+            <div className="mt-12">
+              <TipBox postSlug={article.slug} />
+            </div>
 
             <footer className="mt-20 md:mt-32 pt-12 md:pt-16 border-t-[3px] border-ink">
                <div className="flex flex-col md:flex-row justify-between items-start gap-8 md:gap-12 leading-none">

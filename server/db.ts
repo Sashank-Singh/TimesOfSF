@@ -130,7 +130,44 @@ export async function ensureSchema() {
       )
     `;
     await sql`CREATE INDEX IF NOT EXISTS newsletter_deliveries_sent_idx ON newsletter_deliveries (sent_at DESC)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS tips (
+        id BIGSERIAL PRIMARY KEY,
+        post_id BIGINT REFERENCES generated_posts(id) ON DELETE SET NULL,
+        post_slug TEXT,
+        kind TEXT NOT NULL DEFAULT 'tip',
+        message TEXT NOT NULL,
+        contact_email TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS tips_created_idx ON tips (created_at DESC)`;
   });
+}
+
+export async function saveTip(input: {
+  postSlug?: string | null;
+  kind: "tip" | "correction";
+  message: string;
+  contactEmail?: string | null;
+}) {
+  const post = input.postSlug ? await fetchPostBySlug(input.postSlug) : null;
+  const rows = await sql`
+    INSERT INTO tips (post_id, post_slug, kind, message, contact_email)
+    VALUES (${post?.id ?? null}, ${input.postSlug ?? null}, ${input.kind}, ${input.message}, ${input.contactEmail ?? null})
+    RETURNING id, created_at
+  `;
+  return rows[0] as { id: string | number; created_at: string | Date };
+}
+
+export async function fetchTips(limit = 200) {
+  const rows = await sql`
+    SELECT id, post_id as "postId", post_slug as "postSlug", kind, message, contact_email as "contactEmail", created_at as "createdAt"
+    FROM tips
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows as any[];
 }
 
 export async function saveNewsletterSubscriber(email: string, source?: string, preferences: string[] = []) {
