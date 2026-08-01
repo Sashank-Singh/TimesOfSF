@@ -49,6 +49,16 @@ function readOptionalFloat(name: string, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readDigestHours(name: string, fallback: number[]): number[] {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const hours = raw
+    .split(",")
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 23);
+  return hours.length > 0 ? hours : fallback;
+}
+
 const llmProvider = readOptionalProvider();
 
 const port = readOptionalInt("PORT", 8787);
@@ -148,8 +158,9 @@ export const config = {
   postalApiKey: process.env.POSTAL_API_KEY?.trim() || undefined,
   newsletterFrom: process.env.NEWSLETTER_FROM?.trim() || undefined,
   newsletterReplyTo: process.env.NEWSLETTER_REPLY_TO?.trim() || undefined,
-  newsletterIntervalMs: readOptionalInt("NEWSLETTER_INTERVAL_MS", 10 * 60 * 1000),
-  newsletterBatchLimit: readOptionalInt("NEWSLETTER_BATCH_LIMIT", 25),
+  /** Local hours (0-23) at which a digest is sent, e.g. "8,20" for morning + night. */
+  newsletterDigestHours: readDigestHours("NEWSLETTER_DIGEST_HOURS", [8, 20]),
+  newsletterTimezone: process.env.NEWSLETTER_TIMEZONE?.trim() || "America/Los_Angeles",
   disableNewsletterSender: process.env.DISABLE_NEWSLETTER_SENDER === "true",
 };
 

@@ -137,21 +137,22 @@ POSTAL_API_URL="https://email.example.com"
 POSTAL_API_KEY="postal-server-api-key"
 NEWSLETTER_FROM="Times of SF <news@timesofsf.com>"
 NEWSLETTER_REPLY_TO="hello@timesofsf.com"
-NEWSLETTER_INTERVAL_MS=600000
-NEWSLETTER_BATCH_LIMIT=25
+NEWSLETTER_DIGEST_HOURS="8,20"
+NEWSLETTER_TIMEZONE="America/Los_Angeles"
 DISABLE_NEWSLETTER_SENDER=false
 ```
 
 `POSTAL_API_URL`/`POSTAL_API_KEY` come from a Postal mail server whose sending domain (matching `NEWSLETTER_FROM`) has been added and DNS-verified (SPF/DKIM/MX) in that Postal instance's admin UI.
 
-Behavior:
+Behavior: two digest emails a day (not a rolling per-article send), one per hour listed in `NEWSLETTER_DIGEST_HOURS` (local time in `NEWSLETTER_TIMEZONE`) — the earliest configured hour is the "morning" digest, any other is "night."
 
-- Subscribers receive only new articles published after they subscribed.
-- Articles are filtered against each subscriber's selected categories.
-- `newsletter_deliveries` records each subscriber/article pair so stories are not resent.
+- Each digest targets 7-10 stories, picked by the LLM (same Fireworks model as article synthesis) for significance, each with a one-line "why it matters." Candidates are drawn from a rolling 30-day pool rather than "since the last digest," so a quiet news day still has enough to send — it's per-subscriber delivery tracking, not the window, that keeps morning and night from repeating.
+- Tech and Funding are treated as priority beats: wherever they appear in the ranked pool, they're sorted above every other category, both by prompt instruction and by a deterministic sort afterward (not left to the LLM's discretion alone).
+- Personalized to each subscriber's saved topic preferences (categories only apply here); a subscriber with no preferences gets the universal top stories across all categories, unfiltered.
+- `newsletter_digest_runs` makes each day/slot idempotent — a digest is never sent twice, even if the check fires more than once in the same hour.
+- `newsletter_deliveries` records each subscriber/article pair so nothing already sent to someone is repeated in a later digest, no matter how far back it was.
 - Each email includes a tokenized unsubscribe link.
-- The internal sender runs every `NEWSLETTER_INTERVAL_MS` when Postal is configured.
-- `POST /api/cron/newsletter` can manually run delivery with `CRON_SECRET` or `OWNER_CLI_SECRET`.
+- The internal scheduler checks every 60s for a due hour. `POST /api/cron/newsletter` (`CRON_SECRET` or `OWNER_CLI_SECRET`) checks the same way, or pass `?slot=morning`/`?slot=night` to force a specific digest on demand (still respects the once-per-day guard).
 
 ### TTS
 

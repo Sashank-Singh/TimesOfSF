@@ -1,7 +1,31 @@
 import { config } from "./config";
-import { fetchPendingNewsletterBatches, markNewsletterDelivered, NewsletterBatch, NewsletterPost } from "./db";
+import {
+  DigestCandidatePost,
+  DigestSubscriber,
+  fetchActiveSubscribersForDigest,
+  fetchAlreadyDelivered,
+  fetchDigestCandidatePosts,
+  hasDigestRun,
+  markNewsletterDelivered,
+  recordDigestRun,
+} from "./db";
+import { rankDigestStories } from "./agents";
+
+export type DigestSlot = "morning" | "night";
 
 let newsletterRunInFlight = false;
+
+/** Typical send size per digest (7-10 stories); ranking goes deeper than this so night can still
+ * find fresh material after morning's picks are excluded per-subscriber. */
+const DIGEST_SEND_MAX = 10;
+const DIGEST_RANK_DEPTH = 30;
+/** Rolling candidate window — wide enough that a quiet news day still has plenty to choose from;
+ * per-subscriber delivery tracking (not this window) is what prevents repeats. */
+const DIGEST_LOOKBACK_DAYS = 30;
+
+const PAPER = "#F9F8F6";
+const INK = "#121212";
+const ACCENT = "#8B0000";
 
 function articleUrl(slug: string): string {
   const base = config.appUrl.replace(/\/+$/, "");
@@ -22,71 +46,109 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function plainTextForPosts(batch: NewsletterBatch): string {
-  const posts = batch.posts;
+function slotLabel(slot: DigestSlot): string {
+  return slot === "morning" ? "Morning Briefing" : "Evening Briefing";
+}
+
+/** current date (YYYY-MM-DD) and hour (0-23) in the configured timezone */
+export function localDateAndHour(timezone: string, at: Date = new Date()): { dateKey: string; hour: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(at);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  const dateKey = `${get("year")}-${get("month")}-${get("day")}`;
+  const hour = Number.parseInt(get("hour"), 10) % 24;
+  return { dateKey, hour };
+}
+
+export type DigestItem = { post: DigestCandidatePost; whyItMatters: string };
+
+export function plainTextForDigest(slot: DigestSlot, items: DigestItem[], unsubscribeToken: string): string {
   return [
-    "New Times of SF stories for your selected topics:",
+    `Times of SF — ${slotLabel(slot)}`,
     "",
-    ...posts.flatMap((post) => [
-      `${post.category ?? "Story"}: ${post.headline}`,
-      post.dek,
-      articleUrl(post.slug),
+    ...items.flatMap((item, i) => [
+      `${i + 1}. [${item.post.category ?? "Story"}] ${item.post.headline}`,
+      item.whyItMatters,
+      articleUrl(item.post.slug),
       "",
     ]),
     "You are receiving this because you subscribed to Times of SF topic updates.",
-    `Unsubscribe: ${unsubscribeUrl(batch.unsubscribeToken)}`,
+    `Unsubscribe: ${unsubscribeUrl(unsubscribeToken)}`,
   ].join("\n");
 }
 
-function htmlForPosts(batch: NewsletterBatch): string {
-  const unsubscribe = unsubscribeUrl(batch.unsubscribeToken);
-  const posts = batch.posts;
-  const items = posts.map((post) => {
-    const url = articleUrl(post.slug);
-    return `
-      <li style="margin:0 0 22px 0;">
-        <div style="font:700 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:#9a3412;">
-          ${escapeHtml(post.category ?? "Story")}
-        </div>
-        <h2 style="margin:4px 0 8px 0;font:700 22px/1.15 Georgia,serif;color:#111827;">
-          <a href="${escapeHtml(url)}" style="color:#111827;text-decoration:none;">${escapeHtml(post.headline)}</a>
-        </h2>
-        <p style="margin:0 0 10px 0;font:400 15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#374151;">
-          ${escapeHtml(post.dek)}
-        </p>
-        <a href="${escapeHtml(url)}" style="font:700 12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:#9a3412;text-decoration:none;">
-          Read story
-        </a>
-      </li>
-    `;
-  }).join("");
+export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribeToken: string): string {
+  const unsubscribe = unsubscribeUrl(unsubscribeToken);
+  const rows = items
+    .map((item, i) => {
+      const url = articleUrl(item.post.slug);
+      return `
+        <tr>
+          <td style="padding:0 0 28px 0;border-bottom:1px solid rgba(18,18,18,0.08);">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="width:36px;vertical-align:top;padding-top:2px;">
+                  <div style="font:800 20px/1 Georgia,'Times New Roman',serif;color:${ACCENT};">${i + 1}</div>
+                </td>
+                <td style="vertical-align:top;">
+                  <div style="font:700 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.15em;text-transform:uppercase;color:${ACCENT};margin:0 0 6px 0;">
+                    ${escapeHtml(item.post.category ?? "Story")}
+                  </div>
+                  <h2 style="margin:0 0 8px 0;font:700 21px/1.25 Georgia,'Times New Roman',serif;color:${INK};">
+                    <a href="${escapeHtml(url)}" style="color:${INK};text-decoration:none;">${escapeHtml(item.post.headline)}</a>
+                  </h2>
+                  <p style="margin:0 0 10px 0;font:400 14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:rgba(18,18,18,0.7);">
+                    ${escapeHtml(item.whyItMatters)}
+                  </p>
+                  <a href="${escapeHtml(url)}" style="font:700 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.15em;text-transform:uppercase;color:${ACCENT};text-decoration:none;">
+                    Read story →
+                  </a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
 
   return `
-    <div style="margin:0;padding:24px;background:#f8f3ea;">
-      <main style="max-width:680px;margin:0 auto;background:#fffaf0;border:1px solid #111827;padding:28px;">
-        <div style="font:800 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;text-transform:uppercase;color:#111827;">
-          Times of SF
-        </div>
-        <h1 style="margin:10px 0 22px 0;font:900 30px/1.05 Georgia,serif;color:#111827;">
-          New stories for your topics
-        </h1>
-        <ul style="list-style:none;margin:0;padding:0;">${items}</ul>
-        <p style="margin:28px 0 0 0;font:400 12px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#6b7280;">
-          You are receiving this because you subscribed to Times of SF topic updates.
-          <a href="${escapeHtml(unsubscribe)}" style="color:#6b7280;">Unsubscribe</a>.
-        </p>
-      </main>
+    <div style="margin:0;padding:32px 16px;background:${PAPER};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+        <tr>
+          <td style="padding-bottom:28px;border-bottom:3px solid ${INK};text-align:center;">
+            <div style="font:900 26px/1 Georgia,'Times New Roman',serif;letter-spacing:-0.02em;text-transform:uppercase;color:${INK};">
+              Times of San Francisco
+            </div>
+            <div style="margin-top:8px;font:700 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.25em;text-transform:uppercase;color:${ACCENT};">
+              ${escapeHtml(slotLabel(slot))}
+            </div>
+          </td>
+        </tr>
+        <tr><td style="height:28px;"></td></tr>
+        ${rows}
+        <tr>
+          <td style="padding:28px 0 0 0;text-align:center;">
+            <p style="margin:0 0 6px 0;font:400 11px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:rgba(18,18,18,0.45);">
+              You are receiving this because you subscribed to Times of SF topic updates.
+            </p>
+            <a href="${escapeHtml(unsubscribe)}" style="font:400 11px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:rgba(18,18,18,0.45);">
+              Unsubscribe
+            </a>
+          </td>
+        </tr>
+      </table>
     </div>
   `;
 }
 
-function subjectForBatch(batch: NewsletterBatch): string {
-  const first = batch.posts[0];
-  if (batch.posts.length === 1) return `Times of SF: ${first.headline}`;
-  return `Times of SF: ${batch.posts.length} new stories for ${batch.preferences.join(", ")}`;
-}
-
-async function sendWithPostal(batch: NewsletterBatch) {
+async function sendDigestEmail(to: string, subject: string, html: string, text: string) {
   if (!config.postalApiUrl || !config.postalApiKey || !config.newsletterFrom) {
     throw new Error("Newsletter email is not configured. Set POSTAL_API_URL, POSTAL_API_KEY, and NEWSLETTER_FROM.");
   }
@@ -99,11 +161,11 @@ async function sendWithPostal(batch: NewsletterBatch) {
     },
     body: JSON.stringify({
       from: config.newsletterFrom,
-      to: [batch.email],
+      to: [to],
       reply_to: config.newsletterReplyTo,
-      subject: subjectForBatch(batch),
-      html_body: htmlForPosts(batch),
-      plain_body: plainTextForPosts(batch),
+      subject,
+      html_body: html,
+      plain_body: text,
     }),
   });
 
@@ -117,22 +179,94 @@ export function isNewsletterSenderConfigured(): boolean {
   return Boolean(config.postalApiUrl && config.postalApiKey && config.newsletterFrom && !config.disableNewsletterSender);
 }
 
-export async function runNewsletterSender() {
+function groupSubscribersByPreferences(subscribers: DigestSubscriber[]): Map<string, DigestSubscriber[]> {
+  const groups = new Map<string, DigestSubscriber[]>();
+  for (const subscriber of subscribers) {
+    const key = [...subscriber.preferences].sort().join(",");
+    const group = groups.get(key);
+    if (group) group.push(subscriber);
+    else groups.set(key, [subscriber]);
+  }
+  return groups;
+}
+
+export async function buildAndSendDigest(slot: DigestSlot) {
   if (!isNewsletterSenderConfigured()) return { sent: 0, skipped: "not_configured" as const };
   if (newsletterRunInFlight) return { sent: 0, skipped: "in_flight" as const };
 
   newsletterRunInFlight = true;
-  let sent = 0;
   try {
-    const batches = await fetchPendingNewsletterBatches(config.newsletterBatchLimit);
-    for (const batch of batches) {
-      if (batch.posts.length === 0) continue;
-      await sendWithPostal(batch);
-      await markNewsletterDelivered(batch.subscriberId, batch.posts.map((post) => post.id));
-      sent += 1;
+    const { dateKey } = localDateAndHour(config.newsletterTimezone);
+    const digestKey = `${dateKey}-${slot}`;
+    if (await hasDigestRun(digestKey)) return { sent: 0, skipped: "already_run" as const };
+
+    // A wide rolling pool (not "since last digest") so a quiet news day still has enough to send —
+    // per-subscriber delivery tracking (below) is what actually prevents repeats, not the window.
+    const windowStart = new Date(Date.now() - DIGEST_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    const candidates = await fetchDigestCandidatePosts(windowStart);
+    if (candidates.length === 0) {
+      await recordDigestRun(digestKey);
+      return { sent: 0, skipped: "no_candidates" as const };
     }
+
+    const subscribers = await fetchActiveSubscribersForDigest();
+    const groups = groupSubscribersByPreferences(subscribers);
+    const delivered = await fetchAlreadyDelivered(candidates.map((c) => c.id));
+
+    let sent = 0;
+    for (const [key, groupSubscribers] of groups) {
+      const preferences = key ? key.split(",") : [];
+      const filtered = preferences.length === 0 ? candidates : candidates.filter((c) => c.category && preferences.includes(c.category));
+      if (filtered.length === 0) continue;
+
+      // Rank deeper than what any single subscriber receives (DIGEST_SEND_MAX) — morning and night
+      // draw from the same ranked pool, so there must be enough ranked depth left for the per-subscriber
+      // "already delivered" filter below to still surface a fresh 7-10 at night, not an empty list.
+      const picks = await rankDigestStories(
+        filtered.map((c) => ({
+          id: String(c.id),
+          headline: c.headline,
+          dek: c.dek,
+          category: c.category ?? "",
+          citationCount: c.citationCount,
+        })),
+        Math.min(filtered.length, DIGEST_RANK_DEPTH),
+      );
+      const byId = new Map(filtered.map((c) => [String(c.id), c]));
+      const ordered: DigestItem[] = picks
+        .map((p) => ({ post: byId.get(p.id), whyItMatters: p.whyItMatters }))
+        .filter((item): item is DigestItem => Boolean(item.post));
+
+      for (const subscriber of groupSubscribers) {
+        const items = ordered.filter((item) => !delivered.has(`${subscriber.id}:${item.post.id}`)).slice(0, DIGEST_SEND_MAX);
+        if (items.length === 0) continue;
+
+        const subject = `Times of SF — ${slotLabel(slot)}: ${items.length} ${items.length === 1 ? "story" : "stories"}`;
+        await sendDigestEmail(
+          subscriber.email,
+          subject,
+          htmlForDigest(slot, items, subscriber.unsubscribeToken),
+          plainTextForDigest(slot, items, subscriber.unsubscribeToken),
+        );
+        await markNewsletterDelivered(subscriber.id, items.map((item) => item.post.id));
+        sent += 1;
+      }
+    }
+
+    await recordDigestRun(digestKey);
     return { sent };
   } finally {
     newsletterRunInFlight = false;
   }
+}
+
+/** Slot due right now in the configured timezone, if any (used by the internal scheduler). */
+export function dueDigestSlot(at: Date = new Date()): DigestSlot | null {
+  const { hour } = localDateAndHour(config.newsletterTimezone, at);
+  if (config.newsletterDigestHours.includes(hour)) {
+    // Morning = earliest configured hour of the day, everything else counts as night.
+    const sorted = [...config.newsletterDigestHours].sort((a, b) => a - b);
+    return hour === sorted[0] ? "morning" : "night";
+  }
+  return null;
 }

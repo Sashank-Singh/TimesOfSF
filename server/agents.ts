@@ -689,6 +689,103 @@ async function extractChartsFromBody(
   }
 }
 
+export type DigestCandidate = {
+  id: string;
+  headline: string;
+  dek: string;
+  category: string;
+  citationCount: number;
+};
+
+export type DigestPick = { id: string; whyItMatters: string };
+
+/** Tech and Funding are the site's priority beats — they always lead the digest, everything else follows below. */
+const DIGEST_PRIORITY_CATEGORIES = new Set(["Tech", "Funding"]);
+
+/** Stable-sorts picks so priority-category stories lead, preserving relative order within each tier. */
+function sortByPriorityTier(picks: DigestPick[], candidates: DigestCandidate[]): DigestPick[] {
+  const categoryById = new Map(candidates.map((c) => [c.id, c.category]));
+  return picks
+    .map((pick, index) => ({ pick, index }))
+    .sort((a, b) => {
+      const tierA = DIGEST_PRIORITY_CATEGORIES.has(categoryById.get(a.pick.id) ?? "") ? 0 : 1;
+      const tierB = DIGEST_PRIORITY_CATEGORIES.has(categoryById.get(b.pick.id) ?? "") ? 0 : 1;
+      return tierA !== tierB ? tierA - tierB : a.index - b.index;
+    })
+    .map((entry) => entry.pick);
+}
+
+/**
+ * Rank candidate stories for a newsletter digest and pick the best `targetCount`.
+ * Skips the LLM call when the pool is already small enough — nothing to rank.
+ * Tech/Funding stories always lead the result regardless of what the LLM (or the fallback) returns.
+ */
+export async function rankDigestStories(candidates: DigestCandidate[], targetCount: number): Promise<DigestPick[]> {
+  const fallback = () =>
+    sortByPriorityTier(
+      candidates.map((c) => ({ id: c.id, whyItMatters: c.dek })),
+      candidates,
+    ).slice(0, targetCount);
+
+  if (candidates.length <= targetCount) return fallback();
+  if (!config.fireworksApiKey) return fallback();
+
+  const prompt = [
+    `Pick the ${targetCount} most important or interesting stories below for a San Francisco news digest reader.`,
+    "Favor genuine significance and reader interest over recency alone. Prefer a mix of categories over near-duplicates.",
+    "Tech and Funding are this publication's priority beats — rank Tech/Funding stories above all other categories, then order everything else by importance beneath them.",
+    'Return JSON: {"picks": [{"id": "...", "whyItMatters": "one short plain sentence"}]}, ordered best first.',
+    "",
+    ...candidates.map((c) => `id=${c.id} | category=${c.category} | citations=${c.citationCount} | ${c.headline} — ${c.dek}`),
+  ].join("\n");
+
+  try {
+    const response = await fetch(`${config.fireworksBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.fireworksApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: config.fireworksModel,
+        messages: [
+          { role: "system", content: 'Return only valid JSON: {"picks": [{"id", "whyItMatters"}]}.' },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn("Digest ranking LLM call failed:", response.status);
+      return fallback();
+    }
+
+    const data = (await response.json()) as any;
+    const content = data?.choices?.[0]?.message?.content;
+    if (!content) return fallback();
+
+    const parsed = parseModelJson(content, "Digest ranking") as Record<string, unknown>;
+    const raw = parsed.picks ?? parsed;
+    const validIds = new Set(candidates.map((c) => c.id));
+    if (Array.isArray(raw)) {
+      const picks = raw
+        .filter(
+          (p: unknown): p is DigestPick =>
+            typeof p === "object" && p !== null && typeof (p as any).id === "string" && validIds.has((p as any).id),
+        )
+        .map((p: any) => ({ id: p.id, whyItMatters: typeof p.whyItMatters === "string" ? p.whyItMatters : "" }))
+        .slice(0, targetCount);
+      if (picks.length > 0) return sortByPriorityTier(picks, candidates);
+    }
+    return fallback();
+  } catch (err) {
+    console.warn("Digest ranking failed:", err instanceof Error ? err.message : err);
+    return fallback();
+  }
+}
+
 /**
  * Automatically extract important proper nouns and capitalized terms from body text
  * that aren't already in the entities list. Generates simple contextual definitions.

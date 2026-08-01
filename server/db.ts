@@ -172,6 +172,13 @@ export async function ensureSchema() {
       )
     `;
     await sql`CREATE INDEX IF NOT EXISTS bookmarks_user_idx ON bookmarks (user_id, created_at DESC)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS newsletter_digest_runs (
+        id BIGSERIAL PRIMARY KEY,
+        digest_key TEXT NOT NULL UNIQUE,
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
   });
 }
 
@@ -300,86 +307,81 @@ export async function unsubscribeNewsletter(token: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-export type NewsletterPost = {
+export type DigestCandidatePost = {
   id: number;
   headline: string;
   slug: string;
   dek: string;
   category: string | null;
-  publishedAt: string | Date;
+  citationCount: number;
 };
 
-export type NewsletterBatch = {
-  subscriberId: number;
+export type DigestSubscriber = {
+  id: number;
   email: string;
   unsubscribeToken: string;
   preferences: string[];
-  posts: NewsletterPost[];
 };
 
-export async function fetchPendingNewsletterBatches(limit = 25): Promise<NewsletterBatch[]> {
-  const rows = await sql`
-    WITH eligible AS (
-      SELECT
-        s.id AS subscriber_id,
-        s.email,
-        s.unsubscribe_token,
-        s.preferences,
-        p.id AS post_id,
-        p.headline,
-        p.slug,
-        p.dek,
-        p.category,
-        p.created_at AS published_at
-      FROM newsletter_subscribers s
-      JOIN generated_posts p
-        ON p.created_at >= s.created_at
-       AND p.created_at >= NOW() - INTERVAL '14 days'
-       AND p.category IN (SELECT jsonb_array_elements_text(s.preferences))
-      LEFT JOIN newsletter_deliveries d
-        ON d.subscriber_id = s.id
-       AND d.post_id = p.id
-      WHERE s.unsubscribed_at IS NULL
-        AND jsonb_array_length(s.preferences) > 0
-        AND d.id IS NULL
-      ORDER BY s.id ASC, p.created_at DESC
-    )
-    SELECT
-      subscriber_id,
-      email,
-      unsubscribe_token,
-      preferences,
-      jsonb_agg(
-        jsonb_build_object(
-          'id', post_id,
-          'headline', headline,
-          'slug', slug,
-          'dek', dek,
-          'category', category,
-          'publishedAt', published_at
-        )
-        ORDER BY published_at DESC
-      ) FILTER (WHERE post_id IS NOT NULL) AS posts
-    FROM eligible
-    GROUP BY subscriber_id, email, unsubscribe_token, preferences
-    ORDER BY subscriber_id ASC
-    LIMIT ${limit}
-  `;
+export async function hasDigestRun(digestKey: string): Promise<boolean> {
+  const rows = await sql`SELECT id FROM newsletter_digest_runs WHERE digest_key = ${digestKey} LIMIT 1`;
+  return rows.length > 0;
+}
 
+export async function recordDigestRun(digestKey: string) {
+  await sql`
+    INSERT INTO newsletter_digest_runs (digest_key)
+    VALUES (${digestKey})
+    ON CONFLICT (digest_key) DO NOTHING
+  `;
+}
+
+export async function fetchDigestCandidatePosts(since: Date): Promise<DigestCandidatePost[]> {
+  const rows = await sql`
+    SELECT
+      id,
+      headline,
+      slug,
+      dek,
+      category,
+      jsonb_array_length(COALESCE(citations, '[]'::jsonb)) AS "citationCount"
+    FROM generated_posts
+    WHERE created_at >= ${since}
+    ORDER BY created_at DESC
+  `;
   return rows.map((row: any) => ({
-    subscriberId: Number(row.subscriber_id),
-    email: row.email,
-    unsubscribeToken: row.unsubscribe_token,
-    preferences: Array.isArray(row.preferences) ? row.preferences : [],
-    posts: (Array.isArray(row.posts) ? row.posts : []).map((post: any) => ({
-      id: Number(post.id),
-      headline: post.headline,
-      slug: post.slug,
-      dek: post.dek,
-      category: post.category ?? null,
-      publishedAt: post.publishedAt,
-    })),
+    id: Number(row.id),
+    headline: row.headline,
+    slug: row.slug,
+    dek: row.dek,
+    category: row.category ?? null,
+    citationCount: Number(row.citationCount) || 0,
   }));
+}
+
+export async function fetchActiveSubscribersForDigest(): Promise<DigestSubscriber[]> {
+  const rows = await sql`
+    SELECT id, email, unsubscribe_token as "unsubscribeToken", preferences
+    FROM newsletter_subscribers
+    WHERE unsubscribed_at IS NULL
+  `;
+  return rows.map((row: any) => ({
+    id: Number(row.id),
+    email: row.email,
+    unsubscribeToken: row.unsubscribeToken,
+    preferences: Array.isArray(row.preferences) ? row.preferences : [],
+  }));
+}
+
+/** Returns a Set of "subscriberId:postId" keys already delivered, scoped to the given candidate posts. */
+export async function fetchAlreadyDelivered(postIds: number[]): Promise<Set<string>> {
+  if (postIds.length === 0) return new Set();
+  const rows = await sql`
+    SELECT subscriber_id as "subscriberId", post_id as "postId"
+    FROM newsletter_deliveries
+    WHERE post_id IN ${sql(postIds)}
+  `;
+  return new Set(rows.map((row: any) => `${row.subscriberId}:${row.postId}`));
 }
 
 export async function markNewsletterDelivered(subscriberId: number, postIds: number[]) {

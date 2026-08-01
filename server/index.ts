@@ -36,7 +36,7 @@ import {
 } from "./db";
 import { generateSessionToken, hashPassword, verifyPassword, SESSION_COOKIE_NAME, SESSION_TTL_MS } from "./auth";
 import { runPipeline } from "./pipeline";
-import { isNewsletterSenderConfigured, runNewsletterSender } from "./newsletter";
+import { buildAndSendDigest, dueDigestSlot, isNewsletterSenderConfigured, type DigestSlot } from "./newsletter";
 
 function shouldRunInternalPipelineTimer(): boolean {
   if (config.disableInternalPipelineCron) return false;
@@ -499,11 +499,11 @@ async function start() {
         cronPingConfigured: Boolean(config.cronSecret),
         newsletterSender: {
           active: isNewsletterSenderConfigured(),
-          intervalMs: Math.max(60_000, config.newsletterIntervalMs),
-          batchLimit: config.newsletterBatchLimit,
+          digestHours: config.newsletterDigestHours,
+          timezone: config.newsletterTimezone,
           note: isNewsletterSenderConfigured()
-            ? "Sends new matching articles to subscribers using their selected topic preferences."
-            : "Set RESEND_API_KEY and NEWSLETTER_FROM to enable category newsletter delivery.",
+            ? "Sends an LLM-curated top-10 digest at each configured hour, personalized by subscriber topic preferences."
+            : "Set POSTAL_API_URL, POSTAL_API_KEY, and NEWSLETTER_FROM to enable digest delivery.",
         },
         extraction: {
           readabilityEnabled: !config.disableNewsPlease,
@@ -657,12 +657,19 @@ ${articleUrls}
     }
   });
 
-  app.post("/api/cron/newsletter", requireOwnerOrCron, async (_req, res) => {
+  app.post("/api/cron/newsletter", requireOwnerOrCron, async (req, res) => {
+    const requestedSlot = req.query.slot;
+    const slot: DigestSlot | null =
+      requestedSlot === "morning" || requestedSlot === "night" ? requestedSlot : dueDigestSlot();
+    if (!slot) {
+      res.json({ ok: true, sent: 0, skipped: "not_due" });
+      return;
+    }
     try {
-      const result = await runNewsletterSender();
-      res.status(result.sent > 0 ? 201 : 202).json({ ok: true, ...result });
+      const result = await buildAndSendDigest(slot);
+      res.status(result.sent > 0 ? 201 : 202).json({ ok: true, slot, ...result });
     } catch (error) {
-      console.error("newsletter sender:", error);
+      console.error("newsletter digest:", error);
       res.status(500).json({
         ok: false,
         error: error instanceof Error ? error.message : "Unknown newsletter failure",
@@ -1621,18 +1628,22 @@ ${articleUrls}
       setTimeout(tick, 30_000);
     }
     if (shouldRunNewsletterTimer()) {
-      const ms = Math.max(60_000, config.newsletterIntervalMs);
-      console.log(`Newsletter sender: every ${ms / 1000}s; batchLimit=${config.newsletterBatchLimit}.`);
-      const tick = () =>
-        runNewsletterSender()
+      console.log(
+        `Newsletter digest scheduler: hours=${config.newsletterDigestHours.join(",")} tz=${config.newsletterTimezone} (checked every 60s).`,
+      );
+      const tick = () => {
+        const slot = dueDigestSlot();
+        if (!slot) return;
+        buildAndSendDigest(slot)
           .then((result) => {
-            if (result.sent > 0) console.log(`Newsletter sender delivered ${result.sent} batch(es).`);
+            if (result.sent > 0) console.log(`Newsletter ${slot} digest delivered to ${result.sent} subscriber(s).`);
           })
-          .catch((err) => console.error("Newsletter sender failed:", err));
-      setInterval(tick, ms);
+          .catch((err) => console.error("Newsletter digest failed:", err));
+      };
+      setInterval(tick, 60_000);
       setTimeout(tick, 60_000);
     } else {
-      console.log("Newsletter sender disabled: set RESEND_API_KEY and NEWSLETTER_FROM to enable delivery.");
+      console.log("Newsletter sender disabled: set POSTAL_API_URL, POSTAL_API_KEY, and NEWSLETTER_FROM to enable delivery.");
     }
   });
 }
