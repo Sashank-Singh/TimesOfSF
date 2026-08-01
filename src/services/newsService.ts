@@ -184,6 +184,57 @@ export async function submitTip(input: {
   }
 }
 
+export type AccountUser = { email: string; preferences: string[] };
+
+async function authRequest(path: string, options: RequestInit = {}): Promise<any> {
+  const res = await fetch(`${getApiBase()}${path}`, {
+    ...options,
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(typeof data.error === "string" ? data.error : "Something went wrong.");
+  }
+  return data;
+}
+
+export async function signup(email: string, password: string): Promise<AccountUser> {
+  return authRequest("/api/auth/signup", { method: "POST", body: JSON.stringify({ email, password }) });
+}
+
+export async function login(email: string, password: string): Promise<AccountUser> {
+  return authRequest("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+}
+
+export async function logout(): Promise<void> {
+  await authRequest("/api/auth/logout", { method: "POST" });
+}
+
+export async function fetchCurrentUser(): Promise<AccountUser | null> {
+  try {
+    return await authRequest("/api/auth/me");
+  } catch {
+    return null;
+  }
+}
+
+export async function updatePreferences(preferences: string[]): Promise<void> {
+  await authRequest("/api/auth/preferences", { method: "PUT", body: JSON.stringify({ preferences }) });
+}
+
+export async function fetchBookmarks(): Promise<string[]> {
+  return authRequest("/api/bookmarks");
+}
+
+export async function addBookmarkRemote(postId: string): Promise<void> {
+  await authRequest(`/api/bookmarks/${encodeURIComponent(postId)}`, { method: "POST" });
+}
+
+export async function removeBookmarkRemote(postId: string): Promise<void> {
+  await authRequest(`/api/bookmarks/${encodeURIComponent(postId)}`, { method: "DELETE" });
+}
+
 export async function subscribeToNewsletter(email: string, preferences: string[]): Promise<void> {
   const res = await fetch(`${getApiBase()}/api/newsletter/subscribe`, {
     method: "POST",

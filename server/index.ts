@@ -34,6 +34,7 @@ import {
   fetchRecentPosts,
   fetchRun,
 } from "./db";
+import { generateSessionToken, hashPassword, verifyPassword, SESSION_COOKIE_NAME, SESSION_TTL_MS } from "./auth";
 import { runPipeline } from "./pipeline";
 import { isNewsletterSenderConfigured, runNewsletterSender } from "./newsletter";
 
@@ -112,6 +113,50 @@ function requireOwnerOrCron(req: express.Request, res: express.Response, next: e
     return;
   }
   res.status(401).json({ ok: false, error: "Unauthorized" });
+}
+
+function parseCookies(req: express.Request): Record<string, string> {
+  const header = req.headers.cookie;
+  if (!header) return {};
+  const out: Record<string, string> = {};
+  for (const part of header.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const value = part.slice(idx + 1).trim();
+    if (key) out[key] = decodeURIComponent(value);
+  }
+  return out;
+}
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      sessionUser?: { id: number; email: string; preferences: string[] };
+    }
+  }
+}
+
+async function requireSession(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const token = parseCookies(req)[SESSION_COOKIE_NAME];
+  if (!token) {
+    res.status(401).json({ ok: false, error: "Not signed in" });
+    return;
+  }
+  try {
+    const { findSessionUser } = await import("./db");
+    const user = await findSessionUser(token);
+    if (!user) {
+      res.status(401).json({ ok: false, error: "Not signed in" });
+      return;
+    }
+    req.sessionUser = { id: user.id, email: user.email, preferences: user.preferences };
+    next();
+  } catch (error) {
+    console.error("requireSession:", error);
+    res.status(500).json({ ok: false, error: "Session check failed" });
+  }
 }
 
 type RateBucket = { count: number; resetAt: number };
@@ -362,11 +407,12 @@ async function start() {
               }
               callback(null, false);
             },
-            methods: ["GET", "HEAD", "POST", "OPTIONS"],
+            methods: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"],
             allowedHeaders: ["Content-Type", "Authorization"],
+            credentials: true,
             maxAge: 86_400,
           }
-        : { origin: true },
+        : { origin: true, credentials: true },
     ),
   );
   app.use(express.json({ limit: "256kb" }));
@@ -668,6 +714,144 @@ ${articleUrls}
     } catch (error) {
       console.error("Failed to fetch events from DB:", error);
       res.status(500).json({ error: "Failed to fetch events" });
+    }
+  });
+
+  function setSessionCookie(res: express.Response, token: string) {
+    res.cookie(SESSION_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: isProduction(),
+      sameSite: "lax",
+      maxAge: SESSION_TTL_MS,
+      path: "/",
+    });
+  }
+
+  app.post("/api/auth/signup", rateLimit("auth-signup", 8, 10 * 60_000), async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!EMAIL_RE.test(email) || email.length > 254) {
+      res.status(400).json({ ok: false, error: "Enter a valid email address." });
+      return;
+    }
+    if (password.length < 8 || password.length > 200) {
+      res.status(400).json({ ok: false, error: "Password must be at least 8 characters." });
+      return;
+    }
+    try {
+      const { createUser, findUserByEmail, createSession } = await import("./db");
+      if (await findUserByEmail(email)) {
+        res.status(409).json({ ok: false, error: "An account with that email already exists." });
+        return;
+      }
+      const user = await createUser(email, hashPassword(password));
+      const token = generateSessionToken();
+      await createSession(user.id, token, new Date(Date.now() + SESSION_TTL_MS));
+      setSessionCookie(res, token);
+      res.status(201).json({ ok: true, email: user.email, preferences: user.preferences });
+    } catch (error) {
+      console.error("auth signup:", error);
+      res.status(500).json({ ok: false, error: "Could not create account right now." });
+    }
+  });
+
+  app.post("/api/auth/login", rateLimit("auth-login", 10, 10 * 60_000), async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    try {
+      const { findUserByEmail, createSession, touchUserLogin } = await import("./db");
+      const user = await findUserByEmail(email);
+      if (!user || !verifyPassword(password, user.passwordHash)) {
+        res.status(401).json({ ok: false, error: "Incorrect email or password." });
+        return;
+      }
+      const token = generateSessionToken();
+      await createSession(user.id, token, new Date(Date.now() + SESSION_TTL_MS));
+      await touchUserLogin(user.id);
+      setSessionCookie(res, token);
+      res.json({ ok: true, email: user.email, preferences: user.preferences });
+    } catch (error) {
+      console.error("auth login:", error);
+      res.status(500).json({ ok: false, error: "Could not sign in right now." });
+    }
+  });
+
+  app.post("/api/auth/logout", async (req, res) => {
+    const token = parseCookies(req)[SESSION_COOKIE_NAME];
+    try {
+      if (token) {
+        const { deleteSession } = await import("./db");
+        await deleteSession(token);
+      }
+    } catch (error) {
+      console.error("auth logout:", error);
+    }
+    res.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
+    res.json({ ok: true });
+  });
+
+  app.get("/api/auth/me", requireSession, (req, res) => {
+    res.json({ email: req.sessionUser!.email, preferences: req.sessionUser!.preferences });
+  });
+
+  app.put("/api/auth/preferences", requireSession, async (req, res) => {
+    const preferences: string[] = Array.from(
+      new Set(
+        (Array.isArray(req.body?.preferences) ? req.body.preferences : [])
+          .map(normalizeNewsletterPreference)
+          .filter((p): p is string => !!p && NEWSLETTER_CATEGORY_SET.has(p)),
+      ),
+    );
+    try {
+      const { updateUserPreferences } = await import("./db");
+      await updateUserPreferences(req.sessionUser!.id, preferences);
+      res.json({ ok: true, preferences });
+    } catch (error) {
+      console.error("auth preferences:", error);
+      res.status(500).json({ ok: false, error: "Could not save preferences." });
+    }
+  });
+
+  app.get("/api/bookmarks", requireSession, async (req, res) => {
+    try {
+      const { listBookmarkedPostIds } = await import("./db");
+      const postIds = await listBookmarkedPostIds(req.sessionUser!.id);
+      res.json(postIds);
+    } catch (error) {
+      console.error("bookmarks list:", error);
+      res.status(500).json({ error: "Failed to fetch bookmarks" });
+    }
+  });
+
+  app.post("/api/bookmarks/:postId", requireSession, async (req, res) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isInteger(postId)) {
+      res.status(400).json({ ok: false, error: "Invalid post id." });
+      return;
+    }
+    try {
+      const { addBookmark } = await import("./db");
+      await addBookmark(req.sessionUser!.id, postId);
+      res.status(201).json({ ok: true });
+    } catch (error) {
+      console.error("bookmarks add:", error);
+      res.status(500).json({ ok: false, error: "Could not save bookmark." });
+    }
+  });
+
+  app.delete("/api/bookmarks/:postId", requireSession, async (req, res) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isInteger(postId)) {
+      res.status(400).json({ ok: false, error: "Invalid post id." });
+      return;
+    }
+    try {
+      const { removeBookmark } = await import("./db");
+      await removeBookmark(req.sessionUser!.id, postId);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("bookmarks remove:", error);
+      res.status(500).json({ ok: false, error: "Could not remove bookmark." });
     }
   });
 

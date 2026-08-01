@@ -130,10 +130,11 @@ Manual pipeline runs also accept `CRON_SECRET` or `OWNER_CLI_SECRET`.
 
 ### Newsletter Delivery
 
-Newsletter signup stores the email and selected categories in Postgres. Actual email delivery is disabled until a Resend sender is configured:
+Newsletter signup stores the email and selected categories in Postgres. Actual email delivery is disabled until a Postal mail server is configured:
 
 ```env
-RESEND_API_KEY="re_..."
+POSTAL_API_URL="https://email.example.com"
+POSTAL_API_KEY="postal-server-api-key"
 NEWSLETTER_FROM="Times of SF <news@timesofsf.com>"
 NEWSLETTER_REPLY_TO="hello@timesofsf.com"
 NEWSLETTER_INTERVAL_MS=600000
@@ -141,13 +142,15 @@ NEWSLETTER_BATCH_LIMIT=25
 DISABLE_NEWSLETTER_SENDER=false
 ```
 
+`POSTAL_API_URL`/`POSTAL_API_KEY` come from a Postal mail server whose sending domain (matching `NEWSLETTER_FROM`) has been added and DNS-verified (SPF/DKIM/MX) in that Postal instance's admin UI.
+
 Behavior:
 
 - Subscribers receive only new articles published after they subscribed.
 - Articles are filtered against each subscriber's selected categories.
 - `newsletter_deliveries` records each subscriber/article pair so stories are not resent.
 - Each email includes a tokenized unsubscribe link.
-- The internal sender runs every `NEWSLETTER_INTERVAL_MS` when Resend is configured.
+- The internal sender runs every `NEWSLETTER_INTERVAL_MS` when Postal is configured.
 - `POST /api/cron/newsletter` can manually run delivery with `CRON_SECRET` or `OWNER_CLI_SECRET`.
 
 ### TTS
@@ -192,6 +195,9 @@ Public routes used by the frontend:
 - `GET /api/posts`
 - `GET /api/events`
 - `POST /api/newsletter/subscribe` with `{ email, preferences, source }`; `preferences` accepts one or more article categories such as `Tech`, `Civics`, `Funding`, `Culture`, `Transit`, `Food`, or `Events`. `Politics`/`Political` are saved as `Civics`.
+- `POST /api/tips` with `{ postSlug?, kind, message, contactEmail? }` — reader tips/corrections, rate-limited.
+- `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `PUT /api/auth/preferences` — password-based accounts (`tosf_session` httpOnly cookie), rate-limited.
+- `GET/POST/DELETE /api/bookmarks(/:postId)` — requires a signed-in session.
 - `GET /health`
 - TTS playback/download routes, rate-limited
 

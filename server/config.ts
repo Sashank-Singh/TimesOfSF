@@ -144,6 +144,8 @@ export const config = {
   /** Edge TTS speaking rate for generated audio. Examples: +0%, +15%, -10%. */
   ttsRate: process.env.TTS_RATE?.trim() || "+18%",
   resendApiKey: process.env.RESEND_API_KEY?.trim() || undefined,
+  postalApiUrl: process.env.POSTAL_API_URL?.trim().replace(/\/+$/, "") || undefined,
+  postalApiKey: process.env.POSTAL_API_KEY?.trim() || undefined,
   newsletterFrom: process.env.NEWSLETTER_FROM?.trim() || undefined,
   newsletterReplyTo: process.env.NEWSLETTER_REPLY_TO?.trim() || undefined,
   newsletterIntervalMs: readOptionalInt("NEWSLETTER_INTERVAL_MS", 10 * 60 * 1000),

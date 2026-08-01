@@ -142,7 +142,110 @@ export async function ensureSchema() {
       )
     `;
     await sql`CREATE INDEX IF NOT EXISTS tips_created_idx ON tips (created_at DESC)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        preferences JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_login_at TIMESTAMPTZ
+      )
+    `;
+    await sql`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS sessions_token_idx ON sessions (token)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS bookmarks (
+        id BIGSERIAL PRIMARY KEY,
+        user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        post_id BIGINT NOT NULL REFERENCES generated_posts(id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, post_id)
+      )
+    `;
+    await sql`CREATE INDEX IF NOT EXISTS bookmarks_user_idx ON bookmarks (user_id, created_at DESC)`;
   });
+}
+
+export type UserRow = {
+  id: number;
+  email: string;
+  passwordHash: string;
+  preferences: string[];
+};
+
+export async function createUser(email: string, passwordHash: string): Promise<UserRow> {
+  const rows = await sql`
+    INSERT INTO users (email, password_hash)
+    VALUES (${email}, ${passwordHash})
+    RETURNING id, email, password_hash as "passwordHash", preferences
+  `;
+  return rows[0] as any;
+}
+
+export async function findUserByEmail(email: string): Promise<UserRow | undefined> {
+  const rows = await sql`
+    SELECT id, email, password_hash as "passwordHash", preferences
+    FROM users
+    WHERE email = ${email}
+    LIMIT 1
+  `;
+  return rows[0] as any;
+}
+
+export async function touchUserLogin(userId: number) {
+  await sql`UPDATE users SET last_login_at = NOW() WHERE id = ${userId}`;
+}
+
+export async function updateUserPreferences(userId: number, preferences: string[]) {
+  await sql`UPDATE users SET preferences = ${sql.json(preferences)} WHERE id = ${userId}`;
+}
+
+export async function createSession(userId: number, token: string, expiresAt: Date) {
+  await sql`
+    INSERT INTO sessions (user_id, token, expires_at)
+    VALUES (${userId}, ${token}, ${expiresAt})
+  `;
+}
+
+export async function findSessionUser(token: string): Promise<UserRow | undefined> {
+  const rows = await sql`
+    SELECT u.id, u.email, u.password_hash as "passwordHash", u.preferences
+    FROM sessions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.token = ${token} AND s.expires_at > NOW()
+    LIMIT 1
+  `;
+  return rows[0] as any;
+}
+
+export async function deleteSession(token: string) {
+  await sql`DELETE FROM sessions WHERE token = ${token}`;
+}
+
+export async function listBookmarkedPostIds(userId: number): Promise<string[]> {
+  const rows = await sql`SELECT post_id as "postId" FROM bookmarks WHERE user_id = ${userId}`;
+  return rows.map((r: any) => r.postId.toString());
+}
+
+export async function addBookmark(userId: number, postId: number) {
+  await sql`
+    INSERT INTO bookmarks (user_id, post_id)
+    VALUES (${userId}, ${postId})
+    ON CONFLICT (user_id, post_id) DO NOTHING
+  `;
+}
+
+export async function removeBookmark(userId: number, postId: number) {
+  await sql`DELETE FROM bookmarks WHERE user_id = ${userId} AND post_id = ${postId}`;
 }
 
 export async function saveTip(input: {

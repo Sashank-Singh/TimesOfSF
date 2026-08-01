@@ -86,15 +86,15 @@ function subjectForBatch(batch: NewsletterBatch): string {
   return `Times of SF: ${batch.posts.length} new stories for ${batch.preferences.join(", ")}`;
 }
 
-async function sendWithResend(batch: NewsletterBatch) {
-  if (!config.resendApiKey || !config.newsletterFrom) {
-    throw new Error("Newsletter email is not configured. Set RESEND_API_KEY and NEWSLETTER_FROM.");
+async function sendWithPostal(batch: NewsletterBatch) {
+  if (!config.postalApiUrl || !config.postalApiKey || !config.newsletterFrom) {
+    throw new Error("Newsletter email is not configured. Set POSTAL_API_URL, POSTAL_API_KEY, and NEWSLETTER_FROM.");
   }
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetch(`${config.postalApiUrl}/api/v1/send/message`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${config.resendApiKey}`,
+      "X-Server-API-Key": config.postalApiKey,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -102,19 +102,19 @@ async function sendWithResend(batch: NewsletterBatch) {
       to: [batch.email],
       reply_to: config.newsletterReplyTo,
       subject: subjectForBatch(batch),
-      html: htmlForPosts(batch),
-      text: plainTextForPosts(batch),
+      html_body: htmlForPosts(batch),
+      plain_body: plainTextForPosts(batch),
     }),
   });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`Resend returned ${response.status}: ${body.slice(0, 500)}`);
+  const body = await response.json().catch(() => null);
+  if (!response.ok || body?.status !== "success") {
+    throw new Error(`Postal returned ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
   }
 }
 
 export function isNewsletterSenderConfigured(): boolean {
-  return Boolean(config.resendApiKey && config.newsletterFrom && !config.disableNewsletterSender);
+  return Boolean(config.postalApiUrl && config.postalApiKey && config.newsletterFrom && !config.disableNewsletterSender);
 }
 
 export async function runNewsletterSender() {
@@ -127,7 +127,7 @@ export async function runNewsletterSender() {
     const batches = await fetchPendingNewsletterBatches(config.newsletterBatchLimit);
     for (const batch of batches) {
       if (batch.posts.length === 0) continue;
-      await sendWithResend(batch);
+      await sendWithPostal(batch);
       await markNewsletterDelivered(batch.subscriberId, batch.posts.map((post) => post.id));
       sent += 1;
     }

@@ -1,6 +1,19 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Article, ArticleCategory, EventInfo } from './types';
-import { fetchArticles, fetchEvents, subscribeToNewsletter } from './services/newsService';
+import {
+  fetchArticles,
+  fetchEvents,
+  subscribeToNewsletter,
+  signup,
+  login,
+  logout,
+  fetchCurrentUser,
+  updatePreferences,
+  fetchBookmarks,
+  addBookmarkRemote,
+  removeBookmarkRemote,
+  type AccountUser,
+} from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
 import { ReaderView } from './components/ReaderView';
 import { EventsPanel } from './components/EventsPanel';
@@ -90,6 +103,11 @@ export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AccountUser | null>(null);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [apiError, setApiError] = useState(false);
   const [newsletterEmail, setNewsletterEmail] = useState("");
   const [newsletterPreferences, setNewsletterPreferences] = useState<ArticleCategory[]>(["Tech", "Civics"]);
@@ -255,7 +273,25 @@ export default function App() {
       clearInterval(timer);
     };
   }, []);
-  
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const user = await fetchCurrentUser();
+      if (!active || !user) return;
+      setCurrentUser(user);
+      try {
+        const serverBookmarks = await fetchBookmarks();
+        setBookmarkedIds(serverBookmarks);
+      } catch {
+        /* keep local bookmarks if this fails */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (selectedArticle) {
       deepLinkedRef.current = true;
@@ -293,13 +329,17 @@ export default function App() {
       }
     }
     if (searchQuery) {
-      result = result.filter(a => 
+      result = result.filter(a =>
         a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         a.excerpt.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
+    if (!selectedCategory && !searchQuery && currentUser && currentUser.preferences.length > 0) {
+      const preferred = new Set(currentUser.preferences);
+      result = [...result].sort((a, b) => Number(preferred.has(b.category)) - Number(preferred.has(a.category)));
+    }
     setFilteredArticles(result);
-  }, [searchQuery, selectedCategory, articles, bookmarkedIds]);
+  }, [searchQuery, selectedCategory, articles, bookmarkedIds, currentUser]);
 
   // Live search dropdown in the menu overlay — hits the backend so it covers
   // the full archive (headline/dek/body), not just the ~100 articles already loaded.
@@ -369,10 +409,72 @@ export default function App() {
 
   const handleBookmark = (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    setBookmarkedIds(prev => 
+    const wasBookmarked = bookmarkedIds.includes(id);
+    setBookmarkedIds(prev =>
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
-    toast.success(bookmarkedIds.includes(id) ? 'Removed from reading list' : 'Added to reading list');
+    toast.success(wasBookmarked ? 'Removed from reading list' : 'Added to reading list');
+    if (currentUser) {
+      const sync = wasBookmarked ? removeBookmarkRemote(id) : addBookmarkRemote(id);
+      sync.catch(() => {
+        toast.error('Could not sync bookmark — try again.');
+        setBookmarkedIds(prev =>
+          prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+      });
+    }
+  };
+
+  const handleAuthSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const email = authEmail.trim();
+    if (!email || authPassword.length < 8) {
+      toast.error("Enter an email and an 8+ character password.");
+      return;
+    }
+    try {
+      setAuthLoading(true);
+      const user = authMode === "login" ? await login(email, authPassword) : await signup(email, authPassword);
+      setCurrentUser(user);
+      setAuthEmail("");
+      setAuthPassword("");
+      setIsAuthModalOpen(false);
+      try {
+        setBookmarkedIds(await fetchBookmarks());
+      } catch {
+        /* non-fatal */
+      }
+      toast.success(authMode === "login" ? "Signed in." : "Account created.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not sign in right now.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      /* clear client state regardless */
+    }
+    setCurrentUser(null);
+    const saved = localStorage.getItem('sf-bookmarks');
+    setBookmarkedIds(saved ? JSON.parse(saved) : []);
+    toast.success("Signed out.");
+  };
+
+  const handleTogglePreference = async (category: ArticleCategory) => {
+    if (!currentUser) return;
+    const next = currentUser.preferences.includes(category)
+      ? currentUser.preferences.filter((c) => c !== category)
+      : [...currentUser.preferences, category];
+    setCurrentUser({ ...currentUser, preferences: next });
+    try {
+      await updatePreferences(next);
+    } catch {
+      toast.error('Could not save preference.');
+    }
   };
 
   const handleShare = (article: Article, e?: React.MouseEvent) => {
@@ -499,24 +601,86 @@ export default function App() {
               className="bg-paper p-8 max-w-md w-full border-t-8 border-accent"
             >
               <div className="flex justify-between items-center mb-8">
-                <h2 className="text-3xl font-black uppercase tracking-tighter">Join the Times</h2>
+                <h2 className="text-3xl font-black uppercase tracking-tighter">
+                  {currentUser ? "Your account" : authMode === "login" ? "Sign in" : "Create account"}
+                </h2>
                 <button onClick={() => setIsAuthModalOpen(false)}><X size={24} /></button>
               </div>
-              <p className="text-sm italic mb-8 opacity-60">Support independent San Francisco journalism and unlock the full digital archive.</p>
-              <div className="space-y-4">
-                <button 
-                  onClick={() => { toast.success("Google Login sequence initiated..."); setIsAuthModalOpen(false); }}
-                  className="w-full py-4 bg-ink text-paper text-[10px] uppercase font-bold tracking-widest hover:bg-accent transition-colors"
-                >
-                  Sign in with Google
-                </button>
-                <button 
-                  onClick={() => { toast.success("Access request sent."); setIsAuthModalOpen(false); }}
-                  className="w-full py-4 border border-ink/20 text-[10px] uppercase font-bold tracking-widest hover:bg-ink hover:text-paper transition-all"
-                >
-                  Subscription Options
-                </button>
-              </div>
+
+              {currentUser ? (
+                <div className="space-y-6">
+                  <p className="text-sm opacity-70">{currentUser.email}</p>
+                  <div>
+                    <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-3">
+                      Personalize your feed
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {NEWSLETTER_CATEGORIES.map(({ value, label }) => {
+                        const selected = currentUser.preferences.includes(value);
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            aria-pressed={selected}
+                            onClick={() => handleTogglePreference(value)}
+                            className={cn(
+                              "border px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-widest transition-colors",
+                              selected ? "border-ink bg-ink text-paper" : "border-ink/20 text-ink/60 hover:border-accent hover:text-accent",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { handleLogout(); setIsAuthModalOpen(false); }}
+                    className="w-full py-4 border border-ink/20 text-[10px] uppercase font-bold tracking-widest hover:bg-ink hover:text-paper transition-all"
+                  >
+                    Log out
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleAuthSubmit} className="space-y-4">
+                  <p className="text-sm italic mb-2 opacity-60">
+                    {authMode === "login" ? "Sign in to sync your bookmarks and personalize your feed." : "Create an account to save bookmarks and personalize your feed."}
+                  </p>
+                  <input
+                    type="email"
+                    required
+                    placeholder="your@email.com"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    disabled={authLoading}
+                    className="w-full bg-transparent border-b border-ink/20 py-3 text-sm focus:border-accent outline-none"
+                  />
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    placeholder="Password (8+ characters)"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    disabled={authLoading}
+                    className="w-full bg-transparent border-b border-ink/20 py-3 text-sm focus:border-accent outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={authLoading}
+                    className="w-full py-4 bg-ink text-paper text-[10px] uppercase font-bold tracking-widest hover:bg-accent disabled:opacity-50 transition-colors"
+                  >
+                    {authLoading ? "Please wait..." : authMode === "login" ? "Sign in" : "Create account"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode(authMode === "login" ? "signup" : "login")}
+                    className="w-full text-center text-[10px] font-mono uppercase tracking-widest text-ink/50 hover:text-accent"
+                  >
+                    {authMode === "login" ? "Need an account? Create one" : "Have an account? Sign in"}
+                  </button>
+                </form>
+              )}
             </motion.div>
           </motion.div>
         )}
@@ -606,11 +770,11 @@ export default function App() {
                 <BookmarkIcon size={24} />
                 Reading List
               </button>
-              <button 
+              <button
                 onClick={() => { setIsAuthModalOpen(true); setIsMenuOpen(false); }}
                 className="text-xl font-mono uppercase tracking-widest text-accent font-bold"
               >
-                Subscribe / Login
+                {currentUser ? currentUser.email : "Subscribe / Login"}
               </button>
             </div>
           </motion.div>
@@ -690,9 +854,9 @@ export default function App() {
                   </button>
                   <button
                     onClick={() => setIsAuthModalOpen(true)}
-                    className="text-[10px] font-mono font-bold uppercase tracking-widest px-4 py-2 border border-ink/20 hover:bg-ink hover:text-paper transition-all opacity-100 whitespace-nowrap"
+                    className="text-[10px] font-mono font-bold uppercase tracking-widest px-4 py-2 border border-ink/20 hover:bg-ink hover:text-paper transition-all opacity-100 whitespace-nowrap max-w-[160px] truncate"
                   >
-                    Subscribe / Login
+                    {currentUser ? currentUser.email : "Subscribe / Login"}
                   </button>
                 </div>
               </div>
