@@ -52,7 +52,10 @@ export function normalizeUrl(rawUrl: string) {
     const url = new URL(rawUrl);
     url.hash = "";
     for (const key of [...url.searchParams.keys()]) {
-      if (/^(utm_|fbclid|gclid|mc_cid|mc_eid|ref|output)$/i.test(key)) {
+      // `utm_` is a prefix, not a whole key — anchoring it with $ meant utm_source,
+      // utm_campaign etc. were never stripped, so the same article arriving with and
+      // without tracking looked like two different URLs to the dedupe check.
+      if (/^(utm_.*|fbclid|gclid|mc_cid|mc_eid|ref|output)$/i.test(key)) {
         url.searchParams.delete(key);
       }
     }

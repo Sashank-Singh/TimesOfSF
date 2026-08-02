@@ -13,7 +13,9 @@
     "lint": "tsc --noEmit",
     "lint:server": "tsc -p tsconfig.server.json --noEmit",
     "admin:articles": "tsx scripts/admin-articles.ts",
-    "postinstall": "node --eval ''"
+    "postinstall": "node --eval ''",
+    "test": "tsx --test server/**/*.test.ts src/**/*.test.ts",
+    "test:smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

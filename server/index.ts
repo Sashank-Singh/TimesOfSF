@@ -706,7 +706,10 @@ ${articleUrls}
 
   app.get("/api/posts", async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      // Clamp: an unbounded limit lets anyone ask for the whole archive, and a
+      // non-numeric one used to reach Postgres as NaN and 500.
+      const rawLimit = Number.parseInt(String(req.query.limit ?? ""), 10);
+      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
       const searchQuery = typeof req.query.q === "string" ? req.query.q.trim() : undefined;
       const posts = await fetchRecentPosts(limit, searchQuery);
       res.json(posts);

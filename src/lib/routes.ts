@@ -70,8 +70,10 @@ export function entityToTopicSlug(name: string): string {
     .toLowerCase()
     .replace(/['']/g, "")
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
+    .slice(0, 80)
+    // Trim separators last: slicing first can cut mid-separator and strand a trailing dash,
+    // which would give the same entity two different topic URLs.
+    .replace(/^-+|-+$/g, "");
 }
 
 export function parseAppPath(pathname: string): AppRoute {
