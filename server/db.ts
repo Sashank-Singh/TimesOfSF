@@ -152,6 +152,13 @@ export async function ensureSchema() {
         last_login_at TIMESTAMPTZ
       )
     `;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token_hash TEXT`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_expires_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_hash TEXT`;
+    await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires_at TIMESTAMPTZ`;
+    await sql`CREATE INDEX IF NOT EXISTS users_verify_token_idx ON users (verify_token_hash)`;
+    await sql`CREATE INDEX IF NOT EXISTS users_reset_token_idx ON users (reset_token_hash)`;
     await sql`
       CREATE TABLE IF NOT EXISTS sessions (
         id BIGSERIAL PRIMARY KEY,
@@ -187,20 +194,21 @@ export type UserRow = {
   email: string;
   passwordHash: string;
   preferences: string[];
+  emailVerifiedAt: string | Date | null;
 };
 
 export async function createUser(email: string, passwordHash: string): Promise<UserRow> {
   const rows = await sql`
     INSERT INTO users (email, password_hash)
     VALUES (${email}, ${passwordHash})
-    RETURNING id, email, password_hash as "passwordHash", preferences
+    RETURNING id, email, password_hash as "passwordHash", preferences, email_verified_at as "emailVerifiedAt"
   `;
   return rows[0] as any;
 }
 
 export async function findUserByEmail(email: string): Promise<UserRow | undefined> {
   const rows = await sql`
-    SELECT id, email, password_hash as "passwordHash", preferences
+    SELECT id, email, password_hash as "passwordHash", preferences, email_verified_at as "emailVerifiedAt"
     FROM users
     WHERE email = ${email}
     LIMIT 1
@@ -225,7 +233,7 @@ export async function createSession(userId: number, token: string, expiresAt: Da
 
 export async function findSessionUser(token: string): Promise<UserRow | undefined> {
   const rows = await sql`
-    SELECT u.id, u.email, u.password_hash as "passwordHash", u.preferences
+    SELECT u.id, u.email, u.password_hash as "passwordHash", u.preferences, u.email_verified_at as "emailVerifiedAt"
     FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token = ${token} AND s.expires_at > NOW()
@@ -236,6 +244,60 @@ export async function findSessionUser(token: string): Promise<UserRow | undefine
 
 export async function deleteSession(token: string) {
   await sql`DELETE FROM sessions WHERE token = ${token}`;
+}
+
+/** Drop every session for a user — used after a password reset so stolen sessions die with it. */
+export async function deleteAllSessionsForUser(userId: number) {
+  await sql`DELETE FROM sessions WHERE user_id = ${userId}`;
+}
+
+export async function purgeExpiredSessions() {
+  await sql`DELETE FROM sessions WHERE expires_at < NOW()`;
+}
+
+export async function setVerifyToken(userId: number, tokenHash: string, expiresAt: Date) {
+  await sql`
+    UPDATE users
+    SET verify_token_hash = ${tokenHash}, verify_expires_at = ${expiresAt}
+    WHERE id = ${userId}
+  `;
+}
+
+/** Consume a verification token. Returns true when it matched an unexpired token. */
+export async function consumeVerifyToken(tokenHash: string): Promise<boolean> {
+  const rows = await sql`
+    UPDATE users
+    SET email_verified_at = COALESCE(email_verified_at, NOW()),
+        verify_token_hash = NULL,
+        verify_expires_at = NULL
+    WHERE verify_token_hash = ${tokenHash}
+      AND verify_expires_at > NOW()
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
+export async function setResetToken(userId: number, tokenHash: string, expiresAt: Date) {
+  await sql`
+    UPDATE users
+    SET reset_token_hash = ${tokenHash}, reset_expires_at = ${expiresAt}
+    WHERE id = ${userId}
+  `;
+}
+
+/** Swap a valid reset token for a new password. Returns the user id when it worked. */
+export async function consumeResetToken(tokenHash: string, passwordHash: string): Promise<number | null> {
+  const rows = await sql`
+    UPDATE users
+    SET password_hash = ${passwordHash},
+        reset_token_hash = NULL,
+        reset_expires_at = NULL,
+        email_verified_at = COALESCE(email_verified_at, NOW())
+    WHERE reset_token_hash = ${tokenHash}
+      AND reset_expires_at > NOW()
+    RETURNING id
+  `;
+  return rows.length > 0 ? Number(rows[0].id) : null;
 }
 
 export async function listBookmarkedPostIds(userId: number): Promise<string[]> {

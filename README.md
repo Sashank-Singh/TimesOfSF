@@ -198,6 +198,8 @@ Public routes used by the frontend:
 - `POST /api/newsletter/subscribe` with `{ email, preferences, source }`; `preferences` accepts one or more article categories such as `Tech`, `Civics`, `Funding`, `Culture`, `Transit`, `Food`, or `Events`. `Politics`/`Political` are saved as `Civics`.
 - `POST /api/tips` with `{ postSlug?, kind, message, contactEmail? }` — reader tips/corrections, rate-limited.
 - `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `PUT /api/auth/preferences` — password-based accounts (`tosf_session` httpOnly cookie), rate-limited.
+- `GET /api/auth/verify?token=`, `POST /api/auth/resend-verification` — email ownership confirmation. Verification is **not** a gate: accounts work immediately and this only records that the address is real.
+- `POST /api/auth/forgot-password`, `POST /api/auth/reset-password` — emailed reset links (1h expiry, single use). Reset tokens are stored as SHA-256 hashes, and a successful reset signs the user out everywhere. `forgot-password` always returns the same response so it cannot be used to enumerate accounts.
 - `GET/POST/DELETE /api/bookmarks(/:postId)` — requires a signed-in session.
 - `GET /health`
 - TTS playback/download routes, rate-limited

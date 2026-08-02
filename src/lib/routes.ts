@@ -29,6 +29,7 @@ export type AppRoute =
   | { kind: "guide"; slug: string }
   | { kind: "topic"; slug: string }
   | { kind: "bookmarks" }
+  | { kind: "reset-password" }
   | { kind: "unknown"; path: string };
 
 export function categoryToSlug(category: ArticleCategory | string): string {
@@ -80,6 +81,7 @@ export function parseAppPath(pathname: string): AppRoute {
   if (path === "/events") return { kind: "events" };
   if (path === "/digest") return { kind: "digest" };
   if (path === "/bookmarks" || path === "/reading-list") return { kind: "bookmarks" };
+  if (path === "/reset-password") return { kind: "reset-password" };
 
   const articleMatch = path.match(/^\/articles\/([^/]+)$/);
   if (articleMatch) {
@@ -139,6 +141,8 @@ export function listPathFromRoute(route: AppRoute): string {
       return topicPath(route.slug);
     case "bookmarks":
       return "/bookmarks";
+    case "reset-password":
+      return "/reset-password";
     default:
       return "/";
   }

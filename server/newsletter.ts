@@ -10,6 +10,7 @@ import {
   recordDigestRun,
 } from "./db";
 import { rankDigestStories } from "./agents";
+import { isMailConfigured, sendMail } from "./mailer";
 
 export type DigestSlot = "morning" | "night";
 
@@ -148,35 +149,8 @@ export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribe
   `;
 }
 
-async function sendDigestEmail(to: string, subject: string, html: string, text: string) {
-  if (!config.postalApiUrl || !config.postalApiKey || !config.newsletterFrom) {
-    throw new Error("Newsletter email is not configured. Set POSTAL_API_URL, POSTAL_API_KEY, and NEWSLETTER_FROM.");
-  }
-
-  const response = await fetch(`${config.postalApiUrl}/api/v1/send/message`, {
-    method: "POST",
-    headers: {
-      "X-Server-API-Key": config.postalApiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: config.newsletterFrom,
-      to: [to],
-      reply_to: config.newsletterReplyTo,
-      subject,
-      html_body: html,
-      plain_body: text,
-    }),
-  });
-
-  const body = await response.json().catch(() => null);
-  if (!response.ok || body?.status !== "success") {
-    throw new Error(`Postal returned ${response.status}: ${JSON.stringify(body).slice(0, 500)}`);
-  }
-}
-
 export function isNewsletterSenderConfigured(): boolean {
-  return Boolean(config.postalApiUrl && config.postalApiKey && config.newsletterFrom && !config.disableNewsletterSender);
+  return Boolean(isMailConfigured() && !config.disableNewsletterSender);
 }
 
 function groupSubscribersByPreferences(subscribers: DigestSubscriber[]): Map<string, DigestSubscriber[]> {
@@ -214,6 +188,7 @@ export async function buildAndSendDigest(slot: DigestSlot) {
     const delivered = await fetchAlreadyDelivered(candidates.map((c) => c.id));
 
     let sent = 0;
+    let failed = 0;
     for (const [key, groupSubscribers] of groups) {
       const preferences = key ? key.split(",") : [];
       const filtered = preferences.length === 0 ? candidates : candidates.filter((c) => c.category && preferences.includes(c.category));
@@ -241,20 +216,27 @@ export async function buildAndSendDigest(slot: DigestSlot) {
         const items = ordered.filter((item) => !delivered.has(`${subscriber.id}:${item.post.id}`)).slice(0, DIGEST_SEND_MAX);
         if (items.length === 0) continue;
 
-        const subject = `Times of SF — ${slotLabel(slot)}: ${items.length} ${items.length === 1 ? "story" : "stories"}`;
-        await sendDigestEmail(
-          subscriber.email,
-          subject,
-          htmlForDigest(slot, items, subscriber.unsubscribeToken),
-          plainTextForDigest(slot, items, subscriber.unsubscribeToken),
-        );
-        await markNewsletterDelivered(subscriber.id, items.map((item) => item.post.id));
-        sent += 1;
+        // Isolate per subscriber: one bad address must not abort the run, or the slot never gets
+        // recorded and the whole digest (LLM ranking included) re-fires every 60s for the hour.
+        try {
+          const subject = `Times of SF — ${slotLabel(slot)}: ${items.length} ${items.length === 1 ? "story" : "stories"}`;
+          await sendMail({
+            to: subscriber.email,
+            subject,
+            html: htmlForDigest(slot, items, subscriber.unsubscribeToken),
+            text: plainTextForDigest(slot, items, subscriber.unsubscribeToken),
+          });
+          await markNewsletterDelivered(subscriber.id, items.map((item) => item.post.id));
+          sent += 1;
+        } catch (err) {
+          failed += 1;
+          console.error(`Newsletter ${slot} digest failed for subscriber ${subscriber.id}:`, err);
+        }
       }
     }
 
     await recordDigestRun(digestKey);
-    return { sent };
+    return { sent, failed };
   } finally {
     newsletterRunInFlight = false;
   }

@@ -9,6 +9,7 @@ import {
   logout,
   fetchCurrentUser,
   updatePreferences,
+  requestPasswordReset,
   fetchBookmarks,
   addBookmarkRemote,
   removeBookmarkRemote,
@@ -19,6 +20,7 @@ import { ReaderView } from './components/ReaderView';
 import { EventsPanel } from './components/EventsPanel';
 import { DigestView } from './components/DigestView';
 import { GuidePage } from './components/GuidePage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { TopicHub } from './components/TopicHub';
 import { NewsletterCta } from './components/NewsletterCta';
 import { SponsorSlot } from './components/SponsorSlot';
@@ -368,8 +370,11 @@ export default function App() {
   }, [searchQuery]);
 
   useEffect(() => {
+    // Only the logged-out list belongs in localStorage. Mirroring server bookmarks here
+    // would leak one account's reading list to the next person on a shared browser.
+    if (currentUser) return;
     localStorage.setItem('sf-bookmarks', JSON.stringify(bookmarkedIds));
-  }, [bookmarkedIds]);
+  }, [bookmarkedIds, currentUser]);
 
   // Keep the news-tape scroll speed relative to viewport width — a fixed px/sec
   // reads as way too fast on a narrow phone screen and barely perceptible on a
@@ -440,13 +445,34 @@ export default function App() {
       setAuthPassword("");
       setIsAuthModalOpen(false);
       try {
-        setBookmarkedIds(await fetchBookmarks());
+        // Carry anything bookmarked while logged out into the account rather than dropping it.
+        const local: string[] = JSON.parse(localStorage.getItem('sf-bookmarks') || '[]');
+        const server = await fetchBookmarks();
+        const toUpload = local.filter((id) => !server.includes(id));
+        await Promise.allSettled(toUpload.map((id) => addBookmarkRemote(id)));
+        setBookmarkedIds(toUpload.length > 0 ? await fetchBookmarks() : server);
       } catch {
         /* non-fatal */
       }
       toast.success(authMode === "login" ? "Signed in." : "Account created.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not sign in right now.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const email = authEmail.trim();
+    if (!email) {
+      toast.error("Enter your email above first, then tap this.");
+      return;
+    }
+    try {
+      setAuthLoading(true);
+      toast.success(await requestPasswordReset(email));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not send that email right now.");
     } finally {
       setAuthLoading(false);
     }
@@ -679,6 +705,16 @@ export default function App() {
                   >
                     {authMode === "login" ? "Need an account? Create one" : "Have an account? Sign in"}
                   </button>
+                  {authMode === "login" && (
+                    <button
+                      type="button"
+                      onClick={handleForgotPassword}
+                      disabled={authLoading}
+                      className="w-full text-center text-[10px] font-mono uppercase tracking-widest text-ink/40 hover:text-accent disabled:opacity-50"
+                    >
+                      Forgot your password?
+                    </button>
+                  )}
                 </form>
               )}
             </motion.div>
@@ -927,7 +963,9 @@ export default function App() {
           <SponsorSlot placement={appRoute.kind === "home" ? "homepage" : "category"} />
         )}
 
-        {appRoute.kind === "digest" && !selectedArticle ? (
+        {appRoute.kind === "reset-password" && !selectedArticle ? (
+          <ResetPasswordPage onDone={() => navigateTo("/")} />
+        ) : appRoute.kind === "digest" && !selectedArticle ? (
           <DigestView
             articles={articles}
             onOpenArticle={setSelectedArticle}

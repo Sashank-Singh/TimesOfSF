@@ -34,7 +34,17 @@ import {
   fetchRecentPosts,
   fetchRun,
 } from "./db";
-import { generateSessionToken, hashPassword, verifyPassword, SESSION_COOKIE_NAME, SESSION_TTL_MS } from "./auth";
+import {
+  generateSessionToken,
+  hashPassword,
+  hashToken,
+  verifyPassword,
+  RESET_TOKEN_TTL_MS,
+  SESSION_COOKIE_NAME,
+  SESSION_TTL_MS,
+  VERIFY_TOKEN_TTL_MS,
+} from "./auth";
+import { isMailConfigured, linkFallback, paragraph, sendMail, transactionalHtml } from "./mailer";
 import { runPipeline } from "./pipeline";
 import { buildAndSendDigest, dueDigestSlot, isNewsletterSenderConfigured, type DigestSlot } from "./newsletter";
 
@@ -133,7 +143,7 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      sessionUser?: { id: number; email: string; preferences: string[] };
+      sessionUser?: { id: number; email: string; preferences: string[]; emailVerified: boolean };
     }
   }
 }
@@ -151,7 +161,12 @@ async function requireSession(req: express.Request, res: express.Response, next:
       res.status(401).json({ ok: false, error: "Not signed in" });
       return;
     }
-    req.sessionUser = { id: user.id, email: user.email, preferences: user.preferences };
+    req.sessionUser = {
+      id: user.id,
+      email: user.email,
+      preferences: user.preferences,
+      emailVerified: Boolean(user.emailVerifiedAt),
+    };
     next();
   } catch (error) {
     console.error("requireSession:", error);
@@ -734,6 +749,25 @@ ${articleUrls}
     });
   }
 
+  async function sendVerificationEmail(userId: number, email: string) {
+    if (!isMailConfigured()) return;
+    const { setVerifyToken } = await import("./db");
+    const token = generateSessionToken();
+    await setVerifyToken(userId, hashToken(token), new Date(Date.now() + VERIFY_TOKEN_TTL_MS));
+    const url = `${config.appUrl.replace(/\/+$/, "")}/api/auth/verify?token=${encodeURIComponent(token)}`;
+    await sendMail({
+      to: email,
+      subject: "Confirm your Times of SF email",
+      html: transactionalHtml(
+        "Confirm your email",
+        paragraph("Tap the button below to confirm this address belongs to you. Your account already works — this just verifies ownership.") +
+          linkFallback(url),
+        { label: "Confirm email", url },
+      ),
+      text: `Confirm your Times of SF email:\n\n${url}\n\nYour account already works; this only verifies ownership.`,
+    });
+  }
+
   app.post("/api/auth/signup", rateLimit("auth-signup", 8, 10 * 60_000), async (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -755,7 +789,12 @@ ${articleUrls}
       const token = generateSessionToken();
       await createSession(user.id, token, new Date(Date.now() + SESSION_TTL_MS));
       setSessionCookie(res, token);
-      res.status(201).json({ ok: true, email: user.email, preferences: user.preferences });
+      // Verification is informational, not a gate: the account works immediately and the
+      // email only confirms ownership. A send failure must not fail the signup.
+      sendVerificationEmail(user.id, user.email).catch((err) =>
+        console.error("verification email failed:", err),
+      );
+      res.status(201).json({ ok: true, email: user.email, preferences: user.preferences, emailVerified: false });
     } catch (error) {
       console.error("auth signup:", error);
       res.status(500).json({ ok: false, error: "Could not create account right now." });
@@ -776,7 +815,12 @@ ${articleUrls}
       await createSession(user.id, token, new Date(Date.now() + SESSION_TTL_MS));
       await touchUserLogin(user.id);
       setSessionCookie(res, token);
-      res.json({ ok: true, email: user.email, preferences: user.preferences });
+      res.json({
+        ok: true,
+        email: user.email,
+        preferences: user.preferences,
+        emailVerified: Boolean(user.emailVerifiedAt),
+      });
     } catch (error) {
       console.error("auth login:", error);
       res.status(500).json({ ok: false, error: "Could not sign in right now." });
@@ -798,7 +842,104 @@ ${articleUrls}
   });
 
   app.get("/api/auth/me", requireSession, (req, res) => {
-    res.json({ email: req.sessionUser!.email, preferences: req.sessionUser!.preferences });
+    res.json({
+      email: req.sessionUser!.email,
+      preferences: req.sessionUser!.preferences,
+      emailVerified: req.sessionUser!.emailVerified,
+    });
+  });
+
+  app.get("/api/auth/verify", rateLimit("auth-verify", 20, 10 * 60_000), async (req, res) => {
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+    const home = config.appUrl.replace(/\/+$/, "") || "/";
+    if (!/^[a-f0-9]{64}$/i.test(token)) {
+      res.redirect(`${home}/?verified=invalid`);
+      return;
+    }
+    try {
+      const { consumeVerifyToken } = await import("./db");
+      const ok = await consumeVerifyToken(hashToken(token));
+      res.redirect(`${home}/?verified=${ok ? "1" : "expired"}`);
+    } catch (error) {
+      console.error("auth verify:", error);
+      res.redirect(`${home}/?verified=error`);
+    }
+  });
+
+  app.post("/api/auth/resend-verification", requireSession, rateLimit("auth-resend", 3, 15 * 60_000), async (req, res) => {
+    if (req.sessionUser!.emailVerified) {
+      res.json({ ok: true, alreadyVerified: true });
+      return;
+    }
+    try {
+      await sendVerificationEmail(req.sessionUser!.id, req.sessionUser!.email);
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("auth resend verification:", error);
+      res.status(500).json({ ok: false, error: "Could not send that email right now." });
+    }
+  });
+
+  app.post("/api/auth/forgot-password", rateLimit("auth-forgot", 5, 15 * 60_000), async (req, res) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    // Always answer the same way: revealing which addresses exist is an account-enumeration leak.
+    const generic = { ok: true, message: "If that address has an account, a reset link is on its way." };
+    if (!EMAIL_RE.test(email)) {
+      res.json(generic);
+      return;
+    }
+    try {
+      const { findUserByEmail, setResetToken } = await import("./db");
+      const user = await findUserByEmail(email);
+      if (user && isMailConfigured()) {
+        const token = generateSessionToken();
+        await setResetToken(user.id, hashToken(token), new Date(Date.now() + RESET_TOKEN_TTL_MS));
+        const url = `${config.appUrl.replace(/\/+$/, "")}/reset-password?token=${encodeURIComponent(token)}`;
+        await sendMail({
+          to: user.email,
+          subject: "Reset your Times of SF password",
+          html: transactionalHtml(
+            "Reset your password",
+            paragraph("Use the button below to choose a new password. This link expires in one hour and can only be used once.") +
+              linkFallback(url),
+            { label: "Reset password", url },
+          ),
+          text: `Reset your Times of SF password:\n\n${url}\n\nThis link expires in one hour.`,
+        });
+      }
+      res.json(generic);
+    } catch (error) {
+      console.error("auth forgot-password:", error);
+      res.json(generic);
+    }
+  });
+
+  app.post("/api/auth/reset-password", rateLimit("auth-reset", 10, 15 * 60_000), async (req, res) => {
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!/^[a-f0-9]{64}$/i.test(token)) {
+      res.status(400).json({ ok: false, error: "That reset link is invalid or has expired." });
+      return;
+    }
+    if (password.length < 8 || password.length > 200) {
+      res.status(400).json({ ok: false, error: "Password must be at least 8 characters." });
+      return;
+    }
+    try {
+      const { consumeResetToken, deleteAllSessionsForUser } = await import("./db");
+      const userId = await consumeResetToken(hashToken(token), hashPassword(password));
+      if (!userId) {
+        res.status(400).json({ ok: false, error: "That reset link is invalid or has expired." });
+        return;
+      }
+      // Sign out everywhere — if the account was compromised, the attacker's session dies here.
+      await deleteAllSessionsForUser(userId);
+      res.clearCookie(SESSION_COOKIE_NAME, { path: "/" });
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("auth reset-password:", error);
+      res.status(500).json({ ok: false, error: "Could not reset your password right now." });
+    }
   });
 
   app.put("/api/auth/preferences", requireSession, async (req, res) => {
@@ -1627,6 +1768,14 @@ ${articleUrls}
       setInterval(tick, ms);
       setTimeout(tick, 30_000);
     }
+    // Expired sessions are dead weight; sweep hourly so the table does not grow forever.
+    const purgeSessions = () =>
+      import("./db")
+        .then(({ purgeExpiredSessions }) => purgeExpiredSessions())
+        .catch((err) => console.error("Session purge failed:", err));
+    setInterval(purgeSessions, 60 * 60_000);
+    setTimeout(purgeSessions, 5 * 60_000);
+
     if (shouldRunNewsletterTimer()) {
       console.log(
         `Newsletter digest scheduler: hours=${config.newsletterDigestHours.join(",")} tz=${config.newsletterTimezone} (checked every 60s).`,

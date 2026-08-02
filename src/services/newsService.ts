@@ -184,7 +184,7 @@ export async function submitTip(input: {
   }
 }
 
-export type AccountUser = { email: string; preferences: string[] };
+export type AccountUser = { email: string; preferences: string[]; emailVerified?: boolean };
 
 async function authRequest(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${getApiBase()}${path}`, {
@@ -217,6 +217,22 @@ export async function fetchCurrentUser(): Promise<AccountUser | null> {
   } catch {
     return null;
   }
+}
+
+export async function requestPasswordReset(email: string): Promise<string> {
+  const data = await authRequest("/api/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return typeof data.message === "string" ? data.message : "If that address has an account, a reset link is on its way.";
+}
+
+export async function resetPassword(token: string, password: string): Promise<void> {
+  await authRequest("/api/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password }) });
+}
+
+export async function resendVerification(): Promise<void> {
+  await authRequest("/api/auth/resend-verification", { method: "POST" });
 }
 
 export async function updatePreferences(preferences: string[]): Promise<void> {

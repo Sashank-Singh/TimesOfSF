@@ -21,5 +21,17 @@ export function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
+/**
+ * Tokens emailed to users (verify / reset) are stored only as a hash, so a database
+ * leak cannot be replayed into working links. No salt needed: the token is already
+ * 32 bytes of CSPRNG output, so there is nothing to brute-force.
+ */
+export function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+export const VERIFY_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
 export const SESSION_COOKIE_NAME = "tosf_session";
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
