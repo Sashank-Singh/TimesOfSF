@@ -17,25 +17,45 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import sys
 import textwrap
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 from kokoro_onnx import Kokoro
 
 VOICE = "af_heart"
 SAMPLE_RATE = 24000
-# Keep the opening chunk tiny so time-to-first-audio stays under ~5s on warm model.
+# Keep the opening chunk tiny so time-to-first-audio stays low on a warm model.
 FIRST_CHUNK_MAX = 48
-CHUNK_MAX_CHARS = 90
+# Larger bodies are both faster and better-sounding: per-call overhead (phonemization,
+# session dispatch) dominates short chunks, and the model needs a full clause to get
+# prosody right. Measured on a 6-core box: RTF 0.77 at 48 chars vs 0.54 at 300.
+CHUNK_MAX_CHARS = int(os.environ.get("KOKORO_CHUNK_CHARS", "260"))
 END_MARKER = b"\n---END---\n"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODEL_DIR = SCRIPT_DIR.parent / "models_kokoro"
 
 _kokoro: Kokoro | None = None
+
+
+def build_session(model_path: Path) -> ort.InferenceSession:
+    """ONNX session tuned for a shared, CPU-bound host.
+
+    Defaults let ORT spawn a thread per core, which thrashes when the box is already
+    saturated by other services. Cap intra-op threads (KOKORO_THREADS) and disable the
+    inter-op pool — single inference at a time means parallel branches buy nothing.
+    """
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = max(1, int(os.environ.get("KOKORO_THREADS", "4")))
+    opts.inter_op_num_threads = 1
+    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    return ort.InferenceSession(str(model_path), opts, providers=["CPUExecutionProvider"])
 
 
 def get_kokoro() -> Kokoro:
@@ -50,7 +70,7 @@ def get_kokoro() -> Kokoro:
         sys.exit(1)
     sys.stderr.write("[kokoro-chunked-worker] loading model...\n")
     sys.stderr.flush()
-    _kokoro = Kokoro(str(model_path), str(voices_path))
+    _kokoro = Kokoro.from_session(build_session(model_path), str(voices_path))
     sys.stderr.write("[kokoro-chunked-worker] model ready\n")
     sys.stderr.flush()
     return _kokoro

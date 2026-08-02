@@ -9,12 +9,14 @@ Protocol:
 """
 
 import json
+import os
 import sys
 import io
 import wave
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 from kokoro_onnx import Kokoro
 
 DEFAULT_VOICE = "af_heart"
@@ -42,7 +44,14 @@ def get_kokoro() -> Kokoro:
         sys.stderr.write("Run scripts/setup-kokoro.sh first.\n")
         sys.stderr.flush()
         sys.exit(1)
-    _kokoro = Kokoro(str(model_path), str(voices_path))
+    # Cap ORT threads so TTS does not thrash against everything else on a shared box.
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = max(1, int(os.environ.get("KOKORO_THREADS", "4")))
+    opts.inter_op_num_threads = 1
+    opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(str(model_path), opts, providers=["CPUExecutionProvider"])
+    _kokoro = Kokoro.from_session(session, str(voices_path))
     return _kokoro
 
 
