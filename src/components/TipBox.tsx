@@ -2,6 +2,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { submitTip } from "../services/newsService";
 import { cn } from "../lib/utils";
+import posthog from "../lib/posthog";
 
 type TipBoxProps = {
   postSlug?: string;
@@ -29,6 +30,10 @@ export function TipBox({ postSlug, className }: TipBoxProps) {
         kind,
         message: trimmed,
         contactEmail: contactEmail.trim() || undefined,
+      });
+      posthog.capture("tip_submitted", {
+        kind,
+        has_article_context: Boolean(postSlug),
       });
       setMessage("");
       setContactEmail("");

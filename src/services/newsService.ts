@@ -184,7 +184,7 @@ export async function submitTip(input: {
   }
 }
 
-export type AccountUser = { email: string; preferences: string[]; emailVerified?: boolean };
+export type AccountUser = { id: number; email: string; preferences: string[]; emailVerified?: boolean };
 
 async function authRequest(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${getApiBase()}${path}`, {

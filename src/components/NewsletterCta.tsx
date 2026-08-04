@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import type { ArticleCategory } from "../types";
 import { subscribeToNewsletter } from "../services/newsService";
 import { cn } from "../lib/utils";
+import posthog from "../lib/posthog";
 
 const TOPIC_OPTIONS: ArticleCategory[] = [
   "Tech",
@@ -69,6 +70,10 @@ export function NewsletterCta({
     try {
       setLoading(true);
       await subscribeToNewsletter(trimmed, topics);
+      posthog.capture("newsletter_subscribed", {
+        source: variant,
+        topic_count: topics.length,
+      });
       setEmail("");
       toast.success("Subscribed — topic preferences saved.");
       if (variant === "exit") {

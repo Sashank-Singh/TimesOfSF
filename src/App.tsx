@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
+import posthog from './lib/posthog';
 import { SeoHead } from './components/SeoHead';
 import { articlePath } from './lib/site';
 import {
@@ -189,6 +190,10 @@ export default function App() {
     try {
       setNewsletterLoading(true);
       await subscribeToNewsletter(email, newsletterPreferences);
+      posthog.capture("newsletter_subscribed", {
+        source: "footer",
+        topic_count: newsletterPreferences.length,
+      });
       setNewsletterEmail("");
       toast.success("Thank you for subscribing. Your topic preferences are saved.");
     } catch (error) {
@@ -281,6 +286,7 @@ export default function App() {
     (async () => {
       const user = await fetchCurrentUser();
       if (!active || !user) return;
+      posthog.identify(String(user.id), { email: user.email });
       setCurrentUser(user);
       try {
         const serverBookmarks = await fetchBookmarks();
@@ -419,6 +425,7 @@ export default function App() {
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
     toast.success(wasBookmarked ? 'Removed from reading list' : 'Added to reading list');
+    posthog.capture("bookmark_updated", { action: wasBookmarked ? "removed" : "added" });
     if (currentUser) {
       const sync = wasBookmarked ? removeBookmarkRemote(id) : addBookmarkRemote(id);
       sync.catch(() => {
@@ -440,6 +447,8 @@ export default function App() {
     try {
       setAuthLoading(true);
       const user = authMode === "login" ? await login(email, authPassword) : await signup(email, authPassword);
+      posthog.identify(String(user.id), { email: user.email });
+      posthog.capture("authentication_completed", { method: authMode });
       setCurrentUser(user);
       setAuthEmail("");
       setAuthPassword("");
@@ -484,6 +493,7 @@ export default function App() {
     } catch {
       /* clear client state regardless */
     }
+    posthog.reset();
     setCurrentUser(null);
     const saved = localStorage.getItem('sf-bookmarks');
     setBookmarkedIds(saved ? JSON.parse(saved) : []);
@@ -498,6 +508,10 @@ export default function App() {
     setCurrentUser({ ...currentUser, preferences: next });
     try {
       await updatePreferences(next);
+      posthog.capture("newsletter_preferences_updated", {
+        action: currentUser.preferences.includes(category) ? "removed" : "added",
+        preference_count: next.length,
+      });
     } catch {
       toast.error('Could not save preference.');
     }
@@ -511,12 +525,16 @@ export default function App() {
         title: article.title,
         text: article.excerpt,
         url: shareUrl,
-      }).catch((err) => {
-        // user clicked cancel, squash the error
+      }).then(() => {
+        posthog.capture("article_shared", { method: "native_share" });
+      }).catch(() => {
+        // User cancelled the share sheet.
       });
     } else {
-      navigator.clipboard.writeText(shareUrl).catch(() => {});
-      toast.success('Link copied to clipboard');
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        posthog.capture("article_shared", { method: "copy_link" });
+        toast.success('Link copied to clipboard');
+      }).catch(() => {});
     }
   };
 
