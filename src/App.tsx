@@ -35,7 +35,7 @@ import {
 } from './lib/routes';
 import { getGuideBySlug, EVERGREEN_GUIDES, } from './content/evergreen';
 import { BOOSTED_EVENTS } from './content/monetization';
-import { trackPageView, trackEvent, identifyUser, posthog } from './services/posthog';
+import { trackPageView, trackEvent, identifyUser, resetAnalytics } from './services/posthog';
 
 // Code-split the heavy views: article reader, digest, guides, topic hubs, events,
 // password reset, and the jobs board only load their JS when actually opened.
@@ -511,7 +511,7 @@ export default function App() {
     } catch {
       /* clear client state regardless */
     }
-    posthog.reset();
+    resetAnalytics();
     setCurrentUser(null);
     const saved = localStorage.getItem('sf-bookmarks');
     setBookmarkedIds(saved ? JSON.parse(saved) : []);
@@ -539,20 +539,27 @@ export default function App() {
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const shareUrl = `${window.location.origin}${articlePath(article.slug)}`;
-    trackEvent("article_shared", { article_slug: article.slug, category: article.category });
     if (navigator.share) {
       navigator.share({
         title: article.title,
         text: article.excerpt,
         url: shareUrl,
       }).then(() => {
-        posthog.capture("article_shared", { method: "native_share" });
+        trackEvent("article_shared", {
+          article_slug: article.slug,
+          category: article.category,
+          method: "native_share",
+        });
       }).catch(() => {
         // User cancelled the share sheet.
       });
     } else {
       navigator.clipboard.writeText(shareUrl).then(() => {
-        posthog.capture("article_shared", { method: "copy_link" });
+        trackEvent("article_shared", {
+          article_slug: article.slug,
+          category: article.category,
+          method: "copy_link",
+        });
         toast.success('Link copied to clipboard');
       }).catch(() => {});
     }

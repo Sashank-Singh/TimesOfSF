@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { resetPassword } from "../services/newsService";
+import { trackEvent } from "../services/posthog";
 
 type ResetPasswordPageProps = {
   onDone: () => void;
@@ -33,6 +34,7 @@ export function ResetPasswordPage({ onDone }: ResetPasswordPageProps) {
     try {
       setLoading(true);
       await resetPassword(token, password);
+      trackEvent("password_reset_completed");
       setDone(true);
       toast.success("Password updated — you can sign in now.");
     } catch (error) {
