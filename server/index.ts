@@ -797,7 +797,7 @@ ${articleUrls}
       sendVerificationEmail(user.id, user.email).catch((err) =>
         console.error("verification email failed:", err),
       );
-      res.status(201).json({ ok: true, email: user.email, preferences: user.preferences, emailVerified: false });
+      res.status(201).json({ ok: true, id: user.id, email: user.email, preferences: user.preferences, emailVerified: false });
     } catch (error) {
       console.error("auth signup:", error);
       res.status(500).json({ ok: false, error: "Could not create account right now." });
@@ -820,6 +820,7 @@ ${articleUrls}
       setSessionCookie(res, token);
       res.json({
         ok: true,
+        id: user.id,
         email: user.email,
         preferences: user.preferences,
         emailVerified: Boolean(user.emailVerifiedAt),
@@ -846,6 +847,7 @@ ${articleUrls}
 
   app.get("/api/auth/me", requireSession, (req, res) => {
     res.json({
+      id: req.sessionUser!.id,
       email: req.sessionUser!.email,
       preferences: req.sessionUser!.preferences,
       emailVerified: req.sessionUser!.emailVerified,
