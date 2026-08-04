@@ -1,50 +1,54 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
 import { Article, ArticleCategory, EventInfo } from './types';
 import {
   fetchArticles,
   fetchEvents,
-  subscribeToNewsletter,
-  signup,
-  login,
-  logout,
   fetchCurrentUser,
-  updatePreferences,
-  requestPasswordReset,
   fetchBookmarks,
   addBookmarkRemote,
   removeBookmarkRemote,
+  login,
+  signup,
+  logout,
+  updatePreferences,
+  requestPasswordReset,
+  subscribeToNewsletter,
   type AccountUser,
 } from './services/newsService';
 import { ArticleCard } from './components/ArticleCard';
-import { ReaderView } from './components/ReaderView';
-import { EventsPanel } from './components/EventsPanel';
-import { DigestView } from './components/DigestView';
-import { GuidePage } from './components/GuidePage';
-import { ResetPasswordPage } from './components/ResetPasswordPage';
-import { TopicHub } from './components/TopicHub';
 import { NewsletterCta } from './components/NewsletterCta';
 import { SponsorSlot } from './components/SponsorSlot';
-import { JobsBoard } from './components/JobsBoard';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Menu, Calendar, MapPin, X, Bookmark as BookmarkIcon } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
 import { cn } from './lib/utils';
-import posthog from './lib/posthog';
 import { SeoHead } from './components/SeoHead';
 import { articlePath } from './lib/site';
 import {
   ARTICLE_CATEGORIES,
   CATEGORY_SEO,
-  categoryPath,
   digestPath,
-  eventsPath,
   guidePath,
   listPathFromRoute,
   parseAppPath,
   type AppRoute,
 } from './lib/routes';
-import { getGuideBySlug, EVERGREEN_GUIDES } from './content/evergreen';
+import { getGuideBySlug, EVERGREEN_GUIDES, } from './content/evergreen';
 import { BOOSTED_EVENTS } from './content/monetization';
+import { trackPageView, trackEvent, identifyUser, posthog } from './services/posthog';
+
+// Code-split the heavy views: article reader, digest, guides, topic hubs, events,
+// password reset, and the jobs board only load their JS when actually opened.
+// This keeps the initial bundle small for fast first paint / LCP (an SEO factor).
+const ReaderView = lazy(() => import('./components/ReaderView').then((m) => ({ default: m.ReaderView })));
+const DigestView = lazy(() => import('./components/DigestView').then((m) => ({ default: m.DigestView })));
+const GuidePage = lazy(() => import('./components/GuidePage').then((m) => ({ default: m.GuidePage })));
+const ResetPasswordPage = lazy(() =>
+  import('./components/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })),
+);
+const TopicHub = lazy(() => import('./components/TopicHub').then((m) => ({ default: m.TopicHub })));
+const EventsPanel = lazy(() => import('./components/EventsPanel').then((m) => ({ default: m.EventsPanel })));
+const JobsBoard = lazy(() => import('./components/JobsBoard').then((m) => ({ default: m.JobsBoard })));
 
 const NEWSLETTER_CATEGORIES: Array<{ value: ArticleCategory; label: string }> = [
   { value: "Tech", label: "Tech" },
@@ -107,6 +111,7 @@ export default function App() {
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AccountUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -190,10 +195,7 @@ export default function App() {
     try {
       setNewsletterLoading(true);
       await subscribeToNewsletter(email, newsletterPreferences);
-      posthog.capture("newsletter_subscribed", {
-        source: "footer",
-        topic_count: newsletterPreferences.length,
-      });
+      trackEvent("newsletter_subscribed", { topics: newsletterPreferences, source: "footer", topic_count: newsletterPreferences.length });
       setNewsletterEmail("");
       toast.success("Thank you for subscribing. Your topic preferences are saved.");
     } catch (error) {
@@ -284,15 +286,21 @@ export default function App() {
   useEffect(() => {
     let active = true;
     (async () => {
-      const user = await fetchCurrentUser();
-      if (!active || !user) return;
-      posthog.identify(String(user.id), { email: user.email });
-      setCurrentUser(user);
       try {
-        const serverBookmarks = await fetchBookmarks();
-        setBookmarkedIds(serverBookmarks);
-      } catch {
-        /* keep local bookmarks if this fails */
+        const user = await fetchCurrentUser();
+        if (!active) return;
+        if (user) {
+          setCurrentUser(user);
+          identifyUser(user.id, user.email);
+          try {
+            const serverBookmarks = await fetchBookmarks();
+            setBookmarkedIds(serverBookmarks);
+          } catch {
+            /* keep local bookmarks if this fails */
+          }
+        }
+      } finally {
+        if (active) setAuthChecked(true);
       }
     })();
     return () => {
@@ -311,6 +319,15 @@ export default function App() {
       setAppRoute(parseAppPath(listPathRef.current || '/'));
     }
   }, [selectedArticle]);
+
+  // PostHog pageview tracking on every visible route (SPA navigation included).
+  useEffect(() => {
+    const current = window.location.pathname.replace(/\/+$/, "") || "/";
+    trackPageView(current);
+    if (selectedArticle) {
+      trackEvent("article_viewed", { slug: selectedArticle.slug, category: selectedArticle.category });
+    }
+  }, [selectedArticle?.slug, appRoute.kind, appRoute.kind === "category" ? appRoute.category : null]);
 
   useEffect(() => {
     const TODAY = new Date();
@@ -425,7 +442,7 @@ export default function App() {
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
     toast.success(wasBookmarked ? 'Removed from reading list' : 'Added to reading list');
-    posthog.capture("bookmark_updated", { action: wasBookmarked ? "removed" : "added" });
+    trackEvent("bookmark_updated", { action: wasBookmarked ? "removed" : "added", article_id: id });
     if (currentUser) {
       const sync = wasBookmarked ? removeBookmarkRemote(id) : addBookmarkRemote(id);
       sync.catch(() => {
@@ -447,12 +464,12 @@ export default function App() {
     try {
       setAuthLoading(true);
       const user = authMode === "login" ? await login(email, authPassword) : await signup(email, authPassword);
-      posthog.identify(String(user.id), { email: user.email });
-      posthog.capture("authentication_completed", { method: authMode });
       setCurrentUser(user);
       setAuthEmail("");
       setAuthPassword("");
       setIsAuthModalOpen(false);
+      identifyUser(user.id, user.email);
+      trackEvent("authentication_completed", { method: authMode });
       try {
         // Carry anything bookmarked while logged out into the account rather than dropping it.
         const local: string[] = JSON.parse(localStorage.getItem('sf-bookmarks') || '[]');
@@ -480,6 +497,7 @@ export default function App() {
     try {
       setAuthLoading(true);
       toast.success(await requestPasswordReset(email));
+      trackEvent("password_reset_requested");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not send that email right now.");
     } finally {
@@ -508,8 +526,9 @@ export default function App() {
     setCurrentUser({ ...currentUser, preferences: next });
     try {
       await updatePreferences(next);
-      posthog.capture("newsletter_preferences_updated", {
-        action: currentUser.preferences.includes(category) ? "removed" : "added",
+      trackEvent("preference_updated", {
+        category,
+        action: next.includes(category) ? "added" : "removed",
         preference_count: next.length,
       });
     } catch {
@@ -520,6 +539,7 @@ export default function App() {
   const handleShare = (article: Article, e?: React.MouseEvent) => {
     e?.stopPropagation();
     const shareUrl = `${window.location.origin}${articlePath(article.slug)}`;
+    trackEvent("article_shared", { article_slug: article.slug, category: article.category });
     if (navigator.share) {
       navigator.share({
         title: article.title,
@@ -619,7 +639,7 @@ export default function App() {
         articles={articles}
         route={activeRoute}
       />
-      <NewsletterCta variant="exit" />
+      {authChecked && !currentUser && <NewsletterCta variant="exit" />}
       <a
         href="#main-stream"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[300] focus:rounded focus:bg-ink focus:px-4 focus:py-2 focus:text-paper focus:outline-none"
@@ -982,16 +1002,22 @@ export default function App() {
         )}
 
         {appRoute.kind === "reset-password" && !selectedArticle ? (
-          <ResetPasswordPage onDone={() => navigateTo("/")} />
+          <Suspense fallback={<div className="py-24 text-center text-ink/40 italic">Loading…</div>}>
+            <ResetPasswordPage onDone={() => navigateTo("/")} />
+          </Suspense>
         ) : appRoute.kind === "digest" && !selectedArticle ? (
-          <DigestView
-            articles={articles}
-            onOpenArticle={setSelectedArticle}
-            onNavigate={navigateTo}
-          />
+          <Suspense fallback={<div className="py-24 text-center text-ink/40 italic">Loading…</div>}>
+            <DigestView
+              articles={articles}
+              onOpenArticle={setSelectedArticle}
+              onNavigate={navigateTo}
+            />
+          </Suspense>
         ) : appRoute.kind === "guide" && !selectedArticle ? (
           activeGuide ? (
-            <GuidePage guide={activeGuide} onNavigate={navigateTo} />
+            <Suspense fallback={<div className="py-24 text-center text-ink/40 italic">Loading…</div>}>
+              <GuidePage guide={activeGuide} onNavigate={navigateTo} />
+            </Suspense>
           ) : (
             <div className="py-24 text-center">
               <p className="text-xl italic font-serif text-ink/40">Guide not found.</p>
@@ -1001,11 +1027,13 @@ export default function App() {
             </div>
           )
         ) : appRoute.kind === "topic" && !selectedArticle ? (
-          <TopicHub
-            topicSlug={appRoute.slug}
-            articles={articles}
-            onOpenArticle={setSelectedArticle}
-          />
+          <Suspense fallback={<div className="py-24 text-center text-ink/40 italic">Loading…</div>}>
+            <TopicHub
+              topicSlug={appRoute.slug}
+              articles={articles}
+              onOpenArticle={setSelectedArticle}
+            />
+          </Suspense>
         ) : appRoute.kind === "events" ? (
           <div className="max-w-3xl mx-auto">
             <h1 className="text-4xl font-serif font-black mb-4 border-b-2 border-ink pb-4">Upcoming SF Events</h1>
@@ -1025,7 +1053,9 @@ export default function App() {
                 <p className="text-xs text-ink/50">{boost.venue}</p>
               </a>
             ))}
-            <EventsPanel events={events} />
+            <Suspense fallback={<div className="py-24 text-center text-ink/40 italic">Loading…</div>}>
+              <EventsPanel events={events} />
+            </Suspense>
           </div>
         ) : (
           <div className="flex flex-col lg:flex-row gap-12">
@@ -1096,7 +1126,9 @@ export default function App() {
           || selectedCategory === "Tech"
           || selectedCategory === "Funding") && (
           <div className="max-w-3xl">
-            <JobsBoard desk={appRoute.kind === "category" ? appRoute.category : (selectedCategory as string)} />
+            <Suspense fallback={<div className="py-12 text-center text-ink/40 italic">Loading jobs…</div>}>
+              <JobsBoard desk={appRoute.kind === "category" ? appRoute.category : (selectedCategory as string)} />
+            </Suspense>
           </div>
         )}
 
@@ -1252,21 +1284,23 @@ export default function App() {
         </footer>
       </main>
 
-      <ReaderView 
-        article={selectedArticle}
-        allArticles={articles}
-        onClose={() => {
-          setSelectedArticle(null);
-          const path = listPathRef.current || "/";
-          window.history.replaceState({}, "", path);
-          setAppRoute(parseAppPath(path));
-        }}
-        onNavigate={navigateTo}
-        onOpenArticle={setSelectedArticle}
-        isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
-        onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}
-        onShare={(e) => selectedArticle && handleShare(selectedArticle, e)}
-      />
+      <Suspense fallback={<div className="py-24 text-center text-ink/40 italic">Loading reader…</div>}>
+        <ReaderView 
+          article={selectedArticle}
+          allArticles={articles}
+          onClose={() => {
+            setSelectedArticle(null);
+            const path = listPathRef.current || "/";
+            window.history.replaceState({}, "", path);
+            setAppRoute(parseAppPath(path));
+          }}
+          onNavigate={navigateTo}
+          onOpenArticle={setSelectedArticle}
+          isBookmarked={selectedArticle ? bookmarkedIds.includes(selectedArticle.id) : false}
+          onBookmark={() => selectedArticle && handleBookmark(selectedArticle.id)}
+          onShare={(e) => selectedArticle && handleShare(selectedArticle, e)}
+        />
+      </Suspense>
     </div>
   );
 }

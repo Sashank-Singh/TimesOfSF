@@ -239,6 +239,50 @@ Expected scheduler shape:
 }
 ```
 
+## Analytics (PostHog)
+
+The site uses self-hosted PostHog for first-party analytics (pageviews, article views, sessions,
+referrers). It is loaded lazily from the browser with no npm dependency, so if PostHog is down or
+not configured, the site is completely unaffected.
+
+### 1. Deploy PostHog in Coolify
+
+PostHog is a large self-hosted stack (ClickHouse, Kafka, Postgres, Redis). The supported way to run
+it is the official hobby deploy — it provisions all backing services with one command on an Ubuntu
+VM (4 vCPU / 16 GB RAM recommended):
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/posthog/posthog/HEAD/bin/deploy-hobby)"
+```
+
+Or install the PostHog Docker image (`posthog/posthog:latest`) in Coolify as a separate application
+and set its runtime env vars per the PostHog self-host docs. Either way, you end up with:
+
+- a public URL, e.g. `https://posthog.yourdomain.com`
+- a project API key (`phc_...`) from Settings → Project → API keys
+
+> Note: self-hosted PostHog is officially unsupported by PostHog and should run on the latest
+> image. If you prefer zero infrastructure, PostHog Cloud's free tier (1M events/mo) is also
+> compatible — just point `VITE_POSTHOG_HOST` at `https://us.i.posthog.com`.
+
+### 2. Point the site at PostHog
+
+Set these as **build variables** in Coolify (the client bakes them in at build time):
+
+```env
+VITE_POSTHOG_HOST="https://posthog.yourdomain.com"
+VITE_POSTHOG_KEY="phc_..."
+```
+
+Redeploy. The frontend now sends:
+
+- `$pageview` on every route change (SPA navigation included)
+- `article_viewed` with `slug`, `title`, and `category` when an article is opened
+- `identify` when a user signs in or logs in (so PostHog can show signed-in traffic)
+
+View dashboards in PostHog: **Web analytics** for pageviews/visitors, **Events** for
+`article_viewed`, and **Funnels** to track signup → read paths.
+
 ## Validation
 
 Run before pushing:

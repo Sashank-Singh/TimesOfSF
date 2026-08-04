@@ -11,6 +11,7 @@ import { ALL_EDITORIAL_CATEGORIES } from "./types";
 import {
   EVERGREEN_GUIDES_SEO,
   injectListPageMetadata,
+  organizationLd,
   resolveCategoryFromSlug,
   type ListPageKind,
 } from "./seoPages";
@@ -283,12 +284,24 @@ function buildArticleHeadTags(post: any): string {
     }
   } catch { /* ignore */ }
 
+  // Parse citation sources (linked reporting) for citationSource / backstory schema
+  let citations: Array<{ claim?: string; sourceName?: string; sourceUrl?: string }> = [];
+  try {
+    const raw = post.citations;
+    if (Array.isArray(raw)) citations = raw.slice(0, 12);
+    else if (typeof raw === "string") {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) citations = parsed.slice(0, 12);
+    }
+  } catch { /* ignore */ }
+
   const breadcrumbLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
     itemListElement: [
-      { "@type": "ListItem", position: 1, name: `${category} news`, item: absolutePublicUrl(`/category/${encodeURIComponent(category.toLowerCase())}`) },
-      { "@type": "ListItem", position: 2, name: post.headline },
+      { "@type": "ListItem", position: 1, name: "Times of SF", item: absolutePublicUrl("/") },
+      { "@type": "ListItem", position: 2, name: `${category} news`, item: absolutePublicUrl(`/category/${encodeURIComponent(category.toLowerCase())}`) },
+      { "@type": "ListItem", position: 3, name: post.headline },
     ],
   };
 
@@ -299,26 +312,27 @@ function buildArticleHeadTags(post: any): string {
     description,
     datePublished: published,
     dateModified: modified,
+    dateCreated: published,
     wordCount,
     timeRequired: `PT${readTimeMin}M`,
     url,
     image: [image],
-    author: { "@type": "Organization", name: "Times of SF" },
-    publisher: {
-      "@type": "NewsMediaOrganization",
-      name: "Times of San Francisco",
-      logo: {
-        "@type": "ImageObject",
-        url: absolutePublicUrl("/favicon.svg"),
-      },
+    thumbnailUrl: image,
+    author: {
+      "@type": "Organization",
+      name: "Times of SF",
+      url: absolutePublicUrl("/"),
+      logo: { "@type": "ImageObject", url: absolutePublicUrl("/favicon.svg") },
     },
+    publisher: { "@id": `${absolutePublicUrl("/")}#organization` },
     mainEntityOfPage: url,
     articleSection: category,
     keywords: [category, ...entities.map((e) => e.name)],
     about: { "@type": "Thing", name: category },
     inLanguage: "en-US",
     isAccessibleForFree: true,
-    copyrightHolder: { "@type": "NewsMediaOrganization", name: "Times of San Francisco" },
+    copyrightHolder: { "@id": `${absolutePublicUrl("/")}#organization` },
+    copyrightYear: new Date(published).getUTCFullYear(),
     license: absolutePublicUrl("/llms.txt"),
     usageInfo: "Free to quote with attribution and a link to the canonical article URL.",
     speakable: {
@@ -326,6 +340,27 @@ function buildArticleHeadTags(post: any): string {
       cssSelector: ["#article-headline", ".article-lead", ".tldr-answer-engine", ".article-body"],
     },
   };
+
+  // Dateline for local stories — the site is San Francisco-centric.
+  articleLd.dateline = "San Francisco, CA";
+
+  // Cite the linked sources that back each claim (citationSource + backstory).
+  const citationSources = citations
+    .filter((c) => c.sourceName && c.sourceUrl)
+    .map((c) => ({
+      "@type": "CreativeWork",
+      name: c.sourceName,
+      url: c.sourceUrl,
+      ...(c.claim ? { about: c.claim.slice(0, 240) } : {}),
+    }));
+  if (citationSources.length > 0) {
+    articleLd.citationSource = citationSources;
+    articleLd.backstory = {
+      "@type": "CreativeWork",
+      about: "Reporting and sourcing for this story",
+      citation: citationSources,
+    };
+  }
 
   if (entities.length > 0) {
     articleLd.mentions = entities.map((e) => ({
@@ -335,7 +370,10 @@ function buildArticleHeadTags(post: any): string {
     }));
   }
 
-  const jsonLd = JSON.stringify({ "@graph": [articleLd, breadcrumbLd] }).replace(/</g, "\\u003c");
+  const jsonLd = JSON.stringify({
+    "@context": "https://schema.org",
+    "@graph": [organizationLd(), articleLd, breadcrumbLd],
+  }).replace(/</g, "\\u003c");
 
   const tagMetas = entities.slice(0, 5).map((e) =>
     `<meta property="article:tag" content="${escapeHtml(e.name)}" />`
@@ -357,6 +395,8 @@ function buildArticleHeadTags(post: any): string {
     `<meta property="article:published_time" content="${escapeHtml(published)}" />`,
     `<meta property="article:modified_time" content="${escapeHtml(modified)}" />`,
     `<meta property="article:section" content="${escapeHtml(category)}" />`,
+    `<meta property="article:author" content="Times of San Francisco" />`,
+    `<meta property="article:publisher" content="Times of San Francisco" />`,
     ...tagMetas,
     `<meta name="twitter:card" content="summary_large_image" />`,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
@@ -379,6 +419,9 @@ function injectArticleMetadata(indexHtml: string, post: any): string {
   html = html.replace(/<meta\s+property="og:[^"]+"[\s\S]*?>/gi, "");
   html = html.replace(/<meta\s+name="twitter:[^"]+"[\s\S]*?>/gi, "");
   html = html.replace(/<meta\s+property="article:[^"]+"[\s\S]*?>/gi, "");
+  // Strip the base Organization/WebSite script from index.html so pages do not
+  // emit a duplicate (and conflicting) @id for the same Organization node.
+  html = html.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/gi, "");
   html = html.replace("</head>", `    ${articleTags}\n  </head>`);
   if (html.includes('<div id="root"></div>')) {
     html = html.replace('<div id="root"></div>', `${bootstrap}\n    <div id="root"></div>`);
@@ -546,6 +589,13 @@ async function start() {
     res.type("text/plain").send(buildRobotsTxt());
   });
 
+  // IndexNow proof-of-key file: https://www.timesofsf.com/<key>.txt
+  if (config.indexNowKey) {
+    app.get(`/${config.indexNowKey}.txt`, (_req, res) => {
+      res.type("text/plain").send(config.indexNowKey!);
+    });
+  }
+
   app.get("/llms.txt", async (_req, res) => {
     try {
       const posts = await fetchRecentPosts(40);
@@ -603,6 +653,7 @@ async function start() {
     try {
       const rows = (await fetchPostSlugDatesForSitemap(2000)) as {
         slug: string;
+        imageUrl?: string | null;
         publishedAt: string | Date | null;
         updatedAt?: string | Date | null;
       }[];
@@ -612,6 +663,7 @@ async function start() {
         ["/events", "daily", "0.9", null],
         ["/digest", "daily", "0.85", null],
         ["/feed.xml", "hourly", "0.7", null],
+        ["/news-sitemap.xml", "hourly", "0.7", null],
         ["/llms.txt", "daily", "0.6", null],
         ["/llms-full.txt", "daily", "0.5", null],
         ...ALL_EDITORIAL_CATEGORIES.map((c): [string, string, string, string | null] => [
@@ -639,11 +691,16 @@ async function start() {
         .map((r) => {
           const loc = `${base}/articles/${encodeURIComponent(String(r.slug).trim())}`;
           const lastmod = sitemapLastmod(r.updatedAt ?? r.publishedAt);
-          return `  <url><loc>${escapeXml(loc)}</loc><lastmod>${escapeXml(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`;
+          const imageXml =
+            typeof r.imageUrl === "string" && r.imageUrl.trim().startsWith("http")
+              ? `<image:image><image:loc>${escapeXml(r.imageUrl.trim())}</image:loc></image:image>`
+              : "";
+          return `  <url><loc>${escapeXml(loc)}</loc><lastmod>${escapeXml(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority>${imageXml}</url>`;
         })
         .join("\n");
       const body = `<?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
 ${staticXml}
 ${articleUrls}
 </urlset>`;
@@ -651,6 +708,45 @@ ${articleUrls}
     } catch (error) {
       console.error("sitemap.xml:", error);
       res.status(500).type("text/plain").send("sitemap failed");
+    }
+  });
+
+  // Google News sitemap — required for inclusion in Google News / Discover surfaces,
+  // which is how a small outlet can show up next to wire coverage on topic searches.
+  app.get("/news-sitemap.xml", async (_req, res) => {
+    try {
+      const rows = (await fetchPostSlugDatesForSitemap(1000)) as {
+        slug: string;
+        headline?: string | null;
+        imageUrl?: string | null;
+        publishedAt: string | Date | null;
+        updatedAt?: string | Date | null;
+      }[];
+      const base = config.appUrl.replace(/\/+$/, "");
+      // Google News only accepts articles from the last 48 hours.
+      const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+      const newsUrls = rows
+        .filter((r) => r.slug && String(r.slug).trim())
+        .filter((r) => {
+          const d = new Date(r.publishedAt ?? r.updatedAt ?? 0).getTime();
+          return Number.isFinite(d) && d >= cutoff;
+        })
+        .map((r) => {
+          const loc = `${base}/articles/${encodeURIComponent(String(r.slug).trim())}`;
+          const date = sitemapLastmod(r.publishedAt ?? r.updatedAt);
+          const title = String(r.headline ?? r.slug).trim();
+          return `  <url><loc>${escapeXml(loc)}</loc><news:news><news:publication><news:name>Times of San Francisco</news:name><news:language>en</news:language></news:publication><news:publication_date>${escapeXml(date)}</news:publication_date><news:title>${escapeXml(title)}</news:title></news:news></url>`;
+        })
+        .join("\n");
+      const body = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:news="http://www.google.com/schemas/sitemap-news/0.9">
+${newsUrls || "<!-- no articles published in the last 48 hours -->"}
+</urlset>`;
+      res.type("application/xml").send(body);
+    } catch (error) {
+      console.error("news-sitemap.xml:", error);
+      res.status(500).type("text/plain").send("news sitemap failed");
     }
   });
 
@@ -783,7 +879,7 @@ ${articleUrls}
       return;
     }
     try {
-      const { createUser, findUserByEmail, createSession } = await import("./db");
+      const { createUser, findUserByEmail, createSession, saveNewsletterSubscriber } = await import("./db");
       if (await findUserByEmail(email)) {
         res.status(409).json({ ok: false, error: "An account with that email already exists." });
         return;
@@ -792,6 +888,11 @@ ${articleUrls}
       const token = generateSessionToken();
       await createSession(user.id, token, new Date(Date.now() + SESSION_TTL_MS));
       setSessionCookie(res, token);
+      // Every account is automatically subscribed to the digest using the topics the
+      // account itself prefers. Best-effort: a failure must not fail the signup.
+      saveNewsletterSubscriber(email, "account-signup", user.preferences).catch((err) =>
+        console.error("auto newsletter subscribe (signup) failed:", err),
+      );
       // Verification is informational, not a gate: the account works immediately and the
       // email only confirms ownership. A send failure must not fail the signup.
       sendVerificationEmail(user.id, user.email).catch((err) =>
@@ -808,7 +909,7 @@ ${articleUrls}
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     const password = typeof req.body?.password === "string" ? req.body.password : "";
     try {
-      const { findUserByEmail, createSession, touchUserLogin } = await import("./db");
+      const { findUserByEmail, createSession, touchUserLogin, saveNewsletterSubscriber } = await import("./db");
       const user = await findUserByEmail(email);
       if (!user || !verifyPassword(password, user.passwordHash)) {
         res.status(401).json({ ok: false, error: "Incorrect email or password." });
@@ -818,6 +919,11 @@ ${articleUrls}
       await createSession(user.id, token, new Date(Date.now() + SESSION_TTL_MS));
       await touchUserLogin(user.id);
       setSessionCookie(res, token);
+      // Signing in also re-joins the digest for that account's email using its saved topics.
+      // Best-effort: a failure must not fail the login.
+      saveNewsletterSubscriber(email, "account-login", user.preferences).catch((err) =>
+        console.error("auto newsletter subscribe (login) failed:", err),
+      );
       res.json({
         ok: true,
         id: user.id,

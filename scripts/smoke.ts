@@ -190,10 +190,12 @@ async function main() {
   }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failed} failed`);
-  process.exit(failed === 0 ? 0 : 1);
+  // Set exitCode rather than calling process.exit(), which can terminate before
+  // buffered stdout has flushed and silently truncate the report.
+  process.exitCode = failed === 0 ? 0 : 1;
 }
 
 main().catch((err) => {
   console.error("smoke run crashed:", err);
-  process.exit(1);
+  process.exitCode = 1;
 });

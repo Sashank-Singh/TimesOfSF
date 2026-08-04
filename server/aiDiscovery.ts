@@ -29,6 +29,29 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Ping IndexNow (Bing, Yandex, Seznam) the moment an article publishes so it can appear in
+ * search results in minutes instead of days. No-op unless INDEXNOW_KEY is configured.
+ */
+export async function indexNowPing(slug: string): Promise<void> {
+  const key = config.indexNowKey;
+  const base = config.appUrl.replace(/\/+$/, "");
+  if (!key || !/^[a-zA-Z0-9-]+$/.test(key)) return;
+  try {
+    const url = `${base}/articles/${encodeURIComponent(slug)}`;
+    const body = JSON.stringify({ host: new URL(base).hostname, key, keyLocation: `${base}/${key}.txt`, urlList: [url] });
+    // IndexNow accepts a GET (one URL) or POST (batch). POST with a single URL is the reliable path.
+    await fetch("https://api.indexnow.org/indexnow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8", "User-Agent": "TimesOfSF/1.0 (instant indexing)" },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    console.warn("IndexNow ping failed:", error instanceof Error ? error.message : error);
+  }
+}
+
 function escapeXml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -96,6 +119,7 @@ export function buildRobotsTxt(): string {
 
   lines.push(
     `Sitemap: ${base}/sitemap.xml`,
+    `Sitemap: ${base}/news-sitemap.xml`,
     `# AI discovery (https://llmstxt.org)`,
     `LLMs-Txt: ${base}/llms.txt`,
     `LLMs-Full-Txt: ${base}/llms-full.txt`,

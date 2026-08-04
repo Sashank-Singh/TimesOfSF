@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { buildEventsDigestPost, finalizePostForPublish, rewritePostForCopyrightSafety, synthesizePost } from "./agents";
+import { indexNowPing } from "./aiDiscovery";
 import {
   classifyEditorialCategory,
   fetchQuotaSeedCandidate,
@@ -21,7 +22,7 @@ import {
   saveSourceAttempt,
   type KnowledgeStateEntry,
 } from "./db";
-import { extractSource, searchGoogleImage } from "./extractor";
+import { extractSource, searchWebImage } from "./extractor";
 import { config } from "./config";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline, normalizeUrl } from "./dedupe";
 import { findSourceArticle, getTrendingTopics, scanUnprocessedFeedItems } from "./rss";
@@ -173,14 +174,55 @@ export async function pickHeroImageFromSources(
     return { url: best.imageUrl!, credit: `${best.sourceName}` };
   }
 
-  // 5. Google Image Search as final fallback — real image related to the topic
-  if (config.serperApiKey) {
-    const imageUrl = await searchGoogleImage(topic.normalizedTopic);
-    if (imageUrl) {
-      return { url: imageUrl, credit: "Google Images" };
-    }
+  // 5. Web image search (Bing is free; Serper/Google is the paid upgrade) as final fallback
+  const webImage = await searchWebImage({
+    headline: topic.normalizedTopic,
+    topic: topic.topic,
+  });
+  if (webImage) {
+    return { url: webImage.url, credit: webImage.credit };
   }
 
+  return {};
+}
+
+/**
+ * Guaranteed image lookup for a published post.
+ * Runs AFTER synthesis so we can use the final headline + excerpt + category to build
+ * the most accurate search query. Tries the existing source-pick first, then
+ * runs a fresh web image search scoped to the article's actual content.
+ * Always returns an image if any image source is reachable.
+ */
+export async function ensurePostImage(
+  sources: SourceExtraction[],
+  topic: TrendCandidate,
+  post: { headline: string; category?: string; excerpt?: string; summary?: string },
+): Promise<{ url?: string; credit?: string }> {
+  const hero = await pickHeroImageFromSources(sources, topic);
+  if (hero.url) return hero;
+
+  const webImage = await searchWebImage({
+    headline: post.headline,
+    category: post.category,
+    topic: topic.topic,
+    excerpt: post.excerpt || post.summary,
+  });
+  if (webImage) {
+    return { url: webImage.url, credit: webImage.credit };
+  }
+
+  const looseImage = await searchWebImage({
+    headline: post.category ? `${post.category} San Francisco` : "San Francisco news",
+    category: post.category,
+    topic: topic.topic,
+  });
+  if (looseImage) {
+    return { url: looseImage.url, credit: looseImage.credit };
+  }
+
+  console.warn(
+    `⚠️ No image source available for post "${post.headline}" — Bing and Serper both returned nothing.`,
+  );
   return {};
 }
 
@@ -342,13 +384,26 @@ async function processTopic(
       console.log("✅ Copyright safety rewrite passed.");
     }
     
-    const hero = await pickHeroImageFromSources(sourcesForStory, topic);
+    const hero = await ensurePostImage(sourcesForStory, topic, {
+      headline: post.headline,
+      category: post.editorialCategory,
+      excerpt: post.dek,
+      summary: post.shortPost,
+    });
     if (hero.url) {
       post.imageUrl = hero.url;
       post.imageCredit = hero.credit;
+    } else {
+      console.warn(
+        `⚠️ No image found for post "${post.headline}" — post will be saved without a hero image. ` +
+          `Bing Images and (optional) Serper both returned nothing.`,
+      );
     }
 
     const postId = await saveGeneratedPost(runId, post);
+
+    // Ask Bing/Yandex to crawl this article now that it is live (fire-and-forget).
+    indexNowPing(post.slug).catch(() => {});
 
     // Track this article in knowledge state for future coverage context
     await saveKnowledgeState(post, topic.topic, sourcesForStory).catch((err) =>
@@ -413,8 +468,22 @@ async function publishEventsDigestArticle(
   post.canonicalKey = fingerprint.canonicalKey;
   post.storyFingerprint = fingerprint.storyFingerprint;
 
+  if (!post.imageUrl) {
+    const hero = await ensurePostImage([], syntheticTopic, {
+      headline: post.headline,
+      category: post.editorialCategory || "Events",
+      excerpt: post.dek,
+      summary: post.shortPost,
+    });
+    if (hero.url) {
+      post.imageUrl = hero.url;
+      post.imageCredit = hero.credit;
+    }
+  }
+
   try {
     const postId = await saveGeneratedPost(runId, post);
+    indexNowPing(post.slug).catch(() => {});
     const published: PipelineRunResult = {
       runId,
       topic: syntheticTopic,

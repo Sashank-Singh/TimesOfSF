@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import type { ArticleCategory } from "../types";
 import { subscribeToNewsletter } from "../services/newsService";
 import { cn } from "../lib/utils";
-import posthog from "../lib/posthog";
+import { trackEvent } from "../services/posthog";
 
 const TOPIC_OPTIONS: ArticleCategory[] = [
   "Tech",
@@ -70,10 +70,7 @@ export function NewsletterCta({
     try {
       setLoading(true);
       await subscribeToNewsletter(trimmed, topics);
-      posthog.capture("newsletter_subscribed", {
-        source: variant,
-        topic_count: topics.length,
-      });
+      trackEvent("newsletter_subscribed", { topics, source: variant, topic_count: topics.length });
       setEmail("");
       toast.success("Subscribed — topic preferences saved.");
       if (variant === "exit") {
@@ -114,7 +111,7 @@ export function NewsletterCta({
           SF briefings by topic
         </h3>
         <p className="text-sm text-ink/60 leading-relaxed">
-          One focused email when we publish in the desks you choose—no generic blast.
+          Every morning and evening, a short briefing of just your topics.
         </p>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end">

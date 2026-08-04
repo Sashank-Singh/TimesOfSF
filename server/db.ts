@@ -611,13 +611,13 @@ export async function completeRun(result: PipelineRunResult) {
 
 export async function fetchPostSlugDatesForSitemap(limit = 2000) {
   const rows = await sql`
-    SELECT slug, created_at AS "publishedAt", COALESCE(updated_at, created_at) AS "updatedAt"
+    SELECT slug, headline, image_url AS "imageUrl", created_at AS "publishedAt", COALESCE(updated_at, created_at) AS "updatedAt"
     FROM generated_posts
     WHERE slug IS NOT NULL AND TRIM(slug) <> ''
     ORDER BY created_at DESC
     LIMIT ${limit}
   `;
-  return rows.map((r: any) => ({ slug: r.slug, publishedAt: r.publishedAt, updatedAt: r.updatedAt }));
+  return rows.map((r: any) => ({ slug: r.slug, headline: r.headline, imageUrl: r.imageUrl, publishedAt: r.publishedAt, updatedAt: r.updatedAt }));
 }
 
 export async function fetchRecentPosts(limit = 1000, searchQuery?: string) {

@@ -6,6 +6,7 @@ export type SeoListItem = {
   slug: string;
   dek?: string;
   category?: string;
+  imageUrl?: string;
 };
 
 const CATEGORY_SEO: Record<string, { title: string; description: string }> = {
@@ -91,6 +92,51 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/** Site-wide Organization node shared by every page's JSON-LD graph. */
+export function organizationLd(): Record<string, unknown> {
+  const base = config.appUrl.replace(/\/+$/, "");
+  return {
+    "@type": "NewsMediaOrganization",
+    "@id": `${base}/#organization`,
+    name: "Times of San Francisco",
+    alternateName: "Times of SF",
+    url: `${base}/`,
+    logo: {
+      "@type": "ImageObject",
+      url: `${base}/favicon.svg`,
+      width: 64,
+      height: 64,
+    },
+    image: `${base}/default-og.svg`,
+    sameAs: [],
+    foundingDate: "2026",
+    slogan: "High-fidelity journalism covering the San Francisco Tech Renaissance, civic evolution, and local culture.",
+    areaServed: "San Francisco Bay Area",
+  };
+}
+
+/** WebSite node with SiteNavigationElement + SearchAction (used on the homepage). */
+export function websiteLd(): Record<string, unknown> {
+  const base = config.appUrl.replace(/\/+$/, "");
+  return {
+    "@type": "WebSite",
+    "@id": `${base}/#website`,
+    url: `${base}/`,
+    name: "Times of San Francisco",
+    description: "San Francisco news and analysis: civics, culture, tech, transit, food, funding, and events.",
+    inLanguage: "en-US",
+    publisher: { "@id": `${base}/#organization` },
+    potentialAction: {
+      "@type": "SearchAction",
+      target: {
+        "@type": "EntryPoint",
+        urlTemplate: `${base}/?q={search_term_string}`,
+      },
+      "query-input": "required name=search_term_string",
+    },
+  };
+}
+
 export function categorySlug(category: string): string {
   return category.trim().toLowerCase();
 }
@@ -158,18 +204,38 @@ export function buildListPageHeadTags(page: ListPageKind, items: SeoListItem[]):
   const meta = listPageMeta(page);
   const url = absolutePublicUrl(meta.canonicalPath);
   const image = absolutePublicUrl("/default-og.svg");
-  const listLd = {
-    "@context": "https://schema.org",
-    "@type": "ItemList",
-    name: meta.title,
-    itemListElement: items.slice(0, 24).map((item, i) => ({
-      "@type": "ListItem",
-      position: i + 1,
-      url: absolutePublicUrl(`/articles/${encodeURIComponent(item.slug)}`),
-      name: item.headline,
-    })),
-  };
-  const jsonLd = JSON.stringify(listLd).replace(/</g, "\\u003c");
+
+  const itemList = items.slice(0, 24).map((item, i) => ({
+    "@type": "ListItem",
+    position: i + 1,
+    url: absolutePublicUrl(`/articles/${encodeURIComponent(item.slug)}`),
+    name: item.headline,
+  }));
+
+  // WebPage + ItemList graph, the well-supported pattern for collection pages.
+  const graph: Array<Record<string, unknown>> = [
+    organizationLd(),
+    {
+      "@type": "WebPage",
+      "@id": url,
+      url,
+      name: meta.title,
+      description: meta.description,
+      inLanguage: "en-US",
+      isPartOf: { "@id": absolutePublicUrl("/") },
+    },
+    {
+      "@type": "ItemList",
+      name: meta.title,
+      numberOfItems: itemList.length,
+      itemListElement: itemList,
+    },
+  ];
+
+  // Homepage gets the WebSite node with SearchAction; deeper pages just reference it.
+  if (page.kind === "home") graph.push(websiteLd());
+
+  const jsonLd = JSON.stringify({ "@context": "https://schema.org", "@graph": graph }).replace(/</g, "\\u003c");
 
   return [
     `<title>${escapeHtml(meta.title)}</title>`,

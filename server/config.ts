@@ -162,6 +162,11 @@ export const config = {
   newsletterDigestHours: readDigestHours("NEWSLETTER_DIGEST_HOURS", [8, 20]),
   newsletterTimezone: process.env.NEWSLETTER_TIMEZONE?.trim() || "America/Los_Angeles",
   disableNewsletterSender: process.env.DISABLE_NEWSLETTER_SENDER === "true",
+  /**
+   * IndexNow key (a UUID) for instant Bing/Yandex indexing on publish.
+   * When set, a `<key>.txt` file is served and the pipeline pings IndexNow after each publish.
+   */
+  indexNowKey: process.env.INDEXNOW_KEY?.trim() || undefined,
 };
 
 export function isProduction() {

@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 import { rewritePostForCopyrightSafety, synthesizePost } from "./agents";
+import { indexNowPing } from "./aiDiscovery";
 import { config } from "./config";
 import { completeRun, createRun, fetchRecentPosts, saveGeneratedPost, saveSourceAttempt } from "./db";
 import { buildStoryFingerprint, findDuplicateStory, normalizeHeadline } from "./dedupe";
 import { extractSource } from "./extractor";
-import { findCopyrightRisk, pickHeroImageFromSources } from "./pipeline";
+import { findCopyrightRisk, ensurePostImage } from "./pipeline";
 import { withSourceMetadata } from "./sourceRegistry";
 import type { EditorialCategory, PipelineRunResult, SourceAttempt, TrendCandidate } from "./types";
 import { ALL_EDITORIAL_CATEGORIES } from "./types";
@@ -174,13 +175,19 @@ export async function publishArticleFromSubmittedUrl(
       }
     }
 
-    const hero = await pickHeroImageFromSources([extraction], topic);
+    const hero = await ensurePostImage([extraction], topic, {
+      headline: post.headline,
+      category: post.editorialCategory,
+      excerpt: post.dek,
+      summary: post.shortPost,
+    });
     if (hero.url) {
       post.imageUrl = hero.url;
       post.imageCredit = hero.credit;
     }
 
     const postId = await saveGeneratedPost(runId, post);
+    indexNowPing(post.slug).catch(() => {});
     const published: PipelineRunResult = {
       runId,
       topic,

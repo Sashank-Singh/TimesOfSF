@@ -225,6 +225,12 @@ export function findDuplicateStory(
   const candidate = buildStoryFingerprint(topic, sources, headline);
   const candidateTokens = tokenize(candidate.storyFingerprint.normalizedTitle);
   const candidateEntities = candidate.storyFingerprint.keyEntities.map((entity) => entity.toLowerCase());
+  // The pipeline corroborates a story with many wire/outlet sources, and those
+  // corroborating URLs routinely overlap with older posts. Only a reused PRIMARY
+  // source URL means the exact same story was already filed; a shared corroborating
+  // URL alone would wrongly block fresh stories. True re-publishes are still caught
+  // by the headline-hash / similarity / entity checks below.
+  const primaryUrl = topic.primarySource?.articleUrl ? normalizeUrl(topic.primarySource.articleUrl) : null;
 
   for (const post of existingPosts) {
     const existingFingerprint = getExistingFingerprint(post);
@@ -234,6 +240,7 @@ export function findDuplicateStory(
       .map((entity) => entity.toLowerCase());
     const existingSourceUrls = getExistingSourceUrls(post);
     const sharedSourceUrl = candidate.sourceUrls.find((url) => existingSourceUrls.includes(url));
+    const sharedPrimary = primaryUrl && existingSourceUrls.includes(primaryUrl);
     const titleSimilarity = jaccard(candidateTokens, existingTokens);
     const prefixSim = prefixTokenJaccard(candidateTokens, existingTokens, 12);
     const lcpLen = longestCommonPrefixTokenLength(candidateTokens, existingTokens);
@@ -246,7 +253,10 @@ export function findDuplicateStory(
       : 0;
     const distance = hammingDistance(candidate.storyFingerprint.simhash, existingFingerprint?.simhash);
 
-    if (sharedSourceUrl) {
+    // Same exact article already used as a primary source -> duplicate.
+    // When no primary is set (manual URL ingest / events digest), any shared source
+    // URL is treated as a duplicate, preserving the old strict behaviour for those flows.
+    if (sharedPrimary || (!primaryUrl && sharedSourceUrl)) {
       return { post, reason: "same source URL already used recently", fingerprint: candidate };
     }
     if ((post.headlineHash ?? post.headline_hash) === candidate.headlineHash) {

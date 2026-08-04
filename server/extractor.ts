@@ -2,6 +2,9 @@ import { JSDOM } from "jsdom";
 import { SourceExtraction, SourceSearchResult } from "./types";
 import { config } from "./config";
 import { extractWithReadabilityFallback } from "./articleExtractor";
+import { buildImageSearchQuery, isAcceptableImageResult, searchBingImage } from "./imageSearch";
+
+export { buildImageSearchQuery };
 
 function decodeEntities(input: string) {
   return input
@@ -100,11 +103,23 @@ export async function extractSource(searchResult: SourceSearchResult): Promise<S
   return buildFallbackExtraction(searchResult);
 }
 
-export async function searchGoogleImage(query: string): Promise<string | undefined> {
+/**
+ * Search Google Images via Serper.dev (paid, requires SERPER_API_KEY).
+ * Returns the first acceptable image (skips stock-art domains and clip-art/vector results).
+ * Used as a paid upgrade path when Bing's free search is insufficient.
+ */
+export async function searchGoogleImage(input: {
+  headline?: string;
+  category?: string;
+  topic?: string;
+  excerpt?: string;
+}): Promise<string | undefined> {
   if (!config.serperApiKey) {
-    console.warn("SERPER_API_KEY not set. Skipping Google Image search.");
     return undefined;
   }
+
+  const query = buildImageSearchQuery(input);
+  if (!query) return undefined;
 
   try {
     const response = await fetch("https://google.serper.dev/images", {
@@ -113,14 +128,40 @@ export async function searchGoogleImage(query: string): Promise<string | undefin
         "X-API-KEY": config.serperApiKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ q: query, num: 1 }),
+      body: JSON.stringify({ q: query, num: 10 }),
     });
 
     if (!response.ok) return undefined;
     const data = await response.json();
-    return data.images?.[0]?.imageUrl;
+    const images: Array<{ imageUrl?: string; title?: string; link?: string }> = Array.isArray(data.images) ? data.images : [];
+    for (const img of images) {
+      if (isAcceptableImageResult(img)) return img.imageUrl;
+    }
+    return undefined;
   } catch (error) {
-    console.error("Google Image search failed:", error);
+    console.error("Google Image search (Serper) failed:", error);
     return undefined;
   }
+}
+
+/**
+ * Free image search. Tries Bing Images first (no API key needed),
+ * then falls back to Serper.dev / Google if SERPER_API_KEY is configured.
+ * Always returns a usable image URL if any source can find one.
+ */
+export async function searchWebImage(input: {
+  headline?: string;
+  category?: string;
+  topic?: string;
+  excerpt?: string;
+}): Promise<{ url: string; credit: string } | undefined> {
+  const bing = await searchBingImage(input);
+  if (bing) return { url: bing, credit: "Bing Images" };
+
+  if (config.serperApiKey) {
+    const google = await searchGoogleImage(input);
+    if (google) return { url: google, credit: "Google Images" };
+  }
+
+  return undefined;
 }

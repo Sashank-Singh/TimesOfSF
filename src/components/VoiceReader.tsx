@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { Play, Pause, StopCircle, Loader2, RotateCcw, RotateCw } from "lucide-react";
 import { cn } from "../lib/utils";
 import { getApiBase } from "../services/newsService";
+import { trackEvent } from "../services/posthog";
 
 export type VoiceReaderStatus = "idle" | "loading" | "ready" | "playing" | "paused" | "error";
 
@@ -66,6 +67,7 @@ export function VoiceReader({ text, title, autoPlay = false, onWordChange, onSta
   const barRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
   const pendingPlayRef = useRef(false);
+  const audioStartedTrackedRef = useRef(false);
   const speedRef = useRef(speed);
   const statusRef = useRef(status);
 
@@ -192,6 +194,7 @@ export function VoiceReader({ text, title, autoPlay = false, onWordChange, onSta
     streamAbortRef.current = new AbortController();
 
     streamDoneRef.current = false;
+    audioStartedTrackedRef.current = false;
     pcmChunksRef.current = [];
     totalSamplesRef.current = 0;
     sampleRateRef.current = DEFAULT_SAMPLE_RATE;
@@ -255,6 +258,10 @@ export function VoiceReader({ text, title, autoPlay = false, onWordChange, onSta
                     setPendingPlay(false);
                     await playBuffered();
                     updateStatus("playing");
+                    if (!audioStartedTrackedRef.current) {
+                      trackEvent("article_audio_started", { title_present: Boolean(title) });
+                      audioStartedTrackedRef.current = true;
+                    }
                   }
                 }
               } else if (data.done) {
@@ -334,6 +341,7 @@ export function VoiceReader({ text, title, autoPlay = false, onWordChange, onSta
         lastWordRef.current = -1;
         onWordRef.current?.(totalWords - 1);
         updateStatus("idle");
+        trackEvent("article_audio_completed", { title_present: Boolean(title) });
         onComplete?.();
       }
     }, 250);
@@ -419,12 +427,20 @@ export function VoiceReader({ text, title, autoPlay = false, onWordChange, onSta
           setPendingPlay(false);
           await playBuffered();
           updateStatus("playing");
+          if (!audioStartedTrackedRef.current) {
+            trackEvent("article_audio_started", { title_present: Boolean(title) });
+            audioStartedTrackedRef.current = true;
+          }
         }
         break;
       case "ready":
         await ensureAudioCtx();
         await playBuffered();
         updateStatus("playing");
+        if (!audioStartedTrackedRef.current) {
+          trackEvent("article_audio_started", { title_present: Boolean(title) });
+          audioStartedTrackedRef.current = true;
+        }
         break;
       case "playing":
       case "paused":
