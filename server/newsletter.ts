@@ -24,10 +24,6 @@ const DIGEST_RANK_DEPTH = 30;
  * per-subscriber delivery tracking (not this window) is what prevents repeats. */
 const DIGEST_LOOKBACK_DAYS = 30;
 
-const PAPER = "#F9F8F6";
-const INK = "#121212";
-const ACCENT = "#8B0000";
-
 function articleUrl(slug: string): string {
   const base = config.appUrl.replace(/\/+$/, "");
   return `${base}/articles/${encodeURIComponent(slug)}`;
@@ -84,69 +80,145 @@ export function plainTextForDigest(slot: DigestSlot, items: DigestItem[], unsubs
   ].join("\n");
 }
 
+function seedFor(slug: string): string {
+  return slug.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "story";
+}
+
+/** Readable date (e.g. "Monday, August 3, 2026") in the configured timezone. */
+function localLongDate(timezone: string, at: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(at);
+}
+
 export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribeToken: string): string {
   const unsubscribe = unsubscribeUrl(unsubscribeToken);
-  const rows = items
-    .map((item, i) => {
-      const url = articleUrl(item.post.slug);
-      return `
-        <tr>
-          <td style="padding:0 0 28px 0;border-bottom:1px solid rgba(18,18,18,0.08);">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  const site = config.appUrl.replace(/\/+$/, "");
+  const date = localLongDate(config.newsletterTimezone);
+  const label = escapeHtml(slotLabel(slot));
+
+  const [lead, ...rest] = items;
+  const topStory = lead
+    ? (() => {
+        const url = articleUrl(lead.post.slug);
+        const category = escapeHtml(lead.post.category ?? "Story");
+        const headline = escapeHtml(lead.post.headline);
+        const summary = escapeHtml(lead.whyItMatters);
+        const image = `https://picsum.photos/seed/timesofsf-${seedFor(lead.post.slug)}/1040/560`;
+        return `
               <tr>
-                <td style="width:36px;vertical-align:top;padding-top:2px;">
-                  <div style="font:800 20px/1 Georgia,'Times New Roman',serif;color:${ACCENT};">${i + 1}</div>
-                </td>
-                <td style="vertical-align:top;">
-                  <div style="font:700 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.15em;text-transform:uppercase;color:${ACCENT};margin:0 0 6px 0;">
-                    ${escapeHtml(item.post.category ?? "Story")}
-                  </div>
-                  <h2 style="margin:0 0 8px 0;font:700 21px/1.25 Georgia,'Times New Roman',serif;color:${INK};">
-                    <a href="${escapeHtml(url)}" style="color:${INK};text-decoration:none;">${escapeHtml(item.post.headline)}</a>
-                  </h2>
-                  <p style="margin:0 0 10px 0;font:400 14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:rgba(18,18,18,0.7);">
-                    ${escapeHtml(item.whyItMatters)}
-                  </p>
-                  <a href="${escapeHtml(url)}" style="font:700 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.15em;text-transform:uppercase;color:${ACCENT};text-decoration:none;">
-                    Read story →
-                  </a>
+                <td class="email-pad" style="padding:0 40px 30px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background-color:#C9C4B8;">
+                    <tr><td style="padding:26px;background-color:#A8171C;">
+                      <div style="color:#F2E9D8;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">Top Story | ${category}</div>
+                      <h1 class="lead-title" style="margin:8px 0 0;color:#FFFFFF;font:900 28px/1.2 Georgia,'Times New Roman',serif;"><a href="${escapeHtml(url)}" style="color:#FFFFFF;text-decoration:none;">${headline}</a></h1>
+                    </td></tr>
+                    <tr><td><a href="${escapeHtml(url)}"><img src="${escapeHtml(image)}" width="520" alt="" style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;border:0;"></a></td></tr>
+                    <tr><td style="padding:22px 26px 26px;">
+                      <p style="margin:0 0 18px;color:#3C3A35;font-size:14px;line-height:1.65;">${summary}</p>
+                      <a href="${escapeHtml(url)}" style="display:inline-block;padding:13px 24px;background-color:#A8171C;color:#FFFFFF;font-size:12px;font-weight:700;letter-spacing:1px;text-decoration:none;text-transform:uppercase;">Read the full story</a>
+                    </td></tr>
+                  </table>
                 </td>
               </tr>
-            </table>
-          </td>
-        </tr>
+        `;
+      })()
+    : "";
+
+  const rows = rest
+    .map((item) => {
+      const url = articleUrl(item.post.slug);
+      const category = escapeHtml(item.post.category ?? "Story");
+      const headline = escapeHtml(item.post.headline);
+      const summary = escapeHtml(item.whyItMatters);
+      const image = `https://picsum.photos/seed/timesofsf-${seedFor(item.post.slug)}/192/192`;
+      return `
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="story-row" style="border-bottom:1px solid #CFCABD;">
+          <tr>
+            <td width="96" valign="top" class="story-image-cell" style="width:96px;padding:20px 16px 20px 0;"><a href="${escapeHtml(url)}"><img src="${escapeHtml(image)}" width="96" height="96" alt="" style="display:block;width:96px;height:96px;object-fit:cover;border:0;"></a></td>
+            <td valign="top" style="padding:20px 0;">
+              <div style="margin:0 0 6px;color:#A8171C;font:700 10px/1.4 Helvetica,Arial,sans-serif;letter-spacing:1.5px;text-transform:uppercase;">${category}</div>
+              <h3 style="margin:0 0 7px;color:#151515;font:800 18px/1.25 Georgia,'Times New Roman',serif;">
+                <a href="${escapeHtml(url)}" style="color:#151515;text-decoration:none;">${headline}</a>
+              </h3>
+              <p style="margin:0;color:#5A564F;font:400 14px/1.55 Helvetica,Arial,sans-serif;">${summary}</p>
+            </td>
+          </tr>
+        </table>
       `;
     })
     .join("");
 
-  return `
-    <div style="margin:0;padding:32px 16px;background:${PAPER};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
-        <tr>
-          <td style="padding-bottom:28px;border-bottom:3px solid ${INK};text-align:center;">
-            <div style="font:900 26px/1 Georgia,'Times New Roman',serif;letter-spacing:-0.02em;text-transform:uppercase;color:${INK};">
-              Times of San Francisco
-            </div>
-            <div style="margin-top:8px;font:700 11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.25em;text-transform:uppercase;color:${ACCENT};">
-              ${escapeHtml(slotLabel(slot))}
-            </div>
-          </td>
-        </tr>
-        <tr><td style="height:28px;"></td></tr>
+  const moreHeadlines = rest.length > 0
+    ? `
+              <tr><td class="email-pad" style="padding:0 40px;">
+                <div style="padding-bottom:8px;border-bottom:2px solid #151515;color:#151515;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">More Headlines</div>
         ${rows}
-        <tr>
-          <td style="padding:28px 0 0 0;text-align:center;">
-            <p style="margin:0 0 6px 0;font:400 11px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:rgba(18,18,18,0.45);">
-              You are receiving this because you subscribed to Times of SF topic updates.
-            </p>
-            <a href="${escapeHtml(unsubscribe)}" style="font:400 11px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:rgba(18,18,18,0.45);">
-              Unsubscribe
-            </a>
-          </td>
-        </tr>
-      </table>
-    </div>
-  `;
+              </td></tr>`
+    : "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light only">
+  <title>Times of SF ${label}</title>
+  <style>
+    @media only screen and (max-width:620px) {
+      .email-shell { width:100% !important; }
+      .email-pad { padding-left:22px !important; padding-right:22px !important; }
+      .masthead { font-size:32px !important; }
+      .lead-title { font-size:24px !important; }
+      .story-image-cell { width:76px !important; padding-right:12px !important; }
+      .story-image-cell img { width:76px !important; height:76px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#A8A49C;font-family:Helvetica,Arial,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${label}: ${items.length} important San Francisco stories, selected for you.</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background-color:#A8A49C;">
+    <tr>
+      <td align="center" style="padding:40px 12px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" class="email-shell" style="width:600px;max-width:600px;background-color:#E8E3D8;">
+          <tr>
+            <td class="email-pad" style="padding:42px 40px 28px;text-align:center;">
+              <div style="margin-bottom:10px;color:#A8171C;font-size:12px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;">San Francisco | ${label}</div>
+              <div class="masthead" style="margin:0;color:#151515;font:900 40px/1.05 Georgia,'Times New Roman',serif;letter-spacing:-.5px;text-transform:uppercase;">Times of SF<br>Daily News</div>
+              <p style="margin:14px 0 0;color:#4D4A44;font-size:14px;line-height:1.5;">The local stories that matter, selected for your interests.</p>
+              <p style="margin:8px 0 0;color:#6B675F;font-size:11px;line-height:1.5;">${escapeHtml(date)}</p>
+            </td>
+          </tr>
+
+          ${topStory}
+          ${moreHeadlines}
+
+          <tr><td class="email-pad" style="padding:32px 40px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background-color:#A8171C;">
+              <tr><td style="padding:28px;text-align:center;">
+                <h2 style="margin:0 0 8px;color:#FFFFFF;font:900 22px/1.2 Georgia,'Times New Roman',serif;text-transform:uppercase;">Keep reading Times of SF</h2>
+                <p style="margin:0 0 18px;color:#F6E7E7;font-size:14px;line-height:1.5;">Explore the latest reporting across tech, civics, funding, culture, transit, food, and events.</p>
+                <a href="${escapeHtml(site)}" style="display:inline-block;padding:14px 28px;background-color:#151515;color:#FFFFFF;font-size:12px;font-weight:700;letter-spacing:1px;text-decoration:none;text-transform:uppercase;">Visit TimesOfSF.com</a>
+              </td></tr>
+            </table>
+          </td></tr>
+
+          <tr><td class="email-pad" style="padding:22px 40px 40px;border-top:1px solid #CFCABD;text-align:center;">
+            <p style="margin:0 0 14px;color:#6B675F;font-size:12px;line-height:1.6;">You are receiving this because you subscribed to Times of SF topic updates.<br>San Francisco, California</p>
+            <a href="${escapeHtml(unsubscribe)}" style="color:#6B675F;font-size:12px;text-decoration:underline;">Unsubscribe</a>
+            <span style="padding:0 8px;color:#6B675F;">|</span>
+            <a href="${escapeHtml(site)}" style="color:#6B675F;font-size:12px;text-decoration:underline;">Visit site</a>
+          </td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 }
 
 export function isNewsletterSenderConfigured(): boolean {
