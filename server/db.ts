@@ -376,6 +376,7 @@ export type DigestCandidatePost = {
   dek: string;
   category: string | null;
   citationCount: number;
+  imageUrl?: string | null;
 };
 
 export type DigestSubscriber = {
@@ -406,6 +407,7 @@ export async function fetchDigestCandidatePosts(since: Date): Promise<DigestCand
       slug,
       dek,
       category,
+      image_url AS "imageUrl",
       jsonb_array_length(COALESCE(citations, '[]'::jsonb)) AS "citationCount"
     FROM generated_posts
     WHERE created_at >= ${since}
@@ -417,6 +419,7 @@ export async function fetchDigestCandidatePosts(since: Date): Promise<DigestCand
     slug: row.slug,
     dek: row.dek,
     category: row.category ?? null,
+    imageUrl: row.imageUrl ?? null,
     citationCount: Number(row.citationCount) || 0,
   }));
 }

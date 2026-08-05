@@ -84,6 +84,13 @@ function seedFor(slug: string): string {
   return slug.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "story";
 }
 
+/** Real article image when the post has one, otherwise a stable placeholder seed. */
+function imageFor(post: DigestItem["post"], width: number, height: number): string {
+  const real = post.imageUrl?.trim();
+  if (real && /^https?:\/\//.test(real)) return real;
+  return `https://picsum.photos/seed/timesofsf-${seedFor(post.slug)}/${width}/${height}`;
+}
+
 /** Readable date (e.g. "Monday, August 3, 2026") in the configured timezone. */
 function localLongDate(timezone: string, at: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-US", {
@@ -108,7 +115,7 @@ export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribe
         const category = escapeHtml(lead.post.category ?? "Story");
         const headline = escapeHtml(lead.post.headline);
         const summary = escapeHtml(lead.whyItMatters);
-        const image = `https://picsum.photos/seed/timesofsf-${seedFor(lead.post.slug)}/1040/560`;
+        const image = imageFor(lead.post, 1040, 560);
         return `
               <tr>
                 <td class="email-pad" style="padding:0 40px 30px;">
@@ -135,7 +142,7 @@ export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribe
       const category = escapeHtml(item.post.category ?? "Story");
       const headline = escapeHtml(item.post.headline);
       const summary = escapeHtml(item.whyItMatters);
-      const image = `https://picsum.photos/seed/timesofsf-${seedFor(item.post.slug)}/192/192`;
+      const image = imageFor(item.post, 192, 192);
       return `
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="story-row" style="border-bottom:1px solid #CFCABD;">
           <tr>
