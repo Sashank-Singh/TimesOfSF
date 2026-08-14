@@ -70,7 +70,9 @@ function routeFromLocation(location: Location): AppRoute {
 }
 
 function stripSeoBootstrap() {
-  // Keep #seo-ssr in the DOM for AI crawlers that execute JS; it is visually hidden via CSS.
+  // The server renders the full article HTML inside #root. React replaces it
+  // on first mount, so no client cleanup is needed for humans; agents that don't
+  // execute JS read the server-rendered text directly.
 }
 
 export default function App() {

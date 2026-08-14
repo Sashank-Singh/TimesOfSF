@@ -70,7 +70,7 @@ function toIso(value: unknown): string {
   return new Date().toISOString();
 }
 
-function markdownToPlain(md: string): string {
+export function markdownToPlain(md: string): string {
   return md
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
@@ -80,6 +80,135 @@ function markdownToPlain(md: string): string {
     .replace(/[*_]{1,3}/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** Render the article's markdown body to clean semantic HTML for server-side (SSR) output. */
+function markdownToHtml(md: string): string {
+  const escapeInline = (s: string) =>
+    s
+      .replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
+
+  const stripGlossaryMarkers = (s: string) => s.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, "$1");
+
+  const inline = (s: string): string => {
+    let out = stripGlossaryMarkers(s);
+    out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (_m, alt, src) => {
+      const safeAlt = escapeInline(alt);
+      const safeSrc = escapeInline(src.replace(/&amp;/g, "&"));
+      return ` <figure><img src="${safeSrc}" alt="${safeAlt}" loading="lazy" /><figcaption>${safeAlt}</figcaption></figure> `;
+    });
+    out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text, href) => {
+      const safeText = escapeInline(text);
+      const safeHref = escapeInline(href.replace(/&amp;/g, "&"));
+      return `<a href="${safeHref}" rel="noopener">${safeText}</a>`;
+    });
+    out = out.replace(/`([^`]+)`/g, (_m, code) => `<code>${escapeInline(code)}</code>`);
+    out = out.replace(/(\*\*|__)(.+?)\1/g, "<strong>$2</strong>");
+    out = out.replace(/(\*|_)(.+?)\1/g, "<em>$2</em>");
+    return out;
+  };
+
+  const blocks: string[] = [];
+  const lines = md.replace(/\r\n?/g, "\n").split("\n");
+
+  let i = 0;
+  let paragraph: string[] = [];
+  let inCode = false;
+  let codeBuffer: string[] = [];
+
+  const flushParagraph = () => {
+    if (paragraph.length > 0) {
+      blocks.push(`<p>${paragraph.map(inline).join("<br />")}</p>`);
+      paragraph = [];
+    }
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (inCode) {
+      if (/^\s*```/.test(line)) {
+        inCode = false;
+        blocks.push(`<pre><code>${escapeInline(codeBuffer.join("\n"))}</code></pre>`);
+        codeBuffer = [];
+        i += 1;
+        continue;
+      }
+      codeBuffer.push(line);
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*```/.test(line)) {
+      flushParagraph();
+      inCode = true;
+      codeBuffer = [];
+      i += 1;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*&gt;\s?/.test(line) || /^>\s?/.test(line)) {
+      flushParagraph();
+      const quote = line.replace(/^\s*&gt;\s?/, "").replace(/^>\s?/, "");
+      blocks.push(`<blockquote>${inline(quote)}</blockquote>`);
+      i += 1;
+      continue;
+    }
+
+    if (/^\s*[-*]\s+/.test(line)) {
+      flushParagraph();
+      const items: string[] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        items.push(inline(lines[i].replace(/^\s*[-*]\s+/, "").trim()));
+        i += 1;
+      }
+      blocks.push(`<ul>${items.map((it) => `<li>${it}</li>`).join("")}</ul>`);
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      flushParagraph();
+      const items: string[] = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items.push(inline(lines[i].replace(/^\s*\d+\.\s+/, "").trim()));
+        i += 1;
+      }
+      blocks.push(`<ol>${items.map((it) => `<li>${it}</li>`).join("")}</ol>`);
+      continue;
+    }
+
+    if (/^\s*---+$/.test(line.trim())) {
+      flushParagraph();
+      blocks.push("<hr />");
+      i += 1;
+      continue;
+    }
+
+    if (line.trim() === "") {
+      flushParagraph();
+      i += 1;
+      continue;
+    }
+
+    paragraph.push(line.trim());
+    i += 1;
+  }
+
+  if (inCode && codeBuffer.length > 0) {
+    blocks.push(`<pre><code>${escapeInline(codeBuffer.join("\n"))}</code></pre>`);
+  }
+  flushParagraph();
+
+  return blocks.join("\n");
 }
 
 export function buildRobotsTxt(): string {
@@ -315,19 +444,18 @@ export function buildRssFeed(posts: AiPost[]): string {
 export function buildArticleSeoBootstrap(post: AiPost): string {
   const url = absolutePublicUrl(`/articles/${encodeURIComponent(post.slug)}`);
   const dek = String(post.dek || post.short_post || "").trim();
-  const bodyHtml = escapeHtml(String(post.body_markdown || ""))
-    .replace(/\n\n+/g, "</p><p>")
-    .replace(/\n/g, "<br />");
+  const bodyHtml = markdownToHtml(String(post.body_markdown || "")) || "<p>Full article available at the canonical URL.</p>";
   const category = String(post.category || "News");
 
   return `
-<article id="seo-ssr" data-ai-source="times-of-sf" aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden">
-  <p style="font:700 11px/1.4 ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:#9a3412">${escapeHtml(category)}</p>
-  <h1 id="article-headline">${escapeHtml(post.headline)}</h1>
-  ${dek ? `<p class="article-lead"><em>${escapeHtml(dek)}</em></p>` : ""}
-  <p class="tldr-answer-engine"><strong>Cite as:</strong> Times of San Francisco — <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>. Free to quote with attribution.</p>
-  <p><a href="${escapeHtml(url)}.md">Markdown</a> · <a href="${escapeHtml(url)}.txt">Plain text</a> · <a href="/feed.xml">RSS</a> · <a href="/llms.txt">llms.txt</a></p>
-  <div class="article-body"><p>${bodyHtml || "Full article available at the canonical URL."}</p></div>
+<article id="seo-ssr" data-ai-source="times-of-sf" itemscope itemtype="https://schema.org/NewsArticle">
+  <p class="article-category" itemprop="articleSection" style="font:700 11px/1.4 ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:#9a3412">${escapeHtml(category)}</p>
+  <h1 id="article-headline" itemprop="headline" style="font:800 2rem/1.2 Georgia,serif;margin:.25rem 0 .5rem">${escapeHtml(post.headline)}</h1>
+  ${dek ? `<p class="article-lead" itemprop="description" style="font:italic 1.2rem/1.5 Georgia,serif;color:#444;margin:0 0 1rem"><em>${escapeHtml(dek)}</em></p>` : ""}
+  <p class="article-meta" style="font:600 .85rem/1.5 ui-monospace,monospace;color:#666;margin:0 0 1.5rem">Times of San Francisco · ${escapeHtml(category)} · ${escapeHtml(toIso(post.created_at ?? post.publishedAt).slice(0, 10))}</p>
+  <div class="article-body" itemprop="articleBody" style="font:1.05rem/1.75 Georgia,serif;color:#1a1a1a;max-width:70ch">${bodyHtml}</div>
+  <p class="tldr-answer-engine" style="font:.9rem/1.5 ui-monospace,monospace;color:#555;margin-top:2rem;padding-top:1rem;border-top:1px solid #ddd"><strong>Cite as:</strong> Times of San Francisco — <a href="${escapeHtml(url)}">${escapeHtml(url)}</a>. Free to quote with attribution.</p>
+  <p style="font:.85rem/1.5 ui-monospace,monospace;color:#666">Markdown: <a href="${escapeHtml(url)}.md">${escapeHtml(url)}.md</a> · Plain text: <a href="${escapeHtml(url)}.txt">${escapeHtml(url)}.txt</a></p>
 </article>`;
 }
 

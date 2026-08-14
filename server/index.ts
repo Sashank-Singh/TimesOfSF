@@ -24,6 +24,7 @@ import {
   buildRobotsTxt,
   buildRssFeed,
   citationHeadTags,
+  markdownToPlain,
 } from "./aiDiscovery";
 import {
   ensureSchema,
@@ -310,6 +311,7 @@ function buildArticleHeadTags(post: any): string {
     "@type": "NewsArticle",
     headline: post.headline,
     description,
+    articleBody: markdownToPlain(bodyText),
     datePublished: published,
     dateModified: modified,
     dateCreated: published,
@@ -424,7 +426,9 @@ function injectArticleMetadata(indexHtml: string, post: any): string {
   html = html.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>/gi, "");
   html = html.replace("</head>", `    ${articleTags}\n  </head>`);
   if (html.includes('<div id="root"></div>')) {
-    html = html.replace('<div id="root"></div>', `${bootstrap}\n    <div id="root"></div>`);
+    // Server-render the full article inside #root. React replaces it on mount (SPA
+    // unchanged for humans); agents and no-JS crawlers read the complete text.
+    html = html.replace('<div id="root"></div>', `<div id="root">${bootstrap}\n    </div>`);
   } else {
     html = html.replace("<body>", `<body>${bootstrap}`);
   }
