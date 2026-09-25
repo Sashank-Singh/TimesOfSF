@@ -19,6 +19,11 @@ function clampPromptText(raw: string, maxChars: number): string {
   return `${cleaned.slice(0, maxChars)}…`;
 }
 
+/** Reasoning budget for Fireworks calls; omitted entirely when configured empty. */
+function fireworksReasoningParams(): { reasoning_effort?: string } {
+  return config.fireworksReasoningEffort ? { reasoning_effort: config.fireworksReasoningEffort } : {};
+}
+
 /** Shrink / clean source payloads so the model is less likely to emit broken JSON when paraphrasing them. */
 function sanitizeSourcesForPrompt(sources: SourceExtraction[], compact: boolean): SourceExtraction[] {
   const maxFacts = compact ? 5 : 8;
@@ -507,6 +512,7 @@ async function synthesizeWithFireworks(
     },
     body: JSON.stringify({
       model: config.fireworksModel,
+      ...fireworksReasoningParams(),
       messages: [
         {
           role: "system",
@@ -572,6 +578,7 @@ async function extractEntitiesFromBody(bodyMarkdown: string): Promise<GeneratedP
       },
       body: JSON.stringify({
         model: config.fireworksModel,
+        ...fireworksReasoningParams(),
         messages: [
           { role: "system", content: "Return only a valid JSON array of {name, definition} objects. Minimum 8 entries." },
           { role: "user", content: prompt },
@@ -659,6 +666,7 @@ async function extractChartsFromBody(
       },
       body: JSON.stringify({
         model: config.fireworksModel,
+        ...fireworksReasoningParams(),
         messages: [
           { role: "system", content: "Return only valid JSON with a dataBlocks array." },
           { role: "user", content: prompt },
@@ -748,6 +756,7 @@ export async function rankDigestStories(candidates: DigestCandidate[], targetCou
       },
       body: JSON.stringify({
         model: config.fireworksModel,
+        ...fireworksReasoningParams(),
         messages: [
           { role: "system", content: 'Return only valid JSON: {"picks": [{"id", "whyItMatters"}]}.' },
           { role: "user", content: prompt },
@@ -1148,6 +1157,7 @@ export async function rewritePostForCopyrightSafety(post: GeneratedPost, reason:
       },
       body: JSON.stringify({
         model: config.fireworksModel,
+        ...fireworksReasoningParams(),
         messages: [
           {
             role: "system",
@@ -1245,6 +1255,7 @@ export async function expandContent(
       },
       body: JSON.stringify({
         model: config.fireworksModel,
+        ...fireworksReasoningParams(),
         messages: [{ role: "user", content: prompt }],
         temperature: 0.7,
       }),

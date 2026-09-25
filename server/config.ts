@@ -111,7 +111,13 @@ export const config = {
   geminiModel: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
   fireworksApiKey: process.env.FIREWORKS_API_KEY,
   fireworksBaseUrl: process.env.FIREWORKS_BASE_URL ?? "https://api.fireworks.ai/inference/v1",
-  fireworksModel: process.env.FIREWORKS_MODEL ?? "accounts/fireworks/models/deepseek-v4-pro",
+  fireworksModel: process.env.FIREWORKS_MODEL ?? "accounts/fireworks/models/glm-5p3-flash",
+  /**
+   * GLM 5.3 on Fireworks is thinking-only (reasoning_effort="none" is rejected by the API).
+   * Left unset, one synthesis call burned ~7,400 reasoning tokens and 62s versus 11s at "low",
+   * which is enough to push a 10-topic pass into the pipeline run timeout.
+   */
+  fireworksReasoningEffort: process.env.FIREWORKS_REASONING_EFFORT?.trim() || "low",
   databaseUrl: readEnv("DATABASE_URL"),
   /** Internal Coolify-friendly scheduler interval. Default: every 10 minutes. */
   internalPipelineIntervalMs: readOptionalInt("INTERNAL_PIPELINE_INTERVAL_MS", 10 * 60 * 1000),
