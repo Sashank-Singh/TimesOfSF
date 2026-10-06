@@ -1,15 +1,5 @@
 import { config } from "./config";
-import {
-  DigestCandidatePost,
-  DigestSubscriber,
-  fetchActiveSubscribersForDigest,
-  fetchAlreadyDelivered,
-  fetchDigestCandidatePosts,
-  hasDigestRun,
-  markNewsletterDelivered,
-  recordDigestRun,
-} from "./db";
-import { rankDigestStories } from "./agents";
+import type { DigestCandidatePost, DigestSubscriber } from "./db";
 import { isMailConfigured, sendMail } from "./mailer";
 
 export type DigestSlot = "morning" | "night";
@@ -32,6 +22,11 @@ function articleUrl(slug: string): string {
 function unsubscribeUrl(token: string): string {
   const base = config.appUrl.replace(/\/+$/, "");
   return `${base}/api/newsletter/unsubscribe?token=${encodeURIComponent(token)}`;
+}
+
+/** Postal removes +notrack before delivery and leaves the destination URL unchanged. */
+function postalNoTrackUrl(value: string): string {
+  return value.replace(/^(https?):\/\//, "$1+notrack://");
 }
 
 function escapeHtml(value: string): string {
@@ -64,6 +59,7 @@ export function localDateAndHour(timezone: string, at: Date = new Date()): { dat
 }
 
 export type DigestItem = { post: DigestCandidatePost; whyItMatters: string };
+export type DigestHtmlOptions = { postalNoTrack?: boolean };
 
 export function plainTextForDigest(slot: DigestSlot, items: DigestItem[], unsubscribeToken: string): string {
   return [
@@ -102,16 +98,22 @@ function localLongDate(timezone: string, at: Date = new Date()): string {
   }).format(at);
 }
 
-export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribeToken: string): string {
-  const unsubscribe = unsubscribeUrl(unsubscribeToken);
-  const site = config.appUrl.replace(/\/+$/, "");
+export function htmlForDigest(
+  slot: DigestSlot,
+  items: DigestItem[],
+  unsubscribeToken: string,
+  options: DigestHtmlOptions = {},
+): string {
+  const linkUrl = options.postalNoTrack === false ? (value: string) => value : postalNoTrackUrl;
+  const unsubscribe = linkUrl(unsubscribeUrl(unsubscribeToken));
+  const site = linkUrl(config.appUrl.replace(/\/+$/, ""));
   const date = localLongDate(config.newsletterTimezone);
   const label = escapeHtml(slotLabel(slot));
 
   const [lead, ...rest] = items;
   const topStory = lead
     ? (() => {
-        const url = articleUrl(lead.post.slug);
+        const url = linkUrl(articleUrl(lead.post.slug));
         const category = escapeHtml(lead.post.category ?? "Story");
         const headline = escapeHtml(lead.post.headline);
         const summary = escapeHtml(lead.whyItMatters);
@@ -138,7 +140,7 @@ export function htmlForDigest(slot: DigestSlot, items: DigestItem[], unsubscribe
 
   const rows = rest
     .map((item) => {
-      const url = articleUrl(item.post.slug);
+      const url = linkUrl(articleUrl(item.post.slug));
       const category = escapeHtml(item.post.category ?? "Story");
       const headline = escapeHtml(item.post.headline);
       const summary = escapeHtml(item.whyItMatters);
@@ -249,6 +251,14 @@ export async function buildAndSendDigest(slot: DigestSlot) {
 
   newsletterRunInFlight = true;
   try {
+    const {
+      fetchActiveSubscribersForDigest,
+      fetchAlreadyDelivered,
+      fetchDigestCandidatePosts,
+      hasDigestRun,
+      markNewsletterDelivered,
+      recordDigestRun,
+    } = await import("./db");
     const { dateKey } = localDateAndHour(config.newsletterTimezone);
     const digestKey = `${dateKey}-${slot}`;
     if (await hasDigestRun(digestKey)) return { sent: 0, skipped: "already_run" as const };
@@ -268,6 +278,7 @@ export async function buildAndSendDigest(slot: DigestSlot) {
 
     let sent = 0;
     let failed = 0;
+    const { rankDigestStories } = await import("./agents");
     for (const [key, groupSubscribers] of groups) {
       const preferences = key ? key.split(",") : [];
       const filtered = preferences.length === 0 ? candidates : candidates.filter((c) => c.category && preferences.includes(c.category));

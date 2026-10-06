@@ -59,6 +59,25 @@ describe("digest rendering", () => {
     assert.ok(plainTextForDigest("morning", items, "tok123").includes("tok123"));
   });
 
+  test("marks every HTML destination as no-track for Postal", () => {
+    const html = htmlForDigest("morning", items, "tok123");
+    const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(hrefs.length > 0);
+    assert.ok(hrefs.every((href) => href.startsWith("https+notrack://")));
+    assert.ok(hrefs.some((href) => href.includes("/articles/slug-1")));
+    assert.ok(hrefs.some((href) => href.includes("/api/newsletter/unsubscribe?token=tok123")));
+  });
+
+  test("keeps plain-text and browser-preview URLs directly clickable", () => {
+    const text = plainTextForDigest("morning", items, "tok123");
+    assert.ok(text.includes("https://"));
+    assert.ok(!text.includes("+notrack"));
+
+    const preview = htmlForDigest("morning", items, "tok123", { postalNoTrack: false });
+    assert.ok(preview.includes('href="https://'));
+    assert.ok(!preview.includes("+notrack"));
+  });
+
   test("escapes HTML in headlines so a story title cannot inject markup", () => {
     const nasty = [item(9, `<script>alert(1)</script>`, "Tech")];
     const html = htmlForDigest("morning", nasty, "t");
