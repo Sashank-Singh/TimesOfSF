@@ -193,6 +193,10 @@ export interface GeneratedPost {
     title: string;
     xAxisLabel: string;
     yAxisLabel: string;
-    data: Array<{ label?: string; value?: number; x?: number; y?: number }>;
+    sourceName?: string;
+    sourceUrl?: string;
+    metric?: string;
+    unit?: string;
+    data: Array<{ label?: string; value?: number; x?: number; y?: number; sourceQuote?: string; unit?: string; metric?: string }>;
   }>;
 }

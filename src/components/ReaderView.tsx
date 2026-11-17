@@ -5,24 +5,15 @@ import { AdSlot } from "./AdSlot";
 import { pickRelatedArticles, RelatedArticles } from "./RelatedArticles";
 import { categoryPath } from "../lib/routes";
 import { motion, AnimatePresence, useScroll, useSpring } from "motion/react";
-import { X, ArrowLeft, Share2, Bookmark, ChevronDown, ChevronUp, ExternalLink, Headphones } from "lucide-react";
+import { X, ArrowLeft, Share2, Bookmark, ExternalLink, Headphones } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { formatPublishedTimestamp, cn, stripCitationSectionsForTts, stripMarkdown, buildEditorialSummary } from "../lib/utils";
 
 import { EntityHighlight } from "./EntityHighlight";
+import { isSourceLinkedChart } from "../lib/chartData";
 import { DataVisChart } from "./DataVisChart";
 import { TipBox } from "./TipBox";
 import { lookupGlossaryDefinition } from "../lib/glossary";
-
-const categoryGradients: Record<string, string> = {
-  Tech: "from-indigo-900/80 via-indigo-800/60 to-transparent",
-  Funding: "from-emerald-900/80 via-emerald-800/60 to-transparent",
-  Civics: "from-slate-800/80 via-slate-700/60 to-transparent",
-  Culture: "from-violet-900/80 via-violet-800/60 to-transparent",
-  Transit: "from-sky-900/80 via-sky-800/60 to-transparent",
-  Food: "from-amber-900/80 via-amber-800/60 to-transparent",
-  Events: "from-rose-900/80 via-rose-800/60 to-transparent",
-};
 
 const VoiceReader = React.lazy(() => import("./VoiceReader"));
 
@@ -39,7 +30,7 @@ interface ReaderViewProps {
 
 function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenArticle, isBookmarked, onBookmark, onShare }: { article: Article } & Omit<ReaderViewProps, "article">) {
   const related = pickRelatedArticles(article, allArticles, 3);
-  const [showSummary, setShowSummary] = useState(true);
+  const [briefOnly, setBriefOnly] = useState(false);
   const editorialSummary = useMemo(
     () => buildEditorialSummary({ summary: article.summary, excerpt: article.excerpt, tldr: article.tldr }),
     [article.summary, article.excerpt, article.tldr],
@@ -69,7 +60,15 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
 
   const components = useMemo(() => {
     const entities: ArticleEntity[] = article.entities ?? [];
-    const dataBlocks = article.dataBlocks ?? [];
+    const knownSources = new Set([
+      ...(article.sourceUrls ?? []),
+      ...(article.credits ?? []).map(c => c.articleUrl),
+      ...(article.citations ?? []).map(c => c.sourceUrl),
+    ]);
+    // Preserve indices so a rejected chart cannot shift another chart into its placeholder.
+    const dataBlocks = (article.dataBlocks ?? []).map(block =>
+      isSourceLinkedChart(block) && knownSources.has(block.sourceUrl!) ? block : null,
+    );
 
     const isAlphaNum = (ch: string) => /[A-Za-z0-9]/.test(ch);
 
@@ -168,6 +167,10 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                     xAxisLabel={block.xAxisLabel}
                     yAxisLabel={block.yAxisLabel}
                     data={block.data}
+                    sourceName={block.sourceName}
+                    sourceUrl={block.sourceUrl}
+                    metric={block.metric}
+                    unit={block.unit}
                   />,
                 );
               }
@@ -234,7 +237,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
           return node;
         });
 
-        return <div className="mb-8 leading-relaxed font-serif text-lg md:text-xl text-ink/80">{finalChildren}</div>;
+        return <div className="article-paragraph">{finalChildren}</div>;
       },
 
       // If the model omitted [CHART:n] placeholders, still render charts beneath "The Data Insight" heading.
@@ -245,13 +248,20 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
 
         const normalized = headingText.toLowerCase().replace(/\s+/g, " ").trim();
         const isDataInsightHeading = normalized.includes("the data insight");
+        // Give legacy generated section titles concise labels without changing reporting.
+        const sectionLabels: Record<string, string> = {
+          "the dispatch: the immediate news and its primary impact": "What happened",
+          "the context: historical background and broader industry trends": "The context",
+          "the data insight: a rigorous analysis of the underlying numbers": "By the numbers",
+          "the horizon: long-term implications and the future outlook": "What to watch",
+        };
 
         return (
           <>
-            <h3>{children}</h3>
+            <h3>{sectionLabels[normalized] ?? children}</h3>
             {isDataInsightHeading && dataBlocks.length > 0 && !chartTokensPresent && (
               <div className="mt-6">
-                {dataBlocks.map((block, idx) => (
+                {dataBlocks.map((block, idx) => block && (
                   <DataVisChart
                     key={`auto-chart-${idx}`}
                     title={block.title}
@@ -259,6 +269,10 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                     xAxisLabel={block.xAxisLabel}
                     yAxisLabel={block.yAxisLabel}
                     data={block.data}
+                    sourceName={block.sourceName}
+                    sourceUrl={block.sourceUrl}
+                    metric={block.metric}
+                    unit={block.unit}
                   />
                 ))}
               </div>
@@ -329,7 +343,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 1.02 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="fixed left-0 right-0 bottom-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
+      className="article-reader fixed left-0 right-0 bottom-0 z-50 bg-paper overflow-y-auto selection:bg-black selection:text-white"
       style={{ top: "var(--site-chrome-h, 0px)" }}
     >
       {/* Article toolbar — pinned to the top of the reader pane */}
@@ -340,7 +354,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
               className="flex items-center gap-3 text-[10px] font-mono font-bold uppercase tracking-[0.2em] group"
             >
               <ArrowLeft size={16} className="group-hover:-translate-x-1 transition-transform" />
-              Close
+              Front page
             </button>
             <div className="flex items-center gap-8">
               <div className="flex items-center gap-4 md:gap-6">
@@ -371,6 +385,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                         const ctx = new Ctx();
                         void ctx.resume().finally(() => { void ctx.close(); });
                       } catch { /* ignore */ }
+                      setBriefOnly(false);
                       setVoiceActive(true);
                     } else {
                       setVoiceActive(false);
@@ -384,7 +399,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                   <Headphones size={16} className={cn(voiceActive && "animate-pulse")} />
                   <span className="hidden sm:inline">{voiceActive ? "Close" : "Listen"}</span>
                 </button>
-                <button onClick={onClose} className="p-1 hover:rotate-90 transition-transform"><X size={20} /></button>
+                <button aria-label="Close article" onClick={onClose} className="p-1 hover:rotate-90 transition-transform"><X size={20} /></button>
               </div>
             </div>
           </div>
@@ -394,212 +409,82 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
             />
           </nav>
 
-          <article className="max-w-4xl mx-auto px-4 md:px-6 py-12 md:py-32">
-            <header className="mb-12 md:mb-20 text-center max-w-2xl mx-auto">
-               <div className="flex items-center justify-center gap-4 text-accent font-mono text-[10px] md:text-[11px] uppercase tracking-[0.4em] mb-8 md:mb-10">
-                  <span className="w-8 md:w-12 h-[1px] bg-accent/20" />
-                  {article.category}
-                  <span className="w-8 md:w-12 h-[1px] bg-accent/20" />
-               </div>
-               <h1 id="article-headline" className="text-4xl sm:text-5xl md:text-7xl font-black leading-[0.95] tracking-tight mb-8 md:mb-12">
-                  {article.title}
-               </h1>
-               <div className="flex flex-col items-center gap-3 text-xs text-ink/40">
-                {article.excerpt &&
-                  article.excerpt.trim().toLowerCase() !== editorialSummary.trim().toLowerCase() && (
-                  <span className="article-lead italic font-serif text-base md:text-lg text-ink/60 mb-2 px-4">
-                    {article.excerpt}
-                  </span>
-                )}
-                  <div className="flex flex-col items-center gap-1 font-mono uppercase tracking-[0.1em]">
-                    <span className="flex items-center gap-4">
-                      <span>By {article.author}</span>
-                      <span className="w-1 h-1 bg-ink/10 rounded-full" />
-                      <span>{article.readTime} read</span>
-                    </span>
-                    <time
-                      dateTime={article.publishedAt}
-                      className="text-[10px] tracking-widest text-ink/45 normal-case"
-                      title={article.publishedAt}
-                    >
-                      Published {formatPublishedTimestamp(article.publishedAt)}
-                    </time>
-                    {article.updatedAt && article.updatedAt !== article.publishedAt && (
-                      <time
-                        dateTime={article.updatedAt}
-                        className="text-[10px] tracking-widest text-ink/45 normal-case"
-                        title={article.updatedAt}
-                      >
-                        Updated {formatPublishedTimestamp(article.updatedAt)}
-                      </time>
-                    )}
-                  </div>
-               </div>
-            </header>
-
-            {/* Summary Section */}
-            {editorialSummary && (
-              <div className="max-w-xl mx-auto mb-12 md:mb-20 border border-ink/10 p-6 bg-ink/[0.02]">
-                <button
-                  type="button"
-                  onClick={() => setShowSummary(!showSummary)}
-                  className="w-full flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-widest text-ink/50"
-                  aria-expanded={showSummary}
-                >
-                  <span>In Brief</span>
-                  {showSummary ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-                <AnimatePresence initial={false}>
-                  {showSummary && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="overflow-hidden"
-                    >
-                      <p className="tldr-answer-engine mt-4 pt-6 border-t border-ink/5 text-[15px] font-serif leading-relaxed text-ink/75">
-                        {editorialSummary}
-                      </p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
-
-            {/* Main content area */}
-
-            <div className="relative aspect-video md:aspect-[21/9] mb-12 md:mb-24 overflow-hidden rounded-2xl shadow-2xl transition-all duration-1000 ease-out group/hero">
-               {article.imageUrl && !heroImageFailed ? (
-                 <img
-                   src={article.imageUrl}
-                   alt={`${article.title} — ${article.category}`}
-                   className="w-full h-full object-cover group-hover/hero:scale-105 transition-transform duration-1000"
-                   referrerPolicy="no-referrer"
-                   fetchPriority="high"
-                   decoding="async"
-                   onError={() => setHeroImageFailed(true)}
-                 />
-               ) : (
-                 <div className={`w-full h-full bg-gradient-to-br ${categoryGradients[article.category] || categoryGradients.Tech}`} />
-               )}
-               {article.imageCredit && (
-                 <div className="absolute bottom-4 md:bottom-8 right-4 md:right-8 flex flex-col items-end gap-1">
-                   <div className="flex items-center gap-2 bg-paper/90 backdrop-blur-md px-3 md:px-4 py-1.5 md:py-2 rounded-sm border border-ink/10 shadow-lg">
-                     <span className="text-[8px] md:text-[9px] font-mono font-bold tracking-widest uppercase text-ink/60">
-                       {article.imageCredit}
-                     </span>
-                     <sup className="text-[8px] font-mono text-accent font-bold">(2)</sup>
-                   </div>
-                   <span className="text-[7px] font-mono uppercase tracking-tighter opacity-30 text-ink mr-1">Source-linked dispatch</span>
-                 </div>
-               )}
+          <article className="article-shell">
+            <div className={cn("article-opening", (!article.imageUrl || heroImageFailed) && "article-opening--text")}>
+              <header className="article-heading">
+                <button type="button" className="article-category" onClick={() => onNavigate?.(categoryPath(article.category))}>{article.category} <span aria-hidden="true">↗</span></button>
+                <h1 id="article-headline">{article.title}</h1>
+                {article.excerpt && <p className="article-deck">{article.excerpt}</p>}
+                <div className="article-byline">
+                  <span>By <strong>{article.author}</strong></span>
+                  <span>{article.readTime} read</span>
+                </div>
+                <time className="article-date" dateTime={article.publishedAt}>{formatPublishedTimestamp(article.publishedAt)}</time>
+                {article.updatedAt && article.updatedAt !== article.publishedAt && <time className="article-date" dateTime={article.updatedAt}>Updated {formatPublishedTimestamp(article.updatedAt)}</time>}
+              </header>
+              {article.imageUrl && !heroImageFailed && (
+                <figure className="article-cover">
+                  <img src={article.imageUrl} alt={article.title} referrerPolicy="no-referrer" fetchPriority="high" decoding="async" onError={() => setHeroImageFailed(true)} />
+                  {article.imageCredit && <figcaption>{article.imageCredit}</figcaption>}
+                </figure>
+              )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-              <div className="hidden lg:block lg:col-span-3">
-                 <div className="sticky top-32 space-y-12 pr-8 border-r border-ink/5">
-                    {article.additionalImages && article.additionalImages.length > 0 && (
-                      <div className="space-y-6">
-                        <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30">Visual Evidence</h4>
-                        {article.additionalImages.map((img, idx) => (
-                          <div key={idx} className="group flex flex-col gap-3">
-                            <div className="aspect-[4/3] overflow-hidden bg-ink/5 rounded-lg shadow-md">
-                              <img
-                                src={img.url}
-                                alt={img.caption}
-                                className="w-full h-full object-cover group-hover:scale-105 transition-all duration-500"
-                                referrerPolicy="no-referrer"
-                                loading="lazy"
-                                decoding="async"
-                                onError={(e) => {
-                                  (e.target as HTMLImageElement).style.display = "none";
-                                }}
-                              />
-                            </div>
-                            <p className="text-[9px] leading-tight text-ink/50 uppercase tracking-tight">{img.caption}</p>
-                            <p className="text-[8px] font-mono text-ink/30 uppercase">{img.credit}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div>
-                      <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 mb-4">Keywords</h4>
-                      <div className="flex flex-wrap gap-2 uppercase font-mono text-[9px] tracking-tighter">
-                        <span className="px-2 py-1 bg-ink/5">#Local</span>
-                        <span className="px-2 py-1 bg-ink/5">#Archive</span>
-                        <span className="px-2 py-1 bg-ink/5">#Report</span>
-                      </div>
-                    </div>
-                 </div>
-              </div>
+            {editorialSummary && (
+              <section className="article-brief" aria-label="Story summary">
+                <div className="article-brief-label">The short version<span>Get the story in seconds.</span></div>
+                <p className="tldr-answer-engine">{editorialSummary}</p>
+              </section>
+            )}
 
-              <div className="lg:col-span-8 lg:col-start-5">
-                <div ref={bodyRef} className="markdown-body">
-                  <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
+            <div className="article-reading-layout">
+              <aside className="article-context" aria-label="Story context">
+                <div className="article-context-inner">
+                  {article.tldr?.whyItMatters && <section><h2>Why it matters</h2><p>{article.tldr.whyItMatters}</p></section>}
+                  {article.tldr?.whoIsAffected && <section><h2>Who it affects</h2><p>{article.tldr.whoIsAffected}</p></section>}
+                  {article.tldr?.whatIsNext && <section><h2>What’s next</h2><p>{article.tldr.whatIsNext}</p></section>}
                 </div>
-
-                {(!!article.citations?.length) && (
-                  <section className="mt-16 md:mt-20 border-t-[3px] border-ink pt-10">
-                    <div className="mb-8">
-                      <p className="text-[10px] font-mono font-bold uppercase tracking-[0.3em] text-accent mb-3">Receipts</p>
-                      <h3 className="text-3xl md:text-4xl font-black tracking-tight">Sources & Evidence</h3>
-                      <p className="mt-3 text-xs text-ink/50 leading-relaxed max-w-2xl">
-                        One-line linked receipts for claims used in this report.
-                      </p>
-                    </div>
-
-                    {!!article.citations?.length && (
-                      <div className="mb-10">
-                        <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-ink/40 mb-3">Claim Notes</h4>
-                        <ul className="border border-ink/10 rounded-sm divide-y divide-ink/10">
-                          {article.citations.map((citation, idx) => (
-                            <li key={`${citation.sourceUrl}-${idx}`}>
-                              <a
-                                href={citation.sourceUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/[0.03] transition-colors group"
-                              >
-                                <span className="flex-1 min-w-0 text-xs text-ink/80 truncate">{citation.claim}</span>
-                                <span className="shrink-0 text-[10px] font-mono uppercase tracking-tight text-ink/35">
-                                  {citation.sourceName}
-                                </span>
-                                <ExternalLink size={14} className="text-accent shrink-0 opacity-40 group-hover:opacity-100" />
-                              </a>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
+              </aside>
+              <div className="article-story">
+                {editorialSummary && (
+                  <div className="article-reading-mode" role="group" aria-label="Reading format">
+                    <button type="button" aria-pressed={!briefOnly} aria-controls="article-full-story article-brief-story" onClick={() => setBriefOnly(false)}>Full story</button>
+                    <button type="button" aria-pressed={briefOnly} aria-controls="article-full-story article-brief-story" onClick={() => { setBriefOnly(true); setVoiceActive(false); }}>Just the brief</button>
+                    <span>{briefOnly ? "You’re caught up." : article.readTime + " read"}</span>
+                  </div>
+                )}
+                {briefOnly && (
+                  <section id="article-brief-story" className="article-brief-story" aria-label="Just the brief">
+                    <h2>The brief</h2>
+                    <p>{editorialSummary}</p>
+                    {article.tldr && <dl>
+                      {article.tldr.whyItMatters && <div><dt>Why it matters</dt><dd>{article.tldr.whyItMatters}</dd></div>}
+                      {article.tldr.whoIsAffected && <div><dt>Who it affects</dt><dd>{article.tldr.whoIsAffected}</dd></div>}
+                      {article.tldr.whatIsNext && <div><dt>What’s next</dt><dd>{article.tldr.whatIsNext}</dd></div>}
+                    </dl>}
                   </section>
                 )}
-                
-                {/* Mobile/Tablet Additional Images */}
-                <div className="lg:hidden mt-20 space-y-12">
-                  <h4 className="text-[10px] font-mono uppercase tracking-widest text-ink/30 text-center mb-8">Additional Dispatch Imagery</h4>
-                  {article.additionalImages?.map((img, idx) => (
-                    <figure key={idx} className="space-y-4">
-                      <div className="aspect-video bg-ink/5 overflow-hidden">
-                        <img
-                          src={img.url}
-                          alt={img.caption}
-                          className="w-full h-full object-cover grayscale brightness-90 transition-all duration-500"
-                          referrerPolicy="no-referrer"
-                          loading="lazy"
-                          decoding="async"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = "none";
-                          }}
-                        />
-                      </div>
-                      <figcaption className="flex justify-between items-start gap-4">
-                        <p className="text-[10px] font-mono leading-relaxed text-ink/60 uppercase max-w-[70%]">{img.caption}</p>
-                        <p className="text-[9px] font-mono text-ink/30 uppercase shrink-0">{img.credit}</p>
-                      </figcaption>
-                    </figure>
-                  ))}
+                <div id="article-full-story" hidden={briefOnly}>
+                  <div ref={bodyRef} className="markdown-body article-prose">
+                    <ReactMarkdown components={components as any}>{content}</ReactMarkdown>
+                  </div>
+                  {!!article.additionalImages?.length && (
+                    <section className="article-gallery" aria-label="More images from the story">
+                      {article.additionalImages.map((img, idx) => <figure key={`${img.url}-${idx}`}>
+                        <img src={img.url} alt={img.caption} referrerPolicy="no-referrer" loading="lazy" decoding="async" onError={(event) => { event.currentTarget.hidden = true; }} />
+                        <figcaption>{img.caption}{img.credit && <span>{img.credit}</span>}</figcaption>
+                      </figure>)}
+                    </section>
+                  )}
                 </div>
+                {!!article.citations?.length && (
+                  <details className="article-sources">
+                    <summary>Behind the story <span>{article.citations.length} source notes</span></summary>
+                    <ul>{article.citations.map((citation, idx) => <li key={`${citation.sourceUrl}-${idx}`}>
+                      <a href={citation.sourceUrl} target="_blank" rel="noreferrer"><span>{citation.claim}<small>{citation.sourceName}</small></span><ExternalLink size={15} aria-hidden="true" /></a>
+                    </li>)}</ul>
+                  </details>
+                )}
               </div>
             </div>
 
@@ -672,7 +557,7 @@ export function ReaderView({ article, allArticles, onClose, onNavigate, onOpenAr
     <AnimatePresence>
       {article && (
         <ReaderContent
-          key="reader"
+          key={article.id}
           article={article}
           allArticles={allArticles}
           onClose={onClose}

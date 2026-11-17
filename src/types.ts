@@ -8,7 +8,12 @@ export interface DataBlock {
   title: string;
   xAxisLabel?: string;
   yAxisLabel?: string;
-  data: { label?: string; value?: number; x?: number; y?: number }[];
+  /** Explicit provenance and a single comparable measurement; absent on legacy charts. */
+  sourceName?: string;
+  sourceUrl?: string;
+  metric?: string;
+  unit?: string;
+  data: { label?: string; value?: number; x?: number; y?: number; sourceQuote?: string; unit?: string; metric?: string }[];
 }
 
 export interface ArticleCredit {

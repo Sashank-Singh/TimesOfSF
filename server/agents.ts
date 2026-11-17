@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { chartMatchesSource, isSourceLinkedChart } from "../src/lib/chartData";
 import { GoogleGenAI, Type } from "@google/genai";
 import { jsonrepair } from "jsonrepair";
 import { config } from "./config";
@@ -134,15 +135,15 @@ function buildPrompt(
     "### The Data Insight: A Rigorous Analysis of the Underlying Numbers",
     "### The Horizon: Long-Term Implications and the Future Outlook",
     "### Source Notes",
-    "CRITICAL: entities and dataBlocks arrays MUST NOT be empty. If you return empty arrays the article will be rejected.",
+    "Define any bracketed entities. Charts are OPTIONAL: return dataBlocks: [] unless the sources contain a genuinely useful, comparable series. Never fabricate a chart to fill a section.",
     "The Dispatch leads with what happened and why it matters in San Francisco now. The first two sentences must answer: (1) what happened, (2) why SF readers should care. The Context focuses ONLY on the same specific company, person, product, or event from The Dispatch — do NOT expand into unrelated companies, sectors, or funding rounds that are not directly part of this story. The Data Insight focuses on quantitative interpretation—ONLY when the sources supply at least TWO comparable numeric facts worth plotting. If there is nothing meaningful to chart, write analytic prose only: set dataBlocks to [] and do NOT insert any [CHART:N] tokens anywhere. When you do chart, insert [CHART:0] exactly once inside The Data Insight and ensure dataBlocks[0] matches those numbers.",
     "Use rich paragraphs; bullet lists only where density demands it.",
     "Entity definitions must be plain-English, jargon-free, and written for non-experts; for each entity, add a short sentence explaining how the term functions in this article (not just a dictionary definition).",
     "NEVER emit a [[Bracketed Term]] in bodyMarkdown without a matching {name, definition} object in entities[]. Every bracketed term must have a real, non-empty definition (no placeholders, no '?', no 'TBD'). If you do not have a real definition, do NOT bracket the term.",
     "Only bracket terms that a smart reader might not know on sight: acronyms (UAP, ARR, SPAC), companies / products / programs, named people, niche technical concepts, named statutes/agencies, named locations like neighborhoods, named investors/funds. Do NOT bracket everyday English words (e.g. 'helicopter', 'company', 'industry', 'data') or generic geographic terms (e.g. 'California', 'America', 'the West Coast').",
     "When charts are warranted: use bar, histogram, scatter, or line. Line for time series; scatter for disconnected points.",
-    "Each dataBlock needs type, title, xAxisLabel, yAxisLabel, and data.",
-    "For bar/histogram use {label, value}. For scatter/line use numeric {x, y, label}.",
+    "Each dataBlock needs type, title, xAxisLabel, yAxisLabel, metric, unit, sourceName, sourceUrl, and data. sourceUrl must be the exact supplied source URL for the figures. Every point must repeat the same metric and unit as the block and include sourceQuote, an exact short excerpt from the supplied source text containing its numeric value (and x coordinate for line/scatter). Use the numeric scale printed in that excerpt; do not convert it. Compare only the SAME measurement in the SAME unit and scale; never plot funding, users, valuations, or brand counts together. If provenance or comparability is uncertain, omit the chart.",
+    "For bar/histogram use {label, value, metric, unit}. For scatter/line use numeric {x, y, label, metric, unit}. Preserve the actual numeric coordinates, never invent indices or zeroes. Labels must identify the observations, not unrelated measurements.",
     "Chart axes must name real dimensions (e.g. Quarter and Revenue ($M)); never use Category/Value placeholders.",
     "credits must ONLY list outlets you actually cite or link to inside bodyMarkdown. Omit every unused RSS packet.",
     "OUTPUT RULES: Reply with ONE JSON object only. Escape double-quotes inside strings as \\\" and use \\n for newlines—never output raw multi-line strings inside JSON.",
@@ -153,7 +154,7 @@ function buildPrompt(
     citationGuide,
     entityGuide,
     "entities must be {name, definition} entries aligned with your bracketed terms.",
-    "dataBlocks must reflect statistics cited in the Data Insight section. When the source packets contain at least 2 comparable numeric facts, you MUST create a dataBlock with a chart. Only set dataBlocks to [] when there are truly no usable numeric facts across all sources.",
+    "Only include a chart if it explains the story better than prose. All numbers must appear in the cited source, and the series must measure one comparable metric. dataBlocks: [] is a valid and preferred result when evidence is insufficient.",
     "dek: one compelling subhead under the headline (max ~28 words). Do not repeat the headline verbatim.",
     "shortPost: 2–3 sentences (~45–80 words) that summarize the entire story for a busy reader. Standalone prose—no 'In this article', no bullet lists, no source disclaimers.",
     "Include tldr with keys whyItMatters, whoIsAffected, whatIsNext—each one crisp clause (max ~22 words). Together they should align with shortPost but add structured stakes, audience, and outlook.",
@@ -243,27 +244,7 @@ export function sourceReferencedInBody(bodyRaw: string, sourceName: string, arti
 }
 
 function isUsableDataBlock(block: unknown): block is NonNullable<GeneratedPost["dataBlocks"]>[number] {
-  if (!block || typeof block !== "object") return false;
-  const b = block as Record<string, unknown>;
-  const type = b.type;
-  const title = b.title;
-  const data = b.data;
-  const xl = b.xAxisLabel;
-  const yl = b.yAxisLabel;
-  if (typeof type !== "string" || typeof title !== "string") return false;
-  if (!["bar", "histogram", "scatter", "line"].includes(type)) return false;
-  if (typeof xl !== "string" || typeof yl !== "string") return false;
-  if (!Array.isArray(data) || data.length < 2) return false;
-  for (const row of data) {
-    if (!row || typeof row !== "object") return false;
-    const r = row as Record<string, unknown>;
-    if (type === "bar" || type === "histogram") {
-      if (typeof r.label !== "string" || typeof r.value !== "number" || Number.isNaN(r.value)) return false;
-    } else {
-      if (typeof r.x !== "number" || typeof r.y !== "number" || Number.isNaN(r.x) || Number.isNaN(r.y)) return false;
-    }
-  }
-  return true;
+  return isSourceLinkedChart(block) && (block as { type: string }).type !== "chart";
 }
 
 function syncChartPlaceholders(
@@ -302,6 +283,7 @@ function pruneReceiptsToBody(post: GeneratedPost): GeneratedPost {
 
   let credits = (post.credits ?? []).filter(
     (c) =>
+      (post.dataBlocks ?? []).some(block => block.sourceUrl === c.articleUrl) ||
       sourceReferencedInBody(body, c.sourceName, c.articleUrl) ||
       citationKeys.has(citeKey(c.sourceName, c.articleUrl)),
   );
@@ -318,8 +300,16 @@ function pruneReceiptsToBody(post: GeneratedPost): GeneratedPost {
 }
 
 /** Remove orphan charts and receipts for outlets not referenced in the narrative. */
-export function finalizePostForPublish(post: GeneratedPost): GeneratedPost {
-  const synced = syncChartPlaceholders(post.bodyMarkdown ?? "", post.dataBlocks);
+export function finalizePostForPublish(post: GeneratedPost, sources?: SourceExtraction[]): GeneratedPost {
+  const knownSources = new Set([
+    ...(post.credits ?? []).map(c => c.articleUrl),
+    ...(post.citations ?? []).map(c => c.sourceUrl),
+  ]);
+  const blocks = (post.dataBlocks ?? []).map(block =>
+    block?.sourceUrl && knownSources.has(block.sourceUrl) && (!sources || chartMatchesSource(block, sources)) ? block : null,
+  );
+  // Preserve placeholder indices while rejecting unsupported blocks.
+  const synced = syncChartPlaceholders(post.bodyMarkdown ?? "", blocks as GeneratedPost["dataBlocks"]);
   return pruneReceiptsToBody({
     ...post,
     bodyMarkdown: synced.body,
@@ -467,11 +457,18 @@ async function synthesizeWithGemini(
                 title: { type: Type.STRING },
                 xAxisLabel: { type: Type.STRING },
                 yAxisLabel: { type: Type.STRING },
+                sourceName: { type: Type.STRING },
+                sourceUrl: { type: Type.STRING },
+                metric: { type: Type.STRING },
+                unit: { type: Type.STRING },
                 data: {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
                     properties: {
+                      sourceQuote: { type: Type.STRING },
+                      metric: { type: Type.STRING },
+                      unit: { type: Type.STRING },
                       label: { type: Type.STRING },
                       value: { type: Type.NUMBER },
                       x: { type: Type.NUMBER },
@@ -480,7 +477,7 @@ async function synthesizeWithGemini(
                   },
                 },
               },
-              required: ["type", "title", "xAxisLabel", "yAxisLabel", "data"],
+              required: ["type", "title", "xAxisLabel", "yAxisLabel", "metric", "unit", "sourceName", "sourceUrl", "data"],
             },
           },
           editorialCategory: { type: Type.STRING },
@@ -628,33 +625,15 @@ async function extractChartsFromBody(
     .filter((f) => /\d/.test(f))
     .slice(0, 10);
 
-  // Also extract number-containing lines from the Data Insight section of the body
-  const insightSection = bodyMarkdown.match(/### The Data Insight[\s\S]*?(?=###|$)/)?.[0] ?? "";
-  const bodyNumbers = insightSection
-    .split("\n")
-    .filter((line) => /\d/.test(line) && line.trim().length > 10)
-    .slice(0, 8);
-
-  if (sourceNumbers.length < 2 && bodyNumbers.length < 2) return [];
-
-  const numericContext = [
-    sourceNumbers.length > 0 ? "Numeric facts from source material:" : "",
-    ...sourceNumbers.map((f, i) => `${i + 1}. ${f}`),
-    "",
-    bodyNumbers.length > 0 ? "Number-containing lines from the Data Insight section:" : "",
-    ...bodyNumbers.map((l, i) => `${i + 1}. ${l}`),
-  ].filter(Boolean).join("\n");
-
+  if (sourceNumbers.length < 2) return [];
   const prompt = [
-    "The article below has a Data Insight section. The following numeric data was extracted:",
-    numericContext,
-    "",
-    "If at least 2 of these facts can be meaningfully compared or plotted together, return a JSON object with a single key 'dataBlocks' containing an array of chart objects.",
-    "Each chart: {type: 'bar'|'line'|'histogram'|'scatter', title, xAxisLabel, yAxisLabel, data: [{label, value}]}",
-    "If no meaningful chart is possible, return {dataBlocks: []}.",
-    "",
-    "Article body:",
-    bodyMarkdown.slice(0, 5000),
+    "Return an optional chart using ONLY the supplied source facts, not facts inferred from article prose.",
+    "Return {dataBlocks: []} unless at least two points measure the same metric in the same unit and scale.",
+    "Never combine dollars, users, brands, or other unrelated measures. Do not estimate missing values.",
+    "Each block: {type: 'bar'|'line', title, xAxisLabel, yAxisLabel, metric, unit, sourceName, sourceUrl, data: [{label, value, metric, unit}]}.",
+    "For a line series use real numeric x and y coordinates instead of value. Each point must repeat the block metric and unit and include sourceQuote: an exact short excerpt from source text containing its numeric values. Keep the numeric scale shown in that quote.",
+    "Use an exact sourceUrl from the supplied packets. Omit charts without clear attribution.",
+    JSON.stringify(sources.map(source => ({ sourceName: source.sourceName, sourceUrl: source.articleUrl, textExcerpt: source.textExcerpt, facts: source.facts }))),
   ].join("\n");
 
   try {
@@ -1109,7 +1088,7 @@ export async function synthesizePost(
         }
       }
 
-      return finalizePostForPublish(post);
+      return finalizePostForPublish(post, sources);
     } catch (err) {
       lastErr = err;
       console.warn(`synthesizePost (${mode}) failed:`, err instanceof Error ? err.message : err);
