@@ -35,6 +35,11 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
     () => buildEditorialSummary({ summary: article.summary, excerpt: article.excerpt, tldr: article.tldr }),
     [article.summary, article.excerpt, article.tldr],
   );
+  const briefFacts = [
+    { label: "Why it matters", text: article.tldr?.whyItMatters },
+    { label: "Who it affects", text: article.tldr?.whoIsAffected },
+    { label: "What’s next", text: article.tldr?.whatIsNext },
+  ].filter(fact => fact.text?.trim() && !editorialSummary.toLowerCase().includes(fact.text.trim().toLowerCase()));
   const content = article.content;
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -437,8 +442,8 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
               </section>
             )}
 
-            <div className="article-reading-layout">
-              <aside className="article-context" aria-label="Story context">
+            <div className={cn("article-reading-layout", briefOnly && "article-reading-layout--brief")}>
+              <aside className="article-context" aria-label="Story context" hidden={briefOnly}>
                 <div className="article-context-inner">
                   {article.tldr?.whyItMatters && <section><h2>Why it matters</h2><p>{article.tldr.whyItMatters}</p></section>}
                   {article.tldr?.whoIsAffected && <section><h2>Who it affects</h2><p>{article.tldr.whoIsAffected}</p></section>}
@@ -446,7 +451,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                 </div>
               </aside>
               <div className="article-story">
-                {editorialSummary && (
+                {briefFacts.length > 0 && (
                   <div className="article-reading-mode" role="group" aria-label="Reading format">
                     <button type="button" aria-pressed={!briefOnly} aria-controls="article-full-story article-brief-story" onClick={() => setBriefOnly(false)}>Full story</button>
                     <button type="button" aria-pressed={briefOnly} aria-controls="article-full-story article-brief-story" onClick={() => { setBriefOnly(true); setVoiceActive(false); }}>Just the brief</button>
@@ -455,13 +460,10 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                 )}
                 {briefOnly && (
                   <section id="article-brief-story" className="article-brief-story" aria-label="Just the brief">
-                    <h2>The brief</h2>
-                    <p>{editorialSummary}</p>
-                    {article.tldr && <dl>
-                      {article.tldr.whyItMatters && <div><dt>Why it matters</dt><dd>{article.tldr.whyItMatters}</dd></div>}
-                      {article.tldr.whoIsAffected && <div><dt>Who it affects</dt><dd>{article.tldr.whoIsAffected}</dd></div>}
-                      {article.tldr.whatIsNext && <div><dt>What’s next</dt><dd>{article.tldr.whatIsNext}</dd></div>}
-                    </dl>}
+                    <h2>What this means</h2>
+                    <dl>{briefFacts.map(fact => (
+                      <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.text}</dd></div>
+                    ))}</dl>
                   </section>
                 )}
                 <div id="article-full-story" hidden={briefOnly}>
