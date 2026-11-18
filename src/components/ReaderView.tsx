@@ -10,6 +10,7 @@ import ReactMarkdown from "react-markdown";
 import { formatPublishedTimestamp, cn, stripCitationSectionsForTts, stripMarkdown, buildEditorialSummary } from "../lib/utils";
 
 import { EntityHighlight } from "./EntityHighlight";
+import { buildArticleBrief } from "../lib/articleBrief";
 import { isSourceLinkedChart } from "../lib/chartData";
 import { DataVisChart } from "./DataVisChart";
 import { TipBox } from "./TipBox";
@@ -35,12 +36,8 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
     () => buildEditorialSummary({ summary: article.summary, excerpt: article.excerpt, tldr: article.tldr }),
     [article.summary, article.excerpt, article.tldr],
   );
-  const briefFacts = [
-    { label: "Why it matters", text: article.tldr?.whyItMatters },
-    { label: "Who it affects", text: article.tldr?.whoIsAffected },
-    { label: "What’s next", text: article.tldr?.whatIsNext },
-  ].filter(fact => fact.text?.trim() && !editorialSummary.toLowerCase().includes(fact.text.trim().toLowerCase()));
   const content = article.content;
+  const briefText = useMemo(() => buildArticleBrief(content, editorialSummary), [content, editorialSummary]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [voiceActive, setVoiceActive] = useState(false);
@@ -451,7 +448,7 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                 </div>
               </aside>
               <div className="article-story">
-                {briefFacts.length > 0 && (
+                {briefText && (
                   <div className="article-reading-mode" role="group" aria-label="Reading format">
                     <button type="button" aria-pressed={!briefOnly} aria-controls="article-full-story article-brief-story" onClick={() => setBriefOnly(false)}>Full story</button>
                     <button type="button" aria-pressed={briefOnly} aria-controls="article-full-story article-brief-story" onClick={() => { setBriefOnly(true); setVoiceActive(false); }}>Just the brief</button>
@@ -460,10 +457,10 @@ function ReaderContent({ article, allArticles = [], onClose, onNavigate, onOpenA
                 )}
                 {briefOnly && (
                   <section id="article-brief-story" className="article-brief-story" aria-label="Just the brief">
-                    <h2>What this means</h2>
-                    <dl>{briefFacts.map(fact => (
-                      <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.text}</dd></div>
-                    ))}</dl>
+                    <h2>The brief</h2>
+                    <div className="markdown-body article-prose">
+                      <ReactMarkdown components={components as any}>{briefText}</ReactMarkdown>
+                    </div>
                   </section>
                 )}
                 <div id="article-full-story" hidden={briefOnly}>
